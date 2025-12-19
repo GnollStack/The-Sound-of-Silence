@@ -1,4 +1,4 @@
-
+<div align="center">
 
 # The Sound of Silence
 **Transform Foundry VTT's playlists into a professional sound design studio**
@@ -9,6 +9,8 @@
 [![Foundry VTT](https://img.shields.io/badge/Foundry-v13-informational)](https://foundryvtt.com)
 
 > Professional audio engineering for your tabletop RPG. Create complex musical compositions with seamless loops, cinematic crossfades, and dynamic silence—without touching a single audio file.
+
+</div>
 
 ---
 
