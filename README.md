@@ -12,6 +12,8 @@
 
 </div>
 
+</div>
+
 ---
 
 ## Quick Start
