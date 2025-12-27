@@ -333,18 +333,6 @@ This module represents **hundreds of hours** of research, development, testing, 
 
 ---
 
-## License
-
-© 2025 **GnollStack** (formerly Somedude5)
-
-This module is licensed under a **custom non-commercial license**.  
-✅ Free for personal use • ✅ Modifications allowed • ❌ Commercial use requires permission
-
-For commercial licensing inquiries, contact me directly on Discord or Reddit.  
-📧 [Open an issue](https://github.com/Somedude5/The-Sound-of-Silence/issues)
-
----
-
 ## License & Credits
 
 ### Commercial Licensing & Permissions
@@ -361,7 +349,7 @@ I am open to discussing licensing for:
 **Contact GnollStack for inquiries:**
 * **Email:** Somedudeed@gmail.com
 * **Discord:** GnollStack
-* *Please do not open GitHub Issues for commercial licensing discussions. But feel free to contact me via Github*
+* *Please do not open GitHub Issues for commercial licensing discussions. But feel free to contact me via Discord or Email*
 
 **Author:** [GnollStack](https://github.com/GnollStack)
 **Compatibility:** Foundry VTT v13+ / dnd5e 5.1+
