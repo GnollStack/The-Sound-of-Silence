@@ -333,24 +333,28 @@ This module represents **hundreds of hours** of research, development, testing, 
 
 ---
 
-## License & Credits
+## ⚖️ License & Permissions
 
-### Commercial Licensing & Permissions
+### Proprietary EULA
+This module is licensed under the **GnollStack Proprietary EULA**.
+It is **Free for Personal Use**, meaning you can use it in your home games, stream it, or modify it for your own table without restriction.
 
-This project is strictly **Non-Commercial** under the **Commons Clause**.
+However, **Commercial Redistribution is Strictly Prohibited.**
+You may **NOT** sell this module, bundle it within paid content (such as Patreon maps or adventures), or host it as a commercial service without prior written consent.
 
-If you wish to use this software in a commercial product, sell it as part of a bundle, host it as a paid service, or otherwise monetize this code, you **must** obtain a separate commercial license.
+### Commercial Licensing
+I am open to partnerships! If you are a map maker, adventure writer, or developer who wishes to use this module commercially, please contact me. I offer commercial licenses for:
+* Bundling this module with paid VTT content.
+* Official integration into commercial systems.
+* Custom feature development for your specific product.
 
-I am open to discussing licensing for:
-* Integration into paid VTT modules.
-* Commercial hosting or distribution.
-* Custom feature development for commercial projects.
-
-**Contact GnollStack for inquiries:**
-* **Email:** Somedudeed@gmail.com
-* **Discord:** GnollStack
+### Contact
+For licensing inquiries or permission slips:
+* **Discord:** `GnollStack` (Preferred)
+* **Email:** `Somedudeed@gmail.com`
 * *Please do not open GitHub Issues for commercial licensing discussions. But feel free to contact me via Discord or Email*
 
+---
 **Author:** [GnollStack](https://github.com/GnollStack)
 **Compatibility:** Foundry VTT v13+ / dnd5e 5.1+
 
