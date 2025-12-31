@@ -1,104 +1,58 @@
-// fade-in.js
+// fade-in.js - Applies a fade-in effect to playlist sounds when they start playing
 
-import { MODULE_ID, debug } from "./main.js";
+import { MODULE_ID, logFeature, LogSymbols } from "./utils.js";
 import { Silence } from "./silence.js";
+import { advancedFade } from "./audio-fader.js";
+import { debug, waitForMedia } from "./utils.js";
+import { State } from "./state-manager.js";
 
 // =========================================================================
 // Fade-In Logic
 // =========================================================================
 
 /**
- * A robust, non-polling utility to get the Howler.js Sound object
- * from a PlaylistSound, which may not be immediately available.
- * @param {PlaylistSound} ps The playlist sound.
- * @returns {Promise<Sound|null>} A promise that resolves with the Sound object or null if it times out.
- */
-export function waitForMedia(ps) {
-    // If media is already available, return it immediately.
-    if (ps?.sound) return Promise.resolve(ps.sound);
-
-    // Otherwise, wait for it with a timeout.
-    return new Promise(resolve => {
-        if (!ps) return resolve(null);
-
-        let checkCount = 0;
-        const interval = 50;   // Check every 50ms
-        const maxChecks = 100; // For a total timeout of ~5 seconds
-
-        const check = () => {
-            if (ps.sound) {
-                debug(`[waitForMedia] ✅ Media found for "${ps.name}"`);
-                return resolve(ps.sound);
-            }
-            if (++checkCount > maxChecks) {
-                debug(`[waitForMedia] ❌ Timed out waiting for media for "${ps.name}"`);
-                return resolve(null);
-            }
-            // Schedule the next check
-            setTimeout(check, interval);
-        };
-
-        debug(`[waitForMedia] ⏳ Waiting for media on "${ps.name}"...`);
-        check();
-    });
-}
-
-
-// Keep a WeakMap so each PlaylistSound remembers remaining fade time
-const FADE_STATE = new WeakMap();
-
-/**
- * Fade a PlaylistSound from 0 → targetVol.
- * Pausing during the fade stores remaining time; resuming continues it.
+ * Applies a logarithmic fade-in to a sound when it starts playing.
+ * It retrieves the configured fade duration from the playlist flags and
+ * uses the advanced fader to smoothly transition the sound's volume.
+ * @param {Playlist} playlist The parent playlist document.
+ * @param {PlaylistSound} ps The playlist sound to fade in.
  */
 export async function applyFadeIn(playlist, ps) {
-    const fadeTotal = Number(playlist.getFlag(MODULE_ID, "fadeIn") ?? 0);
+    // Check for an API override first, fall back to the playlist flag.
+    const fadeOverride = ps._sos_fadeInOverride;
+    const fadeTotal = typeof fadeOverride === 'number'
+        ? fadeOverride
+        : (Number(playlist?.getFlag(MODULE_ID, "fadeIn") ?? 0));
+
+    // Clean up the temporary override property after we've read it.
+    if (typeof fadeOverride !== 'undefined') delete ps._sos_fadeInOverride;
+
     if (fadeTotal <= 0) return;
+
+    // If a crossfade is in progress, it handles the fade-in. Do nothing here.
+    if (State.isPlaylistCrossfading(playlist)) {
+        debug(`[FadeIn] Skipping standard fade-in for "${ps.name}" because a crossfade is active.`);
+        return;
+    }
+
+    // Defer fade-in to LoopingSound if skipping intro ---
+    const loopConfig = ps.getFlag(MODULE_ID, "loopWithin");
+    if (loopConfig?.enabled && !loopConfig.startFromBeginning && (loopConfig.segments?.length ?? 0) > 0) {
+        debug(`[FadeIn] Deferring fade-in for "${ps.name}" to LoopingSound due to "skip intro" setting.`);
+        return;
+    }
+
+    // Skip fade-in for our silent gap tracks
     if (!ps || ps.getFlag(MODULE_ID, Silence.FLAG_KEY)) return;
 
     const media = await waitForMedia(ps);
     if (!media) return;
 
+    // Get the sound's intended final volume from the document
     const targetVol = ps.volume ?? 1;
 
-    /* ── Local state for this sound ─────────────────────────── */
-    let remaining = fadeTotal;                   // ms left to fade
-    let startT = 0;                           // epoch when fade started
-
-    /** (re)start the fade from current vol → target over “remaining”. */
-    function resumeFade() {
-        if (remaining <= 0) return;               // nothing left to fade
-        startT = performance.now();
-        media.fade(targetVol, { duration: remaining, from: media.volume });
-        debug(`[${MODULE_ID}] 🎚️ Resuming fade of "${ps.name}" over ${remaining} ms`);
-    }
-
-    /** pause handler – capture how much is left */
-    function onPause() {
-        if (remaining <= 0) return;
-        const elapsed = performance.now() - startT;
-        remaining = Math.max(0, remaining - elapsed);
-        debug(`[${MODULE_ID}] ⏸️ Fade paused on "${ps.name}". ${remaining} ms left`);
-    }
-
-    /** play handler – continue fade if needed, once */
-    function onPlay() {
-        if (remaining > 0) resumeFade();
-    }
-
-    /* ── Attach once per PlaylistSound ──────────────────────── */
-    if (!FADE_STATE.has(ps)) {
-        media.addEventListener("pause", onPause);
-        media.addEventListener("play", onPlay);
-        FADE_STATE.set(ps, true);                // mark as listeners-attached
-    }
-
-    /* ── Kick off initial fade (if not already playing) ─────── */
-    if (media.playing) {
-        media.volume = 0;
-        resumeFade();
-    } else {
-        media.volume = 0;
-        media.addEventListener("play", () => resumeFade(), { once: true });
-    }
+    // In our main.js wrapper, we will pre-mute the sound before it plays,
+    // so the fade will correctly start from an actual volume of 0.
+    logFeature(LogSymbols.FADE_IN, 'Fade', `${ps.name} (${fadeTotal}ms)`);
+    advancedFade(media, { targetVol, duration: fadeTotal });
 }

@@ -1,0 +1,144 @@
+<div class="sos-diagnostics-content">
+    <div class="metrics-grid">
+        <div class="metric-item">
+            <label>Uptime</label>
+            <span>{{metrics.uptime.formatted}}</span>
+        </div>
+        <div class="metric-item">
+            <label>Total Crossfades</label>
+            <span>{{metrics.crossfades.total}}</span>
+        </div>
+        <div class="metric-item">
+            <label>Avg. Crossfade</label>
+            <span>{{metrics.crossfades.averageDuration}} ms</span>
+        </div>
+        <div class="metric-item">
+            <label>Loop Iterations</label>
+            <span>{{metrics.loops.totalIterations}}</span>
+        </div>
+        <div class="metric-item">
+            <label>Active Loopers</label>
+            <span>{{metrics.loops.activeSessions}}</span>
+        </div>
+        <div class="metric-item">
+            <label>Silent Gaps</label>
+            <span>{{metrics.silence.totalGaps}}</span>
+        </div>
+    </div>
+
+    <hr>
+
+    <h3>Active Playlists</h3>
+
+    {{#if playlists.length}}
+    <ul class="playlist-list">
+        {{#each playlists}}
+        <li class="playlist-item">
+            <h4><i class="fas fa-music"></i> {{this.playlistName}}</h4>
+            <div class="features">
+                {{#if this.features.crossfade}}
+                <div class="feature-tag crossfade">
+                    <i class="fas fa-hourglass-half"></i> Crossfade Scheduled
+                </div>
+                {{/if}}
+                {{#if this.features.scheduledSilenceFade}}
+                <div class="feature-tag silence-fade">
+                    <i class="fas fa-stopwatch"></i> Silence Fade Scheduled
+                </div>
+                {{/if}}
+                {{#if this.features.silence}}
+                <div class="feature-tag silence">
+                    <i class="fas fa-volume-mute"></i> Silent Gap Active
+                </div>
+                {{/if}}
+
+                {{#if this.features.loops}}
+                <ul class="loop-list">
+                    {{#each this.features.loops}}
+                    <li class="loop-item">
+                        <i class="fas fa-sync-alt"></i> <strong>{{this.soundName}}</strong>
+                        <span>(Completed: {{this.loopsCompleted}})</span>
+                        {{#if this.isCrossfading}}
+                        <span class="loop-state">[Crossfading]</span>
+                        {{/if}}
+                    </li>
+                    {{/each}}
+                </ul>
+                {{/if}}
+            </div>
+        </li>
+        {{/each}}
+    </ul>
+    {{else}}
+    <p class="notes">No playlists with active Sound of Silence features.</p>
+    {{/if}}
+</div>
+
+<style>
+    .sos-diagnostics-content .metrics-grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr 1fr;
+        gap: 8px;
+        margin-bottom: 10px;
+    }
+
+    .sos-diagnostics-content .metric-item {
+        display: flex;
+        flex-direction: column;
+        background: rgba(0, 0, 0, 0.1);
+        padding: 5px;
+        border-radius: 3px;
+        text-align: center;
+    }
+
+    .sos-diagnostics-content .metric-item label {
+        font-weight: bold;
+        font-size: 11px;
+        opacity: 0.7;
+    }
+
+    .sos-diagnostics-content .metric-item span {
+        font-size: 1.2em;
+    }
+
+    .sos-diagnostics-content .playlist-list {
+        list-style: none;
+        padding: 0;
+        margin: 0;
+    }
+
+    .sos-diagnostics-content .playlist-item {
+        border: 1px solid #444;
+        border-radius: 5px;
+        padding: 10px;
+        margin-bottom: 8px;
+    }
+
+    .sos-diagnostics-content .playlist-item h4 {
+        margin: 0 0 8px 0;
+    }
+
+    .sos-diagnostics-content .feature-tag {
+        background: rgba(255, 255, 255, 0.1);
+        padding: 3px 6px;
+        border-radius: 5px;
+        display: inline-block;
+        margin-bottom: 5px;
+        font-size: 0.9em;
+    }
+
+    .sos-diagnostics-content .loop-list {
+        list-style: none;
+        padding-left: 15px;
+        margin: 0;
+    }
+
+    .sos-diagnostics-content .loop-item {
+        margin-bottom: 3px;
+    }
+
+    .sos-diagnostics-content .loop-state {
+        font-style: italic;
+        color: #ff9800;
+    }
+</style>

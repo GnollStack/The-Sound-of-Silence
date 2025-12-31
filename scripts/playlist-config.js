@@ -1,309 +1,342 @@
-// playlist-congif.js
+/**
+ * @file playlist-config.js
+ * @description This file manages the integration of module settings into the PlaylistConfig sheet.
+ * It uses libWrapper to inject data and handle form submission for playlist-level flags,
+ * and a hook to render the custom form fields.
+ */
+import { MODULE_ID } from "./utils.js";
+import { debug } from "./utils.js";
+import { Flags } from "./flag-service.js";
 
-import { MODULE_ID, debug } from "./main.js";
-
-// ============================================
-// Flags & Defaults
-// ============================================
-const FLAG_FADE_IN = "fadeIn";        // Number (ms)
-const FLAG_MODE = "silenceMode";   // "static" | "random"
-const FLAG_SILENCE_MS = "silenceDuration"; // Number (ms) - the *total* silence between tracks
-const FLAG_MIN_DELAY = "minDelay";
-const FLAG_MAX_DELAY = "maxDelay";
-const FLAG_CROSSFADE = "crossfade";
-
+/**
+ * Defines the flag keys and default values for all playlist-level settings.
+ */
+const KEYS = {
+  ENABLED: "silenceEnabled",         // boolean
+  FADE_IN: "fadeIn",                 // number (ms)
+  MODE: "silenceMode",               // "static" | "random"
+  DURATION: "silenceDuration",       // number (ms)
+  MIN_DELAY: "minDelay",             // number (ms)
+  MAX_DELAY: "maxDelay",             // number (ms)
+  CROSSFADE_ENABLED: "crossfade",      // boolean - Master switch
+  USE_CUSTOM_AUTO_FADE: "useCustomAutoFade", // boolean
+  CUSTOM_AUTO_FADE_MS: "customAutoFadeMs",  // number (ms)
+  LOOP_PLAYLIST: "loopPlaylist",       // boolean
+  VOLUME_NORMALIZATION_ENABLED: "volumeNormalizationEnabled", // boolean
+  NORMALIZED_VOLUME: "normalizedVolume" // number (0-1)
+};
 
 const DEFAULTS = {
-  fadeIn: 0,
-  silenceDuration: 0,
-  silenceMode: "static",
-  minDelay: 0,
-  maxDelay: 0,
-  crossfade: false
-}
-// ============================================
-// Helpers
-// ============================================
-/**
- * Read our SOS flags from a Playlist document.
- */
-function getSosFlags(doc) {
-  return {
-    silenceEnabled: doc.getFlag(MODULE_ID, "silenceEnabled") ?? false,
-    fadeIn: doc.getFlag(MODULE_ID, FLAG_FADE_IN) ?? DEFAULTS.fadeIn,
-    silenceDuration: doc.getFlag(MODULE_ID, FLAG_SILENCE_MS) ?? DEFAULTS.silenceDuration,
-    silenceMode: doc.getFlag(MODULE_ID, FLAG_MODE) ?? DEFAULTS.silenceMode,
-    minDelay: doc.getFlag(MODULE_ID, FLAG_MIN_DELAY) ?? DEFAULTS.minDelay,
-    maxDelay: doc.getFlag(MODULE_ID, FLAG_MAX_DELAY) ?? DEFAULTS.maxDelay,
-    crossfade: doc.getFlag(MODULE_ID, FLAG_CROSSFADE) ?? DEFAULTS.crossfade,
-  };
-}
-
+  [KEYS.FADE_IN]: 0,
+  [KEYS.MODE]: "static",
+  [KEYS.DURATION]: 0,
+  [KEYS.MIN_DELAY]: 0,
+  [KEYS.MAX_DELAY]: 0,
+  [KEYS.CROSSFADE_ENABLED]: false,
+  [KEYS.USE_CUSTOM_AUTO_FADE]: false, // Default to using the main Fade-Out
+  [KEYS.CUSTOM_AUTO_FADE_MS]: 1000,
+  [KEYS.ENABLED]: false,
+  [KEYS.LOOP_PLAYLIST]: false,
+  [KEYS.VOLUME_NORMALIZATION_ENABLED]: false,
+  [KEYS.NORMALIZED_VOLUME]: 0.5
+};
 
 /**
- * Persist our SOS flags on a Playlist document.
+ * Registers the necessary libWrapper patches for the PlaylistConfig sheet.
  */
-async function saveSosFlags(doc, fadeIn, silenceDuration, silenceMode, minDelay, maxDelay, crossfade) {
-  await doc.setFlag(MODULE_ID, FLAG_FADE_IN, fadeIn);
-  await doc.setFlag(MODULE_ID, FLAG_SILENCE_MS, silenceDuration);
-  await doc.setFlag(MODULE_ID, FLAG_MODE, silenceMode);
-  await doc.setFlag(MODULE_ID, FLAG_MIN_DELAY, minDelay);
-  await doc.setFlag(MODULE_ID, FLAG_MAX_DELAY, maxDelay);
-  await doc.setFlag(MODULE_ID, FLAG_CROSSFADE, crossfade);
-}
-
-// ============================================
-// Wrapper Registration
-// ============================================
 export function registerPlaylistSheetWrappers() {
-  // 1) Expose our flags to the PlaylistConfig sheet data
+  _registerV13Wrappers();
+}
+
+/**
+ * Registers wrappers for Foundry v13+ (DocumentSheetV2).
+ */
+function _registerV13Wrappers() {
+  debug("Registering V13 PlaylistConfig wrappers");
+
+  // Supply module data to the template context. This part is correct and remains.
   libWrapper.register(
     MODULE_ID,
-    "PlaylistConfig.prototype.getData",
-    function (wrapped, ...args) {
-      const data = wrapped.apply(this, args);
-      data.sos = getSosFlags(this.object);
-      return data;
+    "foundry.applications.sheets.PlaylistConfig.prototype._prepareContext",
+    async function (wrapped, options) {
+      const ctx = await wrapped.call(this, options);
+      ctx.sos = Flags.getPlaylistFlags(ctx.document);
+      return ctx;
     },
     "WRAPPER"
   );
 
-  // 2) Capture our custom fields, strip them out, then save as flags
+  // We are now wrapping _processFormData, which is more robust.
   libWrapper.register(
     MODULE_ID,
-    "PlaylistConfig.prototype._updateObject",
-    async function (wrapped, event, formData) {
-      debug(`[${MODULE_ID}] _updateObject called with formData:`, formData);
+    "foundry.applications.sheets.PlaylistConfig.prototype._processFormData",
+    function (wrapped, event, form, formData) {
+      debug("Processing Sound of Silence flags using robust method.");
 
-      // Parse all custom fields
-      const fadeInRaw = formData["sos.fadeIn"];
-      const silenceDurRaw = formData["sos.silenceDuration"];
-      const silenceModeRaw = formData["sos.silenceMode"];
-      const minDelayRaw = formData["sos.minDelay"];
-      const maxDelayRaw = formData["sos.maxDelay"];
-      const crossfadeRaw = formData["sos.crossfade"];
-      const silenceEnabledRaw = formData["sos.silenceEnabled"];
+      const basePath = `flags.${MODULE_ID}`;
 
-      const fadeIn = Number(fadeInRaw ?? 0);
-      const silenceDur = Number(silenceDurRaw ?? 0);
-      const mode = silenceModeRaw ?? "static";
-      const minDelay = Number(minDelayRaw ?? 0);
-      const maxDelay = Number(maxDelayRaw ?? 0);
-      const crossfade = Boolean(crossfadeRaw);
-      const silenceEnabled = Boolean(silenceEnabledRaw);
+      // 1. Start with a clean slate based on our defaults.
+      const cleanFlags = foundry.utils.duplicate(DEFAULTS);
 
-      // Remove from core form data
-      delete formData["sos.fadeIn"];
-      delete formData["sos.silenceDuration"];
-      delete formData["sos.silenceMode"];
-      delete formData["sos.minDelay"];
-      delete formData["sos.maxDelay"];
-      delete formData["sos.crossfade"];
+      // 2. Extract and sanitize all values directly from the flat formData.
+      const raw = formData.object;
+      cleanFlags.fadeIn = Number(raw[`${basePath}.${KEYS.FADE_IN}`] ?? 0);
+      cleanFlags.silenceDuration = Number(raw[`${basePath}.${KEYS.DURATION}`] ?? 0);
+      cleanFlags.minDelay = Number(raw[`${basePath}.${KEYS.MIN_DELAY}`] ?? 0);
+      cleanFlags.maxDelay = Number(raw[`${basePath}.${KEYS.MAX_DELAY}`] ?? 0);
+      cleanFlags.customAutoFadeMs = Number(raw[`${basePath}.${KEYS.CUSTOM_AUTO_FADE_MS}`] ?? 1000);
+      cleanFlags.silenceMode = raw[`${basePath}.${KEYS.MODE}`] ?? "static";
 
-      // Apply core update first
-      await wrapped.call(this, event, formData);
+      cleanFlags.volumeNormalizationEnabled = !!raw[`${basePath}.${KEYS.VOLUME_NORMALIZATION_ENABLED}`];
+      cleanFlags.normalizedVolume = Number(raw[`${basePath}.${KEYS.NORMALIZED_VOLUME}`] ?? 0.5);
 
-      // Enforce mutual exclusivity
-      const finalSilence = silenceEnabled && !crossfade;
-      const finalCrossfade = crossfade && !silenceEnabled;
+      const crossfadeEnabled = !!raw[`${basePath}.${KEYS.CROSSFADE_ENABLED}`];
+      const silenceEnabled = !!raw[`${basePath}.${KEYS.ENABLED}`];
+      const formDataObj = foundry.utils.flattenObject(formData.object);
+      const autoFadeType = formDataObj[`flags.${MODULE_ID}.autoFadeType`];
 
-      await saveSosFlags(this.object, fadeIn, silenceDur, mode, minDelay, maxDelay, finalCrossfade);
-      await this.object.setFlag(MODULE_ID, "silenceEnabled", finalSilence);
+      // 3. Apply the critical logic to the clean data.
+      cleanFlags.crossfade = crossfadeEnabled;
+      cleanFlags.silenceEnabled = silenceEnabled && !crossfadeEnabled;
 
-      ui.playlists?.render();
+      if (crossfadeEnabled && autoFadeType === "custom") {
+        cleanFlags.useCustomAutoFade = true;
+      } else {
+        cleanFlags.useCustomAutoFade = false;
+      }
+
+      // The playlist document is located at `this.document`, not `this.object`.
+      const loopPlaylist = !!raw[`${basePath}.${KEYS.LOOP_PLAYLIST}`] &&
+        [CONST.PLAYLIST_MODES.SEQUENTIAL,
+        CONST.PLAYLIST_MODES.SHUFFLE,
+        CONST.PLAYLIST_MODES.SIMULTANEOUS]
+          .includes(this.document.mode);
+
+      cleanFlags.loopPlaylist = loopPlaylist;
+
+      // 4. Clean up the original formData.
+      for (const key of Object.keys(formData.object)) {
+        if (key.startsWith(basePath)) {
+          delete formData.object[key];
+        }
+      }
+
+      // 5. Inject our perfectly structured, clean object back into the formData.
+      foundry.utils.setProperty(formData.object, basePath, cleanFlags);
+
+      // Finally, call the original wrapped function with the now-sanitized data.
+      return wrapped.call(this, event, form, formData);
     },
     "WRAPPER"
   );
 }
 
-// ============================================
-// UI Hook: inject our form controls
-// ============================================
-Hooks.on("renderPlaylistConfig", (app, html, data) => {
+/**
+ * Injects custom HTML form controls into the PlaylistConfig sheet.
+ */
+Hooks.on("renderPlaylistConfig", (app, htmlRaw, data) => {
+  const html = htmlRaw instanceof HTMLElement ? $(htmlRaw) : htmlRaw;
   debug("Rendering PlaylistConfig with SOS fields");
 
+  // --- 1. SETUP ---
   const fadeRow = html.find('input[name="fade"]').closest(".form-group");
-  const sos = data.sos ?? { ...DEFAULTS };
 
-  // If maxDelay is not yet set, default it to the current Silence Duration
+  // We append to the existing label to preserve Foundry's translation.
+  const fadeLabel = fadeRow.find("label");
+  if (!fadeLabel.text().includes("(ms)")) {
+    fadeLabel.append(' <span class="sos-label-units">(ms)</span>');
+  }
+
+  // Replace the range-picker with a simple input for fade duration
+const fadeInput = fadeRow.find('input[name="fade"]');
+const fadeValue = fadeInput.val();
+const fadeRangePicker = fadeRow.find('range-picker');
+if (fadeRangePicker.length) {
+  fadeRangePicker.replaceWith(`<input type="number" name="fade" value="${fadeValue}" step="1" min="0">`);
+}
+
+  const sos = Flags.getPlaylistFlags(app.document);
   if (!Number.isFinite(sos.maxDelay) || sos.maxDelay === 0) {
     sos.maxDelay = sos.silenceDuration;
   }
+  const fieldName = (key) => `flags.${MODULE_ID}.${key}`;
 
-  // --- Build the extra UI fields ---
-  const $fields = $(`
-  <div class="form-group sos-fadein-group">
-    <label>Fade-In Duration (ms)</label>
-    <input type="number"
-           name="sos.fadeIn"
-           class="sos-fadeIn"
-           value="${sos.fadeIn}"
-           step="1" min="0">
-  </div>
+  // Pre-calculate whether looping is allowed for the current playlist mode
+  const ALLOWED_LOOP_MODES = [
+    CONST.PLAYLIST_MODES.SEQUENTIAL,
+    CONST.PLAYLIST_MODES.SHUFFLE,
+    CONST.PLAYLIST_MODES.SIMULTANEOUS
+  ];
+  const playlistMode = app.document?.mode ?? data.document?.mode ?? CONST.PLAYLIST_MODES.SIMULTANEOUS;
+  const canLoop = ALLOWED_LOOP_MODES.includes(playlistMode);
 
-  <div class="sos-silence-block" style="display: ${sos.silenceEnabled ? "block" : "none"}">
-    <div class="form-group">
-      <label>Silence Mode</label>
-      <select name="sos.silenceMode" class="sos-silence-mode">
-        <option value="static"  ${sos.silenceMode === "static" ? "selected" : ""}>Static</option>
-        <option value="random"  ${sos.silenceMode === "random" ? "selected" : ""}>Random</option>
-      </select>
+  // Define a localizable label for "Fade-In"
+  const fadeInLabel = game.i18n.localize("Fade-In");
+
+
+  // --- 2. CREATE THE CONSOLIDATED UI BLOCK ---
+  const $mainBlock = $(`
+    <div class="sos-config-section">
+      <div class="form-group sos-compact">
+        <!-- CHANGE 3: Use the localizable variable for the Fade-In label -->
+        <label>${fadeInLabel} <span class="sos-label-units">(ms)</span></label>
+        <input type="number" name="${fieldName(KEYS.FADE_IN)}" value="${sos.fadeIn}" step="1" min="0">
+      </div>
+
+      <hr class="sos-section-divider">
+
+      <!-- Compact Toggle Group -->
+      <div class="sos-toggle-cluster">
+          <div class="form-group sos-compact">
+          <label class="checkbox sos-feature-toggle">
+            <input type="checkbox" name="${fieldName(KEYS.LOOP_PLAYLIST)}" ${sos.loopPlaylist ? "checked" : ""} ${canLoop ? "" : "disabled"}>
+            <span class="sos-feature-label">Loop Entire Playlist</span>
+          </label>
+          ${canLoop ? "" : `<p class="notes sos-compact disabled-note">Only works in Sequential, Shuffle, or Simultaneous mode</p>`}
+        </div>
+        <div class="form-group sos-compact">
+          <label class="checkbox sos-feature-toggle">
+            <input type="checkbox" name="${fieldName(KEYS.CROSSFADE_ENABLED)}" ${sos.crossfade ? "checked" : ""}>
+            <span class="sos-feature-label">Enable Crossfade</span>
+          </label>
+        </div>
+        <div class="sos-crossfade-options sos-subsection" style="display: ${sos.crossfade ? "block" : "none"};">
+          <!-- Crossfade options remain here -->
+          <div class="form-group sos-compact">
+            <label>Automatic Crossfade Duration</label>
+            <div class="form-fields radio-group">
+              <label class="radio sos-compact">
+                <input type="radio" name="flags.${MODULE_ID}.autoFadeType" value="default" ${!sos.useCustomAutoFade ? "checked" : ""}>
+                <span>Use Playlist Fade-Out</span>
+              </label>
+              <label class="radio sos-compact">
+                <input type="radio" name="flags.${MODULE_ID}.autoFadeType" value="custom" ${sos.useCustomAutoFade ? "checked" : ""}>
+                <span>Custom <span class="sos-label-units">(ms)</span></span>
+              </label>
+              <input type="number" name="${fieldName(KEYS.CUSTOM_AUTO_FADE_MS)}" value="${sos.customAutoFadeMs}" 
+                     class="sos-custom-fade-input" style="display: ${sos.useCustomAutoFade ? "block" : "none"};">
+            </div>
+            <p class="notes sos-compact">Duration used when tracks transition automatically</p>
+          </div>
+        </div>
+        
+        <div class="form-group sos-compact">
+          <label class="checkbox sos-feature-toggle">
+            <input type="checkbox" name="${fieldName(KEYS.ENABLED)}" ${sos.silenceEnabled ? "checked" : ""}>
+            <span class="sos-feature-label">Enable Silence</span>
+          </label>
+        </div>
+        <div class="sos-silence-block sos-subsection" style="display: ${sos.silenceEnabled ? "block" : "none"};">
+          <!-- Silence options remain here -->
+          <div class="form-group sos-compact">
+            <label>Silence Mode</label>
+            <select name="${fieldName(KEYS.MODE)}">
+              <option value="static" ${sos.silenceMode === "static" ? "selected" : ""}>Static</option>
+              <option value="random" ${sos.silenceMode === "random" ? "selected" : ""}>Random</option>
+            </select>
+          </div>
+          <div class="form-group sos-compact">
+            <label>Duration <span class="sos-label-units">(ms)</span></label>
+            <input type="number" name="${fieldName(KEYS.DURATION)}" value="${sos.silenceDuration}" step="100" min="0">
+          </div>
+          <div class="form-group sos-compact sos-delay-group" style="display: none;">
+            <label class="sos-range-label">Min Delay <span class="sos-label-units">(ms)</span>: <span class="sos-minDelay-val">${sos.minDelay}</span></label>
+            <input type="range" name="${fieldName(KEYS.MIN_DELAY)}" min="0" max="${sos.silenceDuration}" step="100" value="${sos.minDelay}">
+            <label class="sos-range-label">Max Delay <span class="sos-label-units">(ms)</span>: <span class="sos-maxDelay-val">${sos.maxDelay}</span></label>
+            <input type="range" name="${fieldName(KEYS.MAX_DELAY)}" min="0" max="${sos.silenceDuration}" step="100" value="${sos.maxDelay}">
+          </div>
+        </div>
+
+      </div>
+
+      <hr class="sos-section-divider">
+      
+      <div class="form-group sos-compact">
+        <label class="checkbox sos-feature-toggle">
+          <input type="checkbox" name="${fieldName(KEYS.VOLUME_NORMALIZATION_ENABLED)}" ${sos.volumeNormalizationEnabled ? "checked" : ""}>
+          <span class="sos-feature-label">Enable Volume Normalization</span>
+        </label>
+        <p class="notes sos-compact">Permanently sets the volume for all sounds in this playlist that do not have the override flag checked.</p>
+      </div>
+      <div class="sos-normalization-options sos-subsection" style="display: ${sos.volumeNormalizationEnabled ? "block" : "none"};">
+        <div class="form-group">
+            <label>Target Volume</label>
+            <div class="form-fields">
+                <range-picker name="${fieldName(KEYS.NORMALIZED_VOLUME)}" value="${sos.normalizedVolume}" min="0" max="1" step="0.05"/>
+            </div>
+        </div>
+      </div>
+      <hr class="sos-section-divider">
     </div>
+  `);
 
-    <div class="form-group sos-silencedur-group">
-      <label>Silence Duration (ms)</label>
-      <input type="number"
-             name="sos.silenceDuration"
-             class="sos-silenceDuration"
-             value="${sos.silenceDuration}"
-             step="100" min="0">
-    </div>
+  // --- 3. INJECT HTML INTO THE FORM ---
+  fadeRow.after($mainBlock);
 
-    <div class="form-group sos-delay-group" style="display: none;">
-      <label>Minimum Delay (ms): <span class="sos-minDelay-val">${sos.minDelay}</span></label>
-      <input type="range" name="sos.minDelay" class="sos-minDelay"
-        min="0" max="${sos.silenceDuration}" step="100" value="${sos.minDelay}">
-      <label>Maximum Delay (ms): <span class="sos-maxDelay-val">${sos.maxDelay}</span></label>
-      <input type="range" name="sos.maxDelay" class="sos-maxDelay"
-       min="0" max="${sos.silenceDuration}" step="100" value="${sos.maxDelay}">
-    </div>
-  </div>
-`);
+  // --- 4. ATTACH ALL EVENT HANDLERS (now scoped to $mainBlock) ---
+  const normalizationMaster = $mainBlock.find(`input[name="${fieldName("volumeNormalizationEnabled")}"]`);
+  const normalizationOptions = $mainBlock.find('.sos-normalization-options');
+  normalizationMaster.on('change', () => normalizationOptions.toggle(normalizationMaster.is(':checked')));
 
+  const crossfadeMaster = $mainBlock.find(`input[name="${fieldName(KEYS.CROSSFADE_ENABLED)}"]`);
+  const crossfadeOptions = $mainBlock.find('.sos-crossfade-options');
+  const silenceMaster = $mainBlock.find(`input[name="${fieldName(KEYS.ENABLED)}"]`);
+  const silenceOptions = $mainBlock.find('.sos-silence-block');
 
-  // Insert extra fields after Fade Duration
-  fadeRow.after($fields);
-
-  // --- Handle show/hide for random mode ---
-  function updateFields() {
-    const mode = html.find('select[name="sos.silenceMode"]').val();
-    if (mode === "random") {
-      html.find('.sos-delay-group').show();
-    } else {
-      html.find('.sos-delay-group').hide();
-    }
-  }
-
-  // Toggle silence block on checkbox change
-  html.find('input[name="sos.silenceEnabled"]').on('change', function () {
-    const enabled = $(this).is(':checked');
-    html.find('.sos-silence-block').toggle(enabled);
+  crossfadeMaster.on('change', () => {
+    crossfadeOptions.toggle(crossfadeMaster.is(':checked'));
+    if (crossfadeMaster.is(':checked')) silenceMaster.prop('checked', false).trigger('change');
   });
 
-  html.find('select[name="sos.silenceMode"]').on('change', updateFields);
-  updateFields();
+  silenceMaster.on('change', () => {
+    silenceOptions.toggle(silenceMaster.is(':checked'));
+    if (silenceMaster.is(':checked')) crossfadeMaster.prop('checked', false).trigger('change');
+  });
 
-  // --- When Silence Duration changes, update slider maxes and reset values if needed ---
-  html.find('input[name="sos.silenceDuration"]').on('input', function () {
+  const customFadeInput = $mainBlock.find(`input[name="${fieldName(KEYS.CUSTOM_AUTO_FADE_MS)}"]`);
+  $mainBlock.find(`input[name="flags.${MODULE_ID}.autoFadeType"]`).on('change', (ev) => {
+    customFadeInput.toggle(ev.currentTarget.value === 'custom');
+  });
+
+  const silenceModeSelect = $mainBlock.find(`select[name="${fieldName(KEYS.MODE)}"]`);
+  const randomDelayGroup = $mainBlock.find('.sos-delay-group');
+  silenceModeSelect.on('change', () => randomDelayGroup.toggle(silenceModeSelect.val() === 'random'));
+  randomDelayGroup.toggle(silenceModeSelect.val() === 'random');
+
+  $mainBlock.find(`input[name="${fieldName(KEYS.DURATION)}"]`).on('input', function () {
     const silVal = Number($(this).val()) || 0;
-    const minDelayInput = html.find('input[name="sos.minDelay"]');
-    const maxDelayInput = html.find('input[name="sos.maxDelay"]');
-
+    const minDelayInput = $mainBlock.find(`input[name="${fieldName(KEYS.MIN_DELAY)}"]`);
+    const maxDelayInput = $mainBlock.find(`input[name="${fieldName(KEYS.MAX_DELAY)}"]`);
     minDelayInput.attr('max', silVal);
     maxDelayInput.attr('max', silVal);
-
-    // If sliders are now out of bounds, move them to the edge or as close as possible
-    if (Number(minDelayInput.val()) > silVal) {
-      minDelayInput.val(silVal).trigger('input');
-    }
-    if (Number(maxDelayInput.val()) > silVal) {
-      maxDelayInput.val(silVal).trigger('input');
-    }
-    // If both are 0 (default), set min to 0, max to silVal (for quick reset usability)
-    if (silVal > 0 && Number(minDelayInput.val()) === 0 && Number(maxDelayInput.val()) === 0) {
-      maxDelayInput.val(silVal).trigger('input');
-    }
+    if (Number(minDelayInput.val()) > silVal) minDelayInput.val(silVal).trigger('input');
+    if (Number(maxDelayInput.val()) > silVal) maxDelayInput.val(silVal).trigger('input');
   });
 
-  // --- Prevent sliders from crossing each other ---
   function clampSliders(changed) {
-    const $min = html.find('input[name="sos.minDelay"]');
-    const $max = html.find('input[name="sos.maxDelay"]');
+    const $min = $mainBlock.find(`input[name="${fieldName(KEYS.MIN_DELAY)}"]`);
+    const $max = $mainBlock.find(`input[name="${fieldName(KEYS.MAX_DELAY)}"]`);
     let minVal = Number($min.val());
     let maxVal = Number($max.val());
-
-    if (changed === "min" && minVal > maxVal) {
-      maxVal = minVal;
-      $max.val(maxVal);
-      html.find('.sos-maxDelay-val').text(maxVal);
-    }
-    if (changed === "max" && maxVal < minVal) {
-      minVal = maxVal;
-      $min.val(minVal);
-      html.find('.sos-minDelay-val').text(minVal);
-    }
+    if (changed === "min" && minVal > maxVal) $max.val(minVal);
+    if (changed === "max" && maxVal < minVal) $min.val(maxVal);
+    $mainBlock.find('.sos-minDelay-val').text($min.val());
+    $mainBlock.find('.sos-maxDelay-val').text($max.val());
   }
-  html.find('input[name="sos.minDelay"]').on('input', function () {
-    html.find('.sos-minDelay-val').text(this.value);
-    clampSliders("min");
-  });
-  html.find('input[name="sos.maxDelay"]').on('input', function () {
-    html.find('.sos-maxDelay-val').text(this.value);
-    clampSliders("max");
-  });
+  $mainBlock.find(`input[name="${fieldName(KEYS.MIN_DELAY)}"]`).on('input', () => clampSliders("min"));
+  $mainBlock.find(`input[name="${fieldName(KEYS.MAX_DELAY)}"]`).on('input', () => clampSliders("max"));
+  clampSliders();
 
-  // --- Show initial slider labels ---
-  html.find('.sos-minDelay-val').text(html.find('input[name="sos.minDelay"]').val());
-  html.find('.sos-maxDelay-val').text(html.find('input[name="sos.maxDelay"]').val());
+  const $modeSelect = html.find('select[name="mode"], select[name="playbackMode"]');
+  const loopChk = $mainBlock.find(`input[name="${fieldName(KEYS.LOOP_PLAYLIST)}"]`);
+  const loopNote = loopChk.closest('.form-group').find('p.notes');
 
-  const $crossfadeFields = $(`
-  <div class="form-group sos-crossfade-group">
-    <label>Auto-Crossfade</label>
-    <input type="checkbox" name="sos.crossfade" ${sos.crossfade ? "checked" : ""}/>
-  </div>
-  `);
-
-  const $transitionToggles = $(`
-    <div class="form-group sos-toggle-pair">
-      <label>Playback Transition</label>
-      <div class="flexrow" style="gap: 1em;">
-        <label class="checkbox" style="font-size: 1.05em;">
-          <input type="checkbox" name="sos.silenceEnabled" style="transform: scale(1.3); margin-right: 0.25em;" ${sos.silenceEnabled ? "checked" : ""}>
-          Enable Silence
-        </label>
-        <label class="checkbox" style="font-size: 1.05em;">
-          <input type="checkbox" name="sos.crossfade" style="transform: scale(1.3); margin-right: 0.25em;" ${sos.crossfade ? "checked" : ""}>
-          Auto-Crossfade
-        </label>
-      </div>
-    </div>
-  `);
-
-  $fields.last().after($transitionToggles);
-
-  // Show/hide overlap duration field based on checkbox
-  html.find('input[name="sos.crossfade"]').on('change', function () {
-    html.find('.sos-xfade-ms').toggle(this.checked);
-  }).trigger('change');
-
-  function updateToggleDisables() {
-    const silenceBox = html.find('input[name="sos.silenceEnabled"]');
-    const crossfadeBox = html.find('input[name="sos.crossfade"]');
-
-    const silenceOn = silenceBox.is(":checked");
-    const crossfadeOn = crossfadeBox.is(":checked");
-
-    if (silenceOn) {
-      crossfadeBox.prop("disabled", true);
-    } else {
-      crossfadeBox.prop("disabled", false);
-    }
-
-    if (crossfadeOn) {
-      silenceBox.prop("disabled", true);
-      html.find('.sos-silence-block').hide();
-    } else {
-      silenceBox.prop("disabled", false);
-    }
-
-    // Show/hide silence settings
-    html.find('.sos-silence-block').toggle(silenceOn && !crossfadeOn);
+  function refreshLoopToggle() {
+    const mode = Number($modeSelect.val());
+    const isAllowed = ALLOWED_LOOP_MODES.includes(mode);
+    loopChk.prop('disabled', !isAllowed);
+    loopNote.toggle(!isAllowed);
   }
-
-  // Attach listeners
-  html.find('input[name="sos.silenceEnabled"], input[name="sos.crossfade"]').on("change", updateToggleDisables);
-  updateToggleDisables(); // initial state
-
-
-
+  $modeSelect.on('change', refreshLoopToggle);
+  refreshLoopToggle();
 });
