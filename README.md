@@ -3,9 +3,9 @@
 # The Sound of Silence
 **Transform Foundry VTT's playlists into a professional sound design studio**
 
-[![Release](https://img.shields.io/github/v/release/Somedude5/The-Sound-of-Silence)](https://github.com/Somedude5/The-Sound-of-Silence/releases/latest) 
-[![Downloads](https://img.shields.io/github/downloads/Somedude5/The-Sound-of-Silence/total)](https://github.com/Somedude5/The-Sound-of-Silence/releases) 
-![Downloads@latest](https://img.shields.io/github/downloads/Somedude5/The-Sound-of-Silence/latest/total)
+[![Release](https://img.shields.io/github/v/release/GnollStack/The-Sound-of-Silence)](https://github.com/GnollStack/The-Sound-of-Silence/releases/latest) 
+[![Downloads](https://img.shields.io/github/downloads/GnollStack/The-Sound-of-Silence/total)](https://github.com/GnollStack/The-Sound-of-Silence/releases) 
+![Downloads@latest](https://img.shields.io/github/downloads/GnollStack/The-Sound-of-Silence/latest/total)
 [![Foundry VTT](https://img.shields.io/badge/Foundry-v13-informational)](https://foundryvtt.com)
 
 > Professional audio engineering for your tabletop RPG. Create complex musical compositions with seamless loops, cinematic crossfades, and dynamic silence—without touching a single audio file.
@@ -177,7 +177,7 @@ Create professional game audio structures:
 ### Method 2: Manual Installation
 1. Copy this manifest URL:
    ```
-   https://github.com/Somedude5/The-Sound-of-Silence/releases/latest/download/module.json
+   https://github.com/GnollStack/The-Sound-of-Silence/releases/latest/download/module.json
    ```
 2. In Foundry, go to **Add-on Modules** → **Install Module**
 3. Paste the URL in the **Manifest URL** field
@@ -251,8 +251,8 @@ Segment 4: 04:45 - 06:00 (Victory, loop 1x, play through)
 
 - ** Star this repo** if you find it useful!
 
-- **🐛 [Report Bugs](https://github.com/Somedude5/The-Sound-of-Silence/issues)** — Help improve the module with detailed reproduction steps
-- **💡 [Request Features](https://github.com/Somedude5/The-Sound-of-Silence/issues)** — Shape the roadmap with your ideas, If its within the scope of the module and relatively easy to create there is high chance Ill do it!
+- **🐛 [Report Bugs](https://github.com/GnollStack/The-Sound-of-Silence/issues)** — Help improve the module with detailed reproduction steps
+- **💡 [Request Features](https://github.com/GnollStack/The-Sound-of-Silence/issues)** — Shape the roadmap with your ideas, If its within the scope of the module and relatively easy to create there is high chance Ill do it!
 
 ---
 
@@ -265,13 +265,13 @@ Segment 4: 04:45 - 06:00 (Victory, loop 1x, play through)
 - ✅ **Foundry VTT v13+**
 
 ### Known Conflicts:
-- None reported! If you find a compatibility issue, please [open an issue](https://github.com/Somedude5/The-Sound-of-Silence/issues).
+- None reported! If you find a compatibility issue, please [open an issue](https://github.com/GnollStack/The-Sound-of-Silence/issues).
 
 ---
 
 ## ⚠️ Known Issues
 
-Currently tracking [open issues on GitHub](https://github.com/Somedude5/The-Sound-of-Silence/issues):
+Currently tracking [open issues on GitHub](https://github.com/GnollStack/The-Sound-of-Silence/issues):
 
 ---
 
