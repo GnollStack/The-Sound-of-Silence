@@ -1,0 +1,1165 @@
+/* ========================================================= */
+/*  v13  •  Playlist header layout & truncation              */
+/* ========================================================= */
+
+/* Ensure the playlist name truncates nicely */
+li.directory-item.playlist label.playlist-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Keep the arrow icon but move it a little closer */
+li.directory-item.playlist i.expand {
+  margin-right: 4px;
+}
+
+/* Don't let the control cluster shrink */
+li.directory-item.playlist div.sound-controls.playlist-controls {
+  flex-shrink: 0;
+  display: flex;
+  flex-wrap: nowrap;
+  gap: 2px;
+}
+
+/* ========================================================= */
+/*   🎚️  Toggle buttons: Silence & Cross-fade                */
+/* ========================================================= */
+
+button.sos-toggle,
+button.xfade-toggle {
+  transition: background-color 0.15s ease;
+  border: none;
+  border-radius: 4px;
+  padding: 2px 3px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+button.sos-toggle.active,
+button.xfade-toggle.active {
+  background-color: rgba(0, 200, 0, 0.25);
+}
+
+button.sos-toggle:not(.active),
+button.xfade-toggle:not(.active) {
+  background-color: rgba(200, 0, 0, 0.18);
+}
+
+button.sos-toggle i,
+button.xfade-toggle i {
+  font-size: 0.9rem;
+}
+
+button.sos-toggle.disabled,
+button.xfade-toggle.disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+  filter: grayscale(100%);
+}
+
+/* ========================================================= */
+/*   Internal-sos-loop toggle (tracks)                          */
+/* ========================================================= */
+
+button.sos-loop-toggle {
+  border: none;
+  border-radius: 4px;
+  padding: 2px 3px;
+  transition: background-color 0.15s ease;
+}
+
+button.sos-loop-toggle.active {
+  background: rgba(255, 193, 7, 0.35);
+}
+
+button.sos-loop-toggle:not(.active) {
+  background: rgba(128, 128, 128, 0.2);
+}
+
+button.sos-loop-toggle i {
+  font-size: 0.85rem;
+}
+
+button.sos-loop-skip i {
+  font-size: 0.8rem;
+}
+
+.currently-playing .sos-loop-toggle {
+  display: none !important;
+}
+
+button.sound-control.disabled {
+  opacity: 0.35;
+  pointer-events: none;
+  cursor: default;
+}
+
+button.sos-loop-toggle:hover:not(.disabled),
+button.sos-loop-skip:hover:not(.disabled) {
+  filter: brightness(1.2);
+  cursor: pointer;
+}
+
+/* ========================================================= */
+/*   ✅  sos-loop Playlist - Green Glow Effect                  */
+/* ========================================================= */
+
+.sos-looped-static-glow {
+  position: relative;
+  overflow: hidden;
+}
+
+.sos-looped-static-glow::after {
+  content: "";
+  position: absolute;
+  bottom: -5px;
+  left: 0;
+  width: 100%;
+  height: 70%;
+  background: radial-gradient(
+    ellipse at 50% 100%,
+    rgba(100, 255, 100, 0.7) 0%,
+    rgba(100, 255, 100, 0) 70%
+  );
+  border-top-left-radius: 50%;
+  border-top-right-radius: 50%;
+  filter: blur(5px);
+}
+
+/* ========================================================= */
+/*   🔁  sos-loop-Playlist Indicator                            */
+/* ========================================================= */
+
+.currently-playing .sound-controls.flexrow {
+  flex-wrap: nowrap;
+  gap: 2px;
+}
+
+.sos-loop-playlist-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  font-size: 0.8rem;
+  color: #4aa8ff;
+  opacity: 0.9;
+  margin-right: 2px;
+}
+
+/* ========================================================= */
+/*   ⚙️  Configuration Sheets - Scrollable Layout           */
+/* ========================================================= */
+
+form[id^="PlaylistConfig-"],
+form[id^="PlaylistSoundConfig-"] {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+form[id^="PlaylistConfig-"] > section.window-content,
+form[id^="PlaylistSoundConfig-"] > section.window-content {
+  flex: 1;
+  overflow-y: auto !important;
+  padding-right: 10px;
+}
+
+/* ========================================================= */
+/*   Visual sos-loop Timeline                                   */
+/* ========================================================= */
+
+.sos-loop-timeline-container {
+  position: relative;
+  width: 100%;
+  height: 20px;
+  padding: 5px 0;
+  cursor: pointer;
+}
+
+.sos-loop-timeline-track {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 100%;
+  height: 4px;
+  background-color: #302831; /*Same color as the base foundry timeline tracks*/
+  border-radius: 2px;
+  transition: background-color 0.2s ease-in-out;
+}
+
+.sos-loop-timeline-container.validation-error .sos-loop-timeline-track {
+  background-color: #c00;
+}
+
+.sos-loop-timeline-warning-overlay {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  height: 12px;
+  background: repeating-linear-gradient(
+    45deg,
+    rgba(255, 0, 0, 0.4),
+    rgba(255, 0, 0, 0.4) 10px,
+    rgba(255, 50, 50, 0.4) 10px,
+    rgba(255, 50, 50, 0.4) 20px
+  );
+  border-radius: 6px;
+  z-index: 4;
+  pointer-events: none;
+  display: none;
+}
+
+.sos-loop-timeline-selection {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  height: 8px;
+  border-radius: 4px;
+  z-index: 1;
+  opacity: 0.85;
+}
+
+.sos-loop-timeline-handle {
+  position: absolute;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: 16px;
+  height: 16px;
+  border: 2px solid #191813;
+  border-radius: 50%;
+  z-index: 2;
+  cursor: ew-resize;
+}
+
+.sos-loop-timeline-handle.active {
+  box-shadow: 0 0 10px 2px #ff6400;
+}
+
+.sos-loop-timeline-progress {
+  position: absolute;
+  top: 50%;
+  left: 0;
+  transform: translateY(-50%);
+  height: 12px;
+  background-color: rgba(0, 150, 255, 0.6);
+  border-radius: 4px;
+  z-index: 0;
+  pointer-events: none;
+}
+
+.sos-loop-timeline-crossfade {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  height: 8px;
+  border-radius: 0 4px 4px 0;
+  z-index: 2;
+  pointer-events: none;
+  opacity: 0.85;
+}
+
+.sos-loop-timeline-crossfade::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: repeating-linear-gradient(
+    -45deg,
+    rgba(255, 255, 255, 0.1),
+    rgba(255, 255, 255, 0.1) 3px,
+    transparent 3px,
+    transparent 6px
+  );
+  border-radius: inherit;
+}
+
+.sos-loop-timeline-tooltip {
+  position: absolute;
+  bottom: calc(100% + 5px); /* Position above the timeline with a 5px gap */
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(0, 0, 0, 0.85);
+  color: #f0f0e0;
+  padding: 3px 8px;
+  border-radius: 4px;
+  font-family: monospace;
+  font-size: 0.9em;
+  white-space: nowrap;
+  pointer-events: none; /* Prevents the tooltip from blocking mouse events */
+  z-index: 10;
+
+  /* Animation properties */
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 0.2s ease, visibility 0s 0.2s;
+}
+
+.sos-loop-timeline-tooltip.visible {
+  opacity: 1;
+  visibility: visible;
+  transition: opacity 0.1s ease;
+}
+
+/* ========================================================= */
+/*   sos-loop Previewer Controls                                */
+/* ========================================================= */
+
+.sos-loop-editor .loading {
+  font-style: italic;
+  color: #888;
+}
+
+.form-group.sos-loop-editor {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+}
+
+.sos-loop-buttons-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  margin-top: 5px;
+}
+
+.sos-loop-buttons-group {
+  display: flex;
+  gap: 8px;
+}
+
+.sos-loop-timer {
+  font-family: monospace;
+  font-size: 1.1em;
+  color: #ddd;
+  flex-shrink: 0;
+}
+
+.sos-loop-buttons-row button {
+  flex-shrink: 0;
+  height: 28px;
+  line-height: 24px;
+  padding: 0 8px;
+}
+
+.sos-loop-buttons-row .sos-loop-play-pause,
+.sos-loop-buttons-row .sos-loop-stop {
+  width: 32px;
+}
+
+.sos-loop-timeline-row {
+  width: 100%;
+  margin-top: 5px;
+}
+
+/* ========================================================= */
+/*   sos-loop Segment Blocks                                    */
+/* ========================================================= */
+
+.sos-loop-segment-section {
+  border: 1px solid #333;
+  border-radius: 5px;
+  padding: 10px;
+  margin-top: 15px;
+  background: rgba(0, 0, 0, 0.1);
+}
+
+.sos-segment-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 10px;
+}
+
+.sos-segment-header h3 {
+  margin: 0;
+  border: none;
+  font-size: 1.1em;
+}
+
+button.sos-loop-preview-segment {
+  line-height: 1.2;
+}
+
+button.sos-loop-preview-segment i {
+  margin-right: 5px;
+}
+
+.sos-loop-controls-footer {
+  display: flex;
+  justify-content: center;
+  gap: 1em;
+  margin-top: 15px;
+  border-top: 1px solid #444;
+  padding-top: 10px;
+}
+
+.sos-loop-segment-section p.notes {
+  font-size: 0.9em;
+  color: #999;
+  margin-top: 0.25em;
+  font-style: italic;
+}
+
+.sos-loop-segment-section
+  .form-group
+  .checkbox
+  input[type="checkbox"][name*="skipToNext"] {
+  transform: scale(1.2);
+  margin-right: 0.5em;
+}
+
+.sos-loop-segment-section
+  .form-group
+  .checkbox
+  input[type="checkbox"][name*="skipToNext"]:checked
+  + label {
+  color: #ffa500;
+  font-weight: 500;
+}
+
+/* ========================================================= */
+/*   Sticky Update Button for Sound Config                  */
+/* ========================================================= */
+
+form[id^="PlaylistSoundConfig-"] > footer.form-footer {
+  position: sticky;
+  bottom: 0;
+  background: var(--color-bg-primary, #1c1c1c);
+  border-top: 1px solid var(--color-border-dark, #444);
+  padding: 0.5rem;
+  margin-top: auto;
+  z-index: 10;
+  box-shadow: 0 -2px 8px rgba(0, 0, 0, 0.3);
+}
+
+form[id^="PlaylistSoundConfig-"] > footer.form-footer button[type="submit"] {
+  width: 100%;
+  font-weight: bold;
+}
+
+/* ========================================================= */
+/*   Playlist Config - Compact Layout                       */
+/* ========================================================= */
+
+.sos-config-section {
+  margin-bottom: 8px;
+}
+
+.sos-config-section .form-group.sos-compact {
+  margin: 6px 0;
+}
+
+.sos-config-section .form-group.sos-compact label {
+  margin-bottom: 3px;
+  font-size: 0.95em;
+}
+
+.sos-config-section .form-group.sos-compact input[type="number"],
+.sos-config-section .form-group.sos-compact select {
+  padding: 3px 6px;
+  height: 28px;
+}
+
+.sos-feature-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 0;
+}
+
+.sos-feature-toggle input[type="checkbox"] {
+  margin: 0;
+}
+
+.sos-feature-label {
+  font-weight: 600;
+  font-size: 1em;
+}
+
+.sos-subsection {
+  border-left: 2px solid #555;
+  padding-left: 12px;
+  margin-left: 8px;
+  margin-bottom: 8px;
+}
+
+.sos-section-divider {
+  margin: 10px 0;
+  border-color: #444;
+}
+
+p.notes.sos-compact {
+  font-size: 0.85em;
+  margin: 3px 0 0 0;
+  line-height: 1.3;
+}
+
+p.notes.disabled-note {
+  color: #888;
+  font-style: italic;
+}
+
+.sos-label-units {
+  font-size: 0.85em;
+  opacity: 0.7;
+  font-weight: normal;
+}
+
+.radio-group {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.radio.sos-compact {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 2px 0;
+}
+
+.radio.sos-compact input[type="radio"] {
+  margin: 0;
+}
+
+.radio.sos-compact span {
+  font-size: 0.9em;
+}
+
+.sos-custom-fade-input {
+  margin-top: 4px !important;
+  margin-left: 20px;
+  width: calc(100% - 20px);
+}
+
+.sos-range-label {
+  font-size: 0.9em;
+  margin: 4px 0 2px 0;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.sos-range-label span {
+  font-weight: 600;
+  color: #ddd;
+}
+
+.sos-delay-group input[type="range"] {
+  margin: 0 0 8px 0;
+}
+
+.sos-section-divider {
+  /* Tighten the space around dividers */
+  margin: 6px 0;
+}
+
+/* A container for the main feature toggles */
+.sos-toggle-cluster {
+  display: flex;
+  flex-direction: column;
+  gap: 2px; /* Creates tight spacing between the toggles */
+}
+
+/* Reduce the bottom margin of subsections to pull them closer to their master toggle */
+.sos-subsection {
+  margin-bottom: 4px;
+}
+
+/* ========================================================= */
+/*   Sound Config - Compact Layout                          */
+/* ========================================================= */
+
+.sos-sound-config {
+  margin: 8px 0;
+}
+
+.sos-sound-config .form-group.sos-compact {
+  margin: 6px 0;
+}
+
+.sos-sound-config .form-group.sos-compact > label:not(.checkbox) {
+  margin-bottom: 3px;
+  font-size: 0.95em;
+}
+
+.sos-compact-checkbox {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+}
+
+.sos-compact-checkbox input[type="checkbox"] {
+  margin: 0;
+}
+
+.sos-compact-checkbox span {
+  font-size: 0.95em;
+}
+
+.sos-loop-active-row.sos-compact {
+  display: flex;
+  align-items: center;
+  padding: 4px 0;
+  margin-left: 20px;
+}
+
+.sos-loop-editor.sos-compact {
+  margin-top: 8px;
+  margin-bottom: 8px;
+}
+
+.sos-loop-editor.sos-compact .sos-editor-label {
+  font-size: 0.95em;
+  font-weight: 600;
+  margin-bottom: 4px;
+  display: block;
+}
+
+.sos-loop-buttons-row.sos-compact {
+  padding: 4px 0;
+  margin-bottom: 4px;
+}
+
+.sos-loop-buttons-row button.sos-compact {
+  height: 26px;
+  padding: 0 8px;
+  font-size: 0.9em;
+}
+
+.sos-loop-buttons-row .sos-loop-play-pause.sos-compact,
+.sos-loop-buttons-row .sos-loop-stop.sos-compact {
+  width: 30px;
+  padding: 0;
+}
+
+.sos-loop-segment-section.sos-compact {
+  border: 1px solid #444;
+  border-radius: 4px;
+  padding: 8px;
+  margin-top: 10px;
+  background: rgba(0, 0, 0, 0.15);
+}
+
+.sos-segment-header.sos-compact {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid #555;
+}
+
+.sos-segment-header.sos-compact h4 {
+  margin: 0;
+  font-size: 1.3em;
+  font-weight: 600;
+  border: none;
+}
+
+.sos-segment-preview-buttons {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+}
+
+button.sos-loop-preview-point.sos-compact {
+  height: 26px;
+  padding: 2px 8px;
+  font-size: 0.85em;
+  line-height: 1.2;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  background: rgba(255, 165, 0, 0.15);
+}
+
+button.sos-loop-preview-point.sos-compact:hover {
+  background: rgba(255, 165, 0, 0.25);
+}
+
+button.sos-loop-preview-point.sos-compact i {
+  font-size: 0.9em;
+}
+
+button.sos-loop-preview-segment.sos-compact {
+  height: 26px;
+  padding: 2px 8px;
+  font-size: 0.85em;
+  line-height: 1.2;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+button.sos-loop-preview-segment.sos-compact i {
+  font-size: 0.9em;
+}
+
+.sos-segment-content {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.sos-time-inputs {
+  display: flex;
+  gap: 8px;
+}
+
+.sos-time-input-wrapper {
+  flex: 1;
+}
+
+.sos-time-input-wrapper label {
+  display: block;
+  font-size: 0.9em;
+  margin-bottom: 2px;
+}
+
+.sos-time-input-wrapper input {
+  width: 100%;
+  padding: 3px 6px;
+  height: 26px;
+}
+
+.sos-two-column {
+  display: flex;
+  gap: 8px;
+}
+
+.sos-two-column .sos-column {
+  flex: 1;
+}
+
+.sos-two-column .sos-column label {
+  display: block;
+  font-size: 0.9em;
+  margin-bottom: 2px;
+}
+
+.sos-two-column .sos-column input {
+  width: 100%;
+  padding: 3px 6px;
+  height: 26px;
+}
+
+.sos-loop-controls-footer.sos-compact {
+  display: flex;
+  justify-content: center;
+  gap: 8px;
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px solid #555;
+}
+
+.sos-loop-controls-footer button.sos-compact {
+  flex: 1;
+  max-width: 160px;
+  height: 28px;
+  padding: 0 12px;
+  font-size: 0.9em;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+}
+
+.sos-loop-controls-footer button.sos-compact i {
+  font-size: 0.85em;
+}
+
+.sos-loop-segment-section.error.sos-compact {
+  background: rgba(139, 0, 0, 0.1);
+  border-color: #8b0000;
+}
+
+.sos-error-text {
+  color: #ff6b6b;
+  font-size: 0.9em;
+  margin: 4px 0;
+  text-align: center;
+}
+
+.sos-loop-segment-section .sos-compact-checkbox {
+  padding: 2px 0;
+}
+
+.sos-loop-segment-section .sos-compact-checkbox input[type="checkbox"] {
+  transform: scale(1.1);
+}
+
+.sos-loop-timeline-container-fallback p.loading {
+  font-size: 0.9em;
+  margin: 4px 0;
+}
+
+/* Fade zone indicators - more solid and Foundry-consistent */
+.sos-loop-timeline-fadein,
+.sos-loop-timeline-fadeout {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  height: 12px;
+  border-radius: 6px;
+  z-index: 0;
+  pointer-events: none;
+  opacity: 0.6;
+  transition: opacity 0.2s ease;
+}
+
+.sos-loop-timeline-fadein {
+  background: linear-gradient(
+    90deg,
+    rgba(102, 153, 204, 0.7) 0%,
+    rgba(102, 153, 204, 0.5) 100%
+  );
+  border-right: 2px solid rgba(102, 153, 204, 0.9);
+  box-shadow: inset 0 0 8px rgba(102, 153, 204, 0.4);
+}
+
+.sos-loop-timeline-fadeout {
+  background: linear-gradient(
+    90deg,
+    rgba(102, 153, 204, 0.5) 0%,
+    rgba(102, 153, 204, 0.7) 100%
+  );
+  border-left: 2px solid rgba(102, 153, 204, 0.9);
+  box-shadow: inset 0 0 8px rgba(102, 153, 204, 0.4);
+}
+
+/* Make fade zones more visible on hover */
+.sos-loop-timeline-container:hover .sos-loop-timeline-fadein,
+.sos-loop-timeline-container:hover .sos-loop-timeline-fadeout {
+  opacity: 0.8;
+}
+
+/* When timeline is in error state, fade zones become more prominent */
+.sos-loop-timeline-container.validation-error .sos-loop-timeline-fadein,
+.sos-loop-timeline-container.validation-error .sos-loop-timeline-fadeout {
+  opacity: 0.85;
+  border-color: rgba(200, 0, 0, 0.6);
+}
+
+/* Error message display */
+.sos-loop-validation-error-msg {
+  display: none;
+  background: rgba(200, 0, 0, 0.25);
+  border: 2px solid rgba(200, 0, 0, 0.6);
+  border-radius: 4px;
+  padding: 8px 12px;
+  margin-bottom: 8px;
+  color: #ff6b6b;
+  font-size: 0.95em;
+  font-weight: 600;
+  text-align: center;
+}
+
+.sos-segment-header.collapsible {
+  cursor: pointer;
+  position: relative; /* Added for the new pseudo-element */
+  /* The 'transition' property is removed as it's now on the pseudo-element */
+}
+
+.sos-segment-header.collapsible::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background-color: rgba(255, 255, 255, 0.05);
+  opacity: 0;
+  transition: opacity 0.2s ease;
+  pointer-events: none; /* Ensures it doesn't block clicks */
+}
+
+.sos-segment-header.collapsible:hover::before {
+  opacity: 1;
+}
+
+.sos-segment-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.segment-toggle-icon {
+  transition: transform 0.2s ease-in-out;
+  font-size: 0.9em;
+  width: 1em; /* Allocate space for the icon */
+  text-align: center;
+}
+
+/* Diagnostics Button in Playlist Header */
+.playlists-directory .directory-header .header-actions .sos-diagnostics {
+  width: 260px; /* Makes the button more square */
+  height: 26px;
+  padding: 0; /* Remove default horizontal padding */
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0; /* Prevent the button from being squished */
+}
+
+/* ========================================================= */
+/*   Normalized Volume Control - Currently Playing         */
+/* ========================================================= */
+
+li.sound.sos-normalized-volume-control {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  background: rgba(0, 0, 0, 0.15);
+  border-top: 1px solid rgba(255, 255, 255, 0.05);
+  margin: 0;
+  min-height: 24px;
+}
+
+li.sound.sos-normalized-volume-control label.sos-volume-label {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin: 0;
+  font-size: 0.75rem;
+  font-weight: 400;
+  color: var(--color-text-light-7, #999);
+  white-space: nowrap;
+  flex-shrink: 0;
+  min-width: 110px; /* Aligns with typical label width */
+}
+
+li.sound.sos-normalized-volume-control .volume-icon {
+  flex-shrink: 0;
+  font-size: 0.75rem;
+  color: var(--color-text-light-6, #aaa);
+  opacity: 0.7;
+}
+
+li.sound.sos-normalized-volume-control .sos-volume-slider-container {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  margin-right: 8px; /* Match sound volume slider positioning */
+}
+
+li.sound.sos-normalized-volume-control range-picker {
+  width: 100%;
+}
+
+/* Disabled state */
+li.sound.sos-normalized-volume-control.sos-is-disabled
+  .sos-volume-slider-container {
+  opacity: 0.4;
+  pointer-events: none;
+}
+
+li.sound.sos-normalized-volume-control.sos-is-disabled label.sos-volume-label,
+li.sound.sos-normalized-volume-control.sos-is-disabled .volume-icon {
+  opacity: 0.5;
+}
+
+.currently-playing li.sos-normalized-volume-control label.sos-volume-label {
+  color: var(--color-text-dark-primary, #ddd) !important;
+  opacity: 1 !important;
+}
+
+/* --- THE DEFINITIVE FIX --- */
+
+/* 1. When the LI is disabled, only fade the slider's container */
+li.sound.sos-normalized-volume-control.sos-is-disabled
+  .sos-volume-slider-container {
+  opacity: 0.5;
+  pointer-events: none;
+}
+
+/* 2. When the LI is disabled, make the label and icon slightly dimmer */
+li.sound.sos-normalized-volume-control.sos-is-disabled label,
+li.sound.sos-normalized-volume-control.sos-is-disabled .volume-icon {
+  color: var(--color-text-dark-secondary, #999);
+}
+
+/* The row itself */
+.sos-normalized-volume-control {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+}
+
+/* Label + icon as a single inline unit */
+.sos-normalized-volume-control .sos-volume-label {
+  display: inline-flex; /* not block */
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  white-space: nowrap; /* never wrap "Playlist Volume" */
+}
+
+/* Icon sizing/alignment */
+.sos-normalized-volume-control .volume-icon {
+  flex-shrink: 0;
+  width: 1em; /* consistent width */
+  text-align: center;
+}
+
+/* Let the slider take the remaining space */
+.sos-normalized-volume-control .sos-volume-slider-container {
+  flex: 1;
+  min-width: 120px; /* adjust if you still see wrapping */
+}
+
+/* Optional: disabled state visuals */
+.sos-normalized-volume-control.sos-is-disabled .sos-volume-slider-container {
+  opacity: 0.5;
+  pointer-events: none;
+}
+.sos-normalized-volume-control.sos-is-disabled .sos-volume-label,
+.sos-normalized-volume-control.sos-is-disabled .volume-icon {
+  opacity: 0.75;
+}
+
+form[id^="PlaylistConfig-"]
+  .form-group.slim:has(input[name="fade"])
+  .form-fields
+  input[type="number"] {
+  padding: 3px 6px;
+  height: 28px;
+  width: 100%;
+  min-width: 293px;
+  text-align: left;
+}
+
+/* ========================================================
+   Loop Control Buttons
+   ======================================================== */
+
+.sos-loop-controls {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  background: rgba(0, 0, 0, 0.1);
+  border-top: 1px solid rgba(0, 0, 0, 0.3);
+  margin: 0;
+}
+
+li.sound.sos-normalized-volume-control label.sos-volume-label {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin: 0;
+  font-size: 0.75rem;
+  font-weight: 400;
+  color: var(--color-text-light-7, #999);
+  white-space: nowrap;
+  flex-shrink: 0;
+  min-width: 110px; /* Aligns with typical label width */
+}
+
+.sos-controls-label {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--color-text-dark-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+  white-space: nowrap;
+  margin-right: 4px;
+}
+
+.sos-button-group {
+  display: flex;
+  gap: 2px;
+  flex: 1;
+  justify-content: flex-end;
+}
+
+.sos-loop-controls button {
+  padding: 3px 6px;
+  background: transparent;
+  border: 1px solid rgba(0, 0, 0, 0.3);
+  border-radius: 3px;
+  color: var(--color-text-light-primary);
+  cursor: pointer;
+  transition: all 0.15s ease;
+  min-width: 28px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.sos-loop-controls button:hover:not(.disabled) {
+  background: rgba(255, 255, 255, 0.1);
+  border-color: var(--color-border-light-highlight);
+  box-shadow: 0 0 5px rgba(255, 100, 0, 0.5);
+}
+
+.sos-loop-controls button.disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
+  background: transparent;
+}
+
+.sos-loop-controls button i {
+  font-size: 11px;
+  pointer-events: none;
+}
+
+/* Make the "Currently Playing" section more compact */
+.currently-playing .sound {
+  padding: 4px 8px;
+}
+
+.currently-playing .sound .sound-controls {
+  gap: 2px;
+}
+
+/* Visual separation for currently playing sound blocks */
+.currently-playing .playlist-sounds.plain {
+  border: 1px solid rgba(0, 0, 0, 0.3);
+  border-radius: 3px;
+  margin-bottom: 6px;
+  overflow: hidden;
+  background: linear-gradient(
+    to bottom,
+    rgba(0, 0, 0, 0.15),
+    rgba(0, 0, 0, 0.05)
+  );
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+}
+
+.currently-playing .playlist-sounds.plain:last-child {
+  margin-bottom: 0;
+}
+
+/* Subtle highlight on the sound name bar */
+.currently-playing .playlist-sounds.plain > .sound {
+  background: rgba(255, 255, 255, 0.03);
+  border-bottom: 1px solid rgba(0, 0, 0, 0.2);
+}
+
+/* Ensure controls beneath are visually grouped */
+.currently-playing .sos-normalized-volume-control,
+.currently-playing .sos-loop-controls {
+  background: rgba(0, 0, 0, 0.1);
+}
+
+/* Add subtle top border to controls for definition */
+.currently-playing .sos-normalized-volume-control {
+  border-top: 1px solid rgba(0, 0, 0, 0.15);
+}
+
+.currently-playing .sos-loop-controls {
+  border-top: 1px solid rgba(0, 0, 0, 0.15);
+}

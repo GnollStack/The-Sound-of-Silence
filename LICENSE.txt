@@ -1,0 +1,21 @@
+# END USER LICENSE AGREEMENT (EULA)
+
+**Software:** The-Sound-of-Silence
+**Author:** GnollStack
+**Copyright (c) 2025 GnollStack. All Rights Reserved.**
+
+## 1. GRANT OF LICENSE (PERSONAL USE)
+Permission is hereby granted, free of charge, to any person obtaining a copy of this software (the "Software"), to use the Software for **personal, non-commercial** tabletop role-playing game sessions.
+
+## 2. RESTRICTIONS
+You are strictly prohibited from doing any of the following without prior written consent from the Author:
+1.  **Selling:** You may not sell, rent, lease, or sublicense the Software.
+2.  **Redistribution:** You may not redistribute the Software in any form, including hosting the files on another server, repository, or website.
+3.  **Bundling:** You may not include this Software (in whole or in part) within other packages, modules, map packs, or adventures.
+4.  **Public Modification:** You may modify the Software for your own personal use, but you may NOT distribute those modifications to the public.
+
+## 3. COMMERCIAL USE AND INTEGRATION
+Developers, Map Makers, and Content Creators who wish to bundle, integrate, or commercially recommend this Software as part of a paid product must contact the Author (GnollStack) to obtain a Commercial License.
+
+## 4. DISCLAIMER OF WARRANTY
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
