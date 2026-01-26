@@ -89,6 +89,17 @@ class ShuffleStateManager {
 // =========================================================================
 
 /**
+ * Get all playable track IDs (excludes temporary silence gaps)
+ * @param {Playlist} playlist - The playlist to get tracks from
+ * @returns {string[]} Array of track IDs that should be included in shuffle
+ */
+function getPlayableTrackIds(playlist) {
+    return Array.from(playlist.sounds.values())
+        .filter(s => !s.getFlag(MODULE_ID, "isSilenceGap"))
+        .map(s => s.id);
+}
+
+/**
  * Fisher-Yates shuffle implementation
  * @param {Array} array Array to shuffle (modified in place)
  * @returns {Array} The shuffled array
@@ -114,10 +125,13 @@ class ExhaustiveShuffle {
      * @returns {Array<string>} Track IDs in play order
      */
     static generate(playlist, state) {
-        //  Filter Out Silent Gap Sounds
-        const allTrackIds = Array.from(playlist.sounds.values())
-            .filter(s => !s.getFlag(MODULE_ID, "isSilenceGap"))
-            .map(s => s.id);
+        const allTrackIds = getPlayableTrackIds(playlist);
+
+        // Handle empty playlist edge case
+        if (allTrackIds.length === 0) {
+            logFeature(LogSymbols.WARNING, 'Shuffle', `No playable tracks in "${playlist.name}"`);
+            return [];
+        }
 
         // If we haven't started or completed a cycle, generate new shuffle
         if (state.currentCycle.length === 0 || state.playedThisCycle.size >= allTrackIds.length) {
@@ -141,12 +155,13 @@ class ExhaustiveShuffle {
     static markPlayed(playlist, trackId, state) {
         state.playedThisCycle.add(trackId);
 
-        const total = playlist.sounds.size;
+        const allTrackIds = getPlayableTrackIds(playlist);
+        const totalTracks = allTrackIds.length;
         const played = state.playedThisCycle.size;
-        debug(`[Shuffle] Exhaustive: ${played}/${total} tracks played in cycle #${state.cycleNumber}`);
+        debug(`[Shuffle] Exhaustive: ${played}/${totalTracks} tracks played in cycle #${state.cycleNumber}`);
 
         // Check if the cycle is complete
-        if (state.playedThisCycle.size >= total) {
+        if (state.playedThisCycle.size >= totalTracks) {
             debug(`[Shuffle] Exhaustive: Cycle #${state.cycleNumber} complete! Will reshuffle next.`);
 
             // Invalidate our module's cache AND Foundry's cache to force a new cycle.
@@ -173,9 +188,13 @@ class WeightedRandomShuffle {
      * @returns {Array<string>}
      */
     static generate(playlist, state) {
-        const allTrackIds = Array.from(playlist.sounds.values())
-            .filter(s => !s.getFlag(MODULE_ID, "isSilenceGap"))
-            .map(s => s.id);
+        const allTrackIds = getPlayableTrackIds(playlist);
+
+        // Handle empty playlist edge case
+        if (allTrackIds.length === 0) {
+            logFeature(LogSymbols.WARNING, 'Shuffle', `No playable tracks in "${playlist.name}"`);
+            return [];
+        }
 
         // Initialize weights if needed
         if (state.trackWeights.size === 0) {
@@ -185,9 +204,8 @@ class WeightedRandomShuffle {
         // Check if we need to regenerate a new cycle.
         // This happens when the current order is exhausted.
         if (state.currentCycle.length === 0) {
-            //Force-clear the played set to guarantee a clean start for the new cycle.
-            // This fixes the stale state bug.
-            if (state.playedThisCycle) state.playedThisCycle.clear();
+            // Clear the played set to guarantee a clean start for the new cycle
+            state.playedThisCycle.clear();
 
             // Generate weighted shuffle
             const order = [];
@@ -207,8 +225,11 @@ class WeightedRandomShuffle {
     }
 
     /**
-     * Select a random track based on weights
+     * Select a random track based on weights using weighted random selection
      * @private
+     * @param {string[]} tracks - Array of available track IDs
+     * @param {Map<string, number>} weights - Map of track ID to weight (0.1-1.0)
+     * @returns {string} Selected track ID
      */
     static _selectWeightedRandom(tracks, weights) {
         const totalWeight = tracks.reduce((sum, id) => sum + (weights.get(id) || this.MAX_WEIGHT), 0);
@@ -247,9 +268,7 @@ class WeightedRandomShuffle {
         // CAPTURE the correct count BEFORE the set is potentially cleared.
         const playedCount = state.playedThisCycle.size;
 
-        const allTrackIds = Array.from(playlist.sounds.values())
-            .filter(s => !s.getFlag(MODULE_ID, "isSilenceGap"))
-            .map(s => s.id);
+        const allTrackIds = getPlayableTrackIds(playlist);
         const totalTracks = allTrackIds.length;
 
         // Recalculate weights based on history
@@ -270,11 +289,14 @@ class WeightedRandomShuffle {
      * Update track weights based on play history
      * @private
      */
+    /**
+     * Update track weights based on play history
+     * @private
+     * @param {Playlist} playlist - The playlist being shuffled
+     * @param {Object} state - Current shuffle state
+     */
     static _updateWeights(playlist, state) {
-        //  Filter Out Silent Gap Sounds
-        const allTrackIds = Array.from(playlist.sounds.values())
-            .filter(s => !s.getFlag(MODULE_ID, "isSilenceGap"))
-            .map(s => s.id);
+        const allTrackIds = getPlayableTrackIds(playlist);
         const now = Date.now();
 
         allTrackIds.forEach(trackId => {
@@ -313,10 +335,13 @@ class RoundRobinShuffle {
      * @returns {Array<string>}
      */
     static generate(playlist, state) {
-        //  Filter Out Silent Gap Sounds
-        const allTrackIds = Array.from(playlist.sounds.values())
-            .filter(s => !s.getFlag(MODULE_ID, "isSilenceGap"))
-            .map(s => s.id);
+        const allTrackIds = getPlayableTrackIds(playlist);
+
+        // Handle empty playlist edge case
+        if (allTrackIds.length === 0) {
+            logFeature(LogSymbols.WARNING, 'Shuffle', `No playable tracks in "${playlist.name}"`);
+            return [];
+        }
 
         // Track play counts
         if (!state.roundRobinCounts) {
@@ -374,7 +399,8 @@ class RoundRobinShuffle {
         }
         state.playedThisCycle.add(trackId);
 
-        const totalTracks = playlist.sounds.size;
+        const allTrackIds = getPlayableTrackIds(playlist);
+        const totalTracks = allTrackIds.length;
         debug(`[Shuffle] Round-Robin: "${playlist.sounds.get(trackId)?.name}" played ${currentCount + 1} times total (${state.playedThisCycle.size}/${totalTracks} in cycle)`);
 
         // Check if cycle complete - force reshuffle
@@ -415,9 +441,10 @@ export class AdvancedShuffle {
         // CRITICAL: Return cached order if it exists and is still valid
         if (state.currentCycle && state.currentCycle.length > 0) {
             // Verify cached order matches current tracks (in case tracks were added/removed)
-            const currentTrackIds = new Set(playlist.sounds.keys());
-            const cacheValid = state.currentCycle.every(id => currentTrackIds.has(id)) &&
-                state.currentCycle.length === currentTrackIds.size;
+            const currentTrackIds = getPlayableTrackIds(playlist);
+            const currentTrackSet = new Set(currentTrackIds);
+            const cacheValid = state.currentCycle.every(id => currentTrackSet.has(id)) &&
+                state.currentCycle.length === currentTrackIds.length;
 
             if (cacheValid) {
                 return state.currentCycle; // Use cached order
@@ -493,15 +520,36 @@ export class AdvancedShuffle {
 
         // Remove deleted tracks from state
         const currentTrackIds = new Set(playlist.sounds.keys());
-        state.playedThisCycle = new Set([...state.playedThisCycle].filter(id => currentTrackIds.has(id)));
+
+        // Optimize Set operations - delete in place instead of creating new Set
+        state.playedThisCycle.forEach(id => {
+            if (!currentTrackIds.has(id)) {
+                state.playedThisCycle.delete(id);
+            }
+        });
+
+        // Filter currentCycle array
         state.currentCycle = state.currentCycle.filter(id => currentTrackIds.has(id));
 
         // For weighted and round-robin, update data structures
         if (state.trackWeights) {
-            state.trackWeights = new Map([...state.trackWeights].filter(([id]) => currentTrackIds.has(id)));
+            state.trackWeights.forEach((value, id) => {
+                if (!currentTrackIds.has(id)) {
+                    state.trackWeights.delete(id);
+                }
+            });
         }
         if (state.roundRobinCounts) {
-            state.roundRobinCounts = new Map([...state.roundRobinCounts].filter(([id]) => currentTrackIds.has(id)));
+            state.roundRobinCounts.forEach((value, id) => {
+                if (!currentTrackIds.has(id)) {
+                    state.roundRobinCounts.delete(id);
+                }
+            });
+        }
+
+        // Clean up play history for weighted random
+        if (state.playHistory) {
+            state.playHistory = state.playHistory.filter(h => currentTrackIds.has(h.trackId));
         }
 
         debug(`[Shuffle] Updated state for track changes in "${playlist.name}"`);

@@ -177,6 +177,12 @@ export function equalPowerCrossfade(soundOut, soundIn, duration) {
   const contextOut = soundOut.context;
   const contextIn = soundIn.context;
 
+  // Defensive check: verify gain nodes and contexts exist
+  if (!gainOut || !gainIn || !contextOut || !contextIn) {
+    debug(`[AF] Missing gain nodes or audio contexts. Aborting crossfade.`);
+    return;
+  }
+
   const startVolOut = gainOut.value;
   const targetVolIn = soundIn._manager?.volume ?? 1.0;
 

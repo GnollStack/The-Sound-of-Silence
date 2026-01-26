@@ -90,6 +90,12 @@ export async function performCrossfade(playlist, soundToFade) {
       return;
     }
 
+    // Verify incoming sound has a valid gain node
+    if (!soundIn.gain) {
+      debug(`[CF] Incoming sound does not have a gain node. Aborting equal-power crossfade.`);
+      return;
+    }
+
     // Emit crossfade start event
     Hooks.callAll('the-sound-of-silence.crossfadeStart', {
       playlist,
