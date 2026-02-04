@@ -10,6 +10,8 @@ import { cancelCrossfade } from "./cross-fade.js";
 import { Flags } from "./flag-service.js";
 import { State } from "./state-manager.js";  //  Import State manager
 
+const AudioTimeout = foundry.audio.AudioTimeout;
+
 /**
  * Creates and starts a new LoopingSound instance for a given PlaylistSound.
  * This function is idempotent; it will cancel any existing looper for the sound before creating a new one.
@@ -44,12 +46,13 @@ export function scheduleLoopWithin(ps) {
   const looper = new LoopingSound(ps, cfg);
   State.setActiveLooper(ps, looper);  //  Use State manager
 
-  // Start the looper with a small delay to avoid race conditions with Foundry's audio system
-  setTimeout(() => {
+  // Start the looper with a small delay to avoid race conditions with Foundry's audio system.
+  // Uses AudioTimeout to avoid browser throttling in background tabs.
+  AudioTimeout.wait(50).then(() => {
     if (!looper.isDestroyed) {
       looper.start();
     }
-  }, 50); // 50ms delay to let Foundry's audio system settle
+  });
 }
 
 /**

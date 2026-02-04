@@ -144,7 +144,7 @@ export class LoopingSound {
                 if (stableCount > 0) debug(`[LoopingSound] Position unstable, resetting check`);
                 stableCount = 0;
               }
-              setTimeout(checkPosition, POSITION_CHECK_INTERVAL);
+              AudioTimeout.wait(POSITION_CHECK_INTERVAL).then(checkPosition);
             };
             checkPosition();
           });
@@ -287,7 +287,7 @@ export class LoopingSound {
 
     const ct = Number(this.activeSound.currentTime);
     if (!Number.isFinite(ct)) {
-      setTimeout(() => this._armNextTimer(), 100);
+      AudioTimeout.wait(100).then(() => this._armNextTimer());
       return;
     }
 
@@ -361,7 +361,7 @@ export class LoopingSound {
 
     if (!Number.isFinite(currentTime)) {
       debug(`[LoopingSound] ❌ Invalid currentTime, retrying in 100ms`);
-      setTimeout(() => this._armCrossfadeLoop(), 100);
+      AudioTimeout.wait(100).then(() => this._armCrossfadeLoop());
       return;
     }
 
@@ -392,8 +392,11 @@ export class LoopingSound {
       const settleDelayMs = 1000; // Use a short, 1-second delay to let the audio engine stabilize.
       debug(`  Hybrid scheduling active. Waiting ${settleDelayMs}ms before using precise timer.`);
 
-      // Use a low-precision setTimeout for the initial short delay.
-      const timeoutId = setTimeout(() => {
+      // Use AudioTimeout for the initial short delay (immune to browser tab throttling).
+      const settleTimer = new AudioTimeout(settleDelayMs);
+      this.loopCrossfadeTimer = settleTimer;
+
+      settleTimer.complete.then(() => {
         if (this.isDestroyed) {
           debug(`[LoopingSound] Destroyed during settle delay, aborting timer setup`);
           return;
@@ -423,14 +426,7 @@ export class LoopingSound {
             this._performCrossfadeLoop();
           }, fireAt);
         }
-      }, settleDelayMs);
-
-      // Store a way to cancel this initial timeout.
-      this.loopCrossfadeTimer = {
-        timeout: {
-          cancel: () => clearTimeout(timeoutId)
-        }
-      };
+      });
 
     } else {
       // This is the normal, high-precision path for all standard loops.
@@ -444,9 +440,9 @@ export class LoopingSound {
 
       // Add a fallback in case the precise schedule fails for any reason.
       this.loopCrossfadeTimer.catch?.(err => {
-        debug(`  ⚠️ Precise schedule failed, falling back to setTimeout: ${err.message}`);
+        debug(`  ⚠️ Precise schedule failed, falling back to AudioTimeout: ${err.message}`);
         const crossfadeDelayMs = untilFade * 1000;
-        setTimeout(() => { if (!this.isDestroyed) this._performCrossfadeLoop(); }, crossfadeDelayMs);
+        AudioTimeout.wait(crossfadeDelayMs).then(() => { if (!this.isDestroyed) this._performCrossfadeLoop(); });
       });
     }
   }
@@ -547,12 +543,13 @@ export class LoopingSound {
     equalPowerCrossfade(sourceSound, targetSound, crossfadeMs);
 
     // Force volume after a short delay in case the crossfade fails to ramp up.
-    setTimeout(() => {
+    // Uses AudioTimeout to avoid browser throttling in background tabs.
+    AudioTimeout.wait(crossfadeMs / 2).then(() => {
       if (!this.isDestroyed && targetSound?.playing && targetSound.volume < this.ps.volume / 2) {
         debug(`[LoopingSound] Crossfade may have stalled, forcing volume to target`);
         targetSound.volume = this.ps.volume;
       }
-    }, crossfadeMs / 2);
+    });
 
     this.handoffTimer?.cancel();
     this.handoffTimer = new AudioTimeout(crossfadeMs + HANDOFF_BUFFER);
@@ -687,7 +684,7 @@ export class LoopingSound {
       } else {
         // If silence is not enabled, just play the next track after a short buffer.
         debug(`[LoopingSound] Silence is disabled. Advancing to next track immediately.`);
-        setTimeout(() => playNextOrLoop(), 100);
+        AudioTimeout.wait(100).then(() => playNextOrLoop());
       }
     }
   }

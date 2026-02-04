@@ -5,6 +5,7 @@ import { equalPowerCrossfade, fadeOutAndStop } from "./audio-fader.js";
 import { Flags } from "./flag-service.js";
 import { State } from "./state-manager.js";
 
+const AudioTimeout = foundry.audio.AudioTimeout;
 const PM = CONST.PLAYLIST_MODES;
 
 /**
@@ -32,12 +33,12 @@ export async function performCrossfade(playlist, soundToFade) {
     return;
   }
 
-  setTimeout(() => {
+  AudioTimeout.wait(fadeMs + 500).then(() => {
     if (soundToFade?.sound) {
       State.clearFadingSound(soundToFade.sound);
       debug(`[CF] (debounce) Released lock for "${soundToFade.name}".`);
     }
-  }, fadeMs + 500);
+  });
 
   cancelCrossfade(playlist);
 
@@ -59,7 +60,7 @@ export async function performCrossfade(playlist, soundToFade) {
   if (!soundToPlay) {
     debug(`[CF] No next track found. Fading out "${soundToFade.name}" and stopping.`);
     fadeOutAndStop(soundToFade.sound, fadeMs);
-    setTimeout(() => { if (playlist.playing) playlist.stopAll(); }, fadeMs);
+    AudioTimeout.wait(fadeMs).then(() => { if (playlist.playing) playlist.stopAll(); });
     return;
   }
 
@@ -84,6 +85,13 @@ export async function performCrossfade(playlist, soundToFade) {
     soundIn.volume = 0;
     await soundIn.play({ _fromCrossfade: true });
 
+    // The gain node may not be available immediately after play() resolves.
+    // Wait briefly to allow the Web Audio graph to finish connecting.
+    // Uses AudioTimeout to avoid browser throttling in background tabs.
+    if (!soundIn.gain) {
+      await AudioTimeout.wait(200);
+    }
+
     // Verify outgoing sound is still valid
     if (!soundOut.playing || !soundOut.gain) {
       debug(`[CF] Outgoing sound was stopped prematurely. Aborting equal-power crossfade.`);
@@ -92,7 +100,7 @@ export async function performCrossfade(playlist, soundToFade) {
 
     // Verify incoming sound has a valid gain node
     if (!soundIn.gain) {
-      debug(`[CF] Incoming sound does not have a gain node. Aborting equal-power crossfade.`);
+      debug(`[CF] Incoming sound does not have a gain node after waiting. Aborting equal-power crossfade.`);
       return;
     }
 
@@ -118,7 +126,8 @@ export async function performCrossfade(playlist, soundToFade) {
     crossfadeSuccessful = true;
 
     // 5. After the fade completes, stop the audio and emit the completion event.
-    setTimeout(() => {
+    // Uses AudioTimeout to avoid browser throttling in background tabs.
+    AudioTimeout.wait(fadeMs + 50).then(() => {
       // Clear the crossfading flag now that the audio transition is truly complete
       State.clearPlaylistCrossfading(playlist);
 
@@ -135,7 +144,7 @@ export async function performCrossfade(playlist, soundToFade) {
         fromSound: soundToFade,
         toSound: soundToPlay
       });
-    }, fadeMs + 50);
+    });
 
   } catch (err) {
     console.error(`[${MODULE_ID}] Crossfade error:`, err);
@@ -145,7 +154,7 @@ export async function performCrossfade(playlist, soundToFade) {
     if (!crossfadeSuccessful) {
       State.clearPlaylistCrossfading(playlist);
     }
-    // If successful, the setTimeout will clear it when the audio fade finishes
+    // If successful, the AudioTimeout will clear it when the audio fade finishes
   }
 }
 

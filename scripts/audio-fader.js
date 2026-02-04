@@ -1,6 +1,6 @@
 // audio-fader.js - Advanced audio fading utilities for Foundry VTT
 
-import { debug } from "./utils.js";
+import { debug, MODULE_ID } from "./utils.js";
 import { State } from "./state-manager.js";
 
 const AudioTimeout = foundry.audio.AudioTimeout;
@@ -67,6 +67,139 @@ function generateExponentialCurve(startVol, targetVol, resolution) {
   return curve;
 }
 
+/**
+ * Generates a linear fade curve (straight-line interpolation).
+ * Volume changes at a constant rate. Sounds perceptually "fast then slow"
+ * due to logarithmic human hearing.
+ *
+ * @param {number} startVol Starting volume (0 to 1)
+ * @param {number} targetVol Target volume (0 to 1)
+ * @param {number} resolution Number of samples in the curve
+ * @returns {Float32Array} Curve data for setValueCurveAtTime
+ */
+function generateLinearCurve(startVol, targetVol, resolution) {
+  const curve = new Float32Array(resolution);
+
+  if (!Number.isFinite(startVol)) startVol = 0;
+  if (!Number.isFinite(targetVol)) targetVol = 1;
+
+  startVol = Math.max(0, Math.min(1, startVol));
+  targetVol = Math.max(0, Math.min(1, targetVol));
+
+  for (let i = 0; i < resolution; i++) {
+    const progress = i / (resolution - 1);
+    curve[i] = startVol + (targetVol - startVol) * progress;
+    curve[i] = Math.max(0, Math.min(1, curve[i]));
+  }
+
+  curve[0] = startVol;
+  curve[resolution - 1] = targetVol;
+
+  return curve;
+}
+
+/**
+ * Generates an S-Curve fade using Hermite smoothstep interpolation.
+ * Eases in gently, accelerates through the middle, eases out gently.
+ * Formula: 3t² - 2t³
+ *
+ * @param {number} startVol Starting volume (0 to 1)
+ * @param {number} targetVol Target volume (0 to 1)
+ * @param {number} resolution Number of samples in the curve
+ * @returns {Float32Array} Curve data for setValueCurveAtTime
+ */
+function generateSCurve(startVol, targetVol, resolution) {
+  const curve = new Float32Array(resolution);
+
+  if (!Number.isFinite(startVol)) startVol = 0;
+  if (!Number.isFinite(targetVol)) targetVol = 1;
+
+  startVol = Math.max(0, Math.min(1, startVol));
+  targetVol = Math.max(0, Math.min(1, targetVol));
+
+  for (let i = 0; i < resolution; i++) {
+    const t = i / (resolution - 1);
+    const smoothed = t * t * (3 - 2 * t); // Hermite smoothstep
+    curve[i] = startVol + (targetVol - startVol) * smoothed;
+    curve[i] = Math.max(0, Math.min(1, curve[i]));
+  }
+
+  curve[0] = startVol;
+  curve[resolution - 1] = targetVol;
+
+  return curve;
+}
+
+/**
+ * Generates a steep fade curve with fast initial change and gradual approach.
+ * Front-loads the volume change for a more dramatic effect.
+ * Formula: 1 - (1-t)³ (inverse cubic ease-out)
+ *
+ * @param {number} startVol Starting volume (0 to 1)
+ * @param {number} targetVol Target volume (0 to 1)
+ * @param {number} resolution Number of samples in the curve
+ * @returns {Float32Array} Curve data for setValueCurveAtTime
+ */
+function generateSteepCurve(startVol, targetVol, resolution) {
+  const curve = new Float32Array(resolution);
+
+  if (!Number.isFinite(startVol)) startVol = 0;
+  if (!Number.isFinite(targetVol)) targetVol = 1;
+
+  startVol = Math.max(0, Math.min(1, startVol));
+  targetVol = Math.max(0, Math.min(1, targetVol));
+
+  for (let i = 0; i < resolution; i++) {
+    const t = i / (resolution - 1);
+    const steep = 1 - Math.pow(1 - t, 3); // Inverse cubic ease-out
+    curve[i] = startVol + (targetVol - startVol) * steep;
+    curve[i] = Math.max(0, Math.min(1, curve[i]));
+  }
+
+  curve[0] = startVol;
+  curve[resolution - 1] = targetVol;
+
+  return curve;
+}
+
+/**
+ * Reads the fade curve type from module settings for the given direction.
+ * @param {"in"|"out"} direction Whether this is a fade-in or fade-out
+ * @returns {string} The curve type key (e.g. "logarithmic", "linear", "s-curve", "steep")
+ */
+function getFadeCurveType(direction) {
+  const key = direction === "in" ? "fadeInCurveType" : "fadeOutCurveType";
+  try {
+    return game.settings.get(MODULE_ID, key) || "logarithmic";
+  } catch (_) {
+    // Settings not yet registered — use default
+    return "logarithmic";
+  }
+}
+
+/**
+ * Dispatcher that generates a fade curve for the given curve type.
+ *
+ * @param {number} startVol Starting volume (0 to 1)
+ * @param {number} targetVol Target volume (0 to 1)
+ * @param {number} resolution Number of samples in the curve
+ * @param {string} curveType The curve type key
+ * @returns {Float32Array} Curve data for setValueCurveAtTime
+ */
+function generateFadeCurve(startVol, targetVol, resolution, curveType) {
+  switch (curveType) {
+    case "linear":
+      return generateLinearCurve(startVol, targetVol, resolution);
+    case "s-curve":
+      return generateSCurve(startVol, targetVol, resolution);
+    case "steep":
+      return generateSteepCurve(startVol, targetVol, resolution);
+    case "logarithmic":
+    default:
+      return generateExponentialCurve(startVol, targetVol, resolution);
+  }
+}
+
 // --- Fader Functions ---
 
 const ACTIVE_FADES = new WeakMap();
@@ -83,7 +216,7 @@ export function cancelActiveFade(sound) {
 }
 
 /**
- * Fades a sound using an exponential curve that sounds perceptually linear.
+ * Fades a sound using the globally configured curve type.
  * Executed on the audio thread for precise, glitch-free fading.
  *
  * @param {Sound} sound The V13 Sound object.
@@ -120,10 +253,12 @@ export function advancedFade(sound, { targetVol, duration }) {
   // Calculate dynamic resolution based on fade duration
   const resolution = calculateResolution(duration);
 
-  // Generate perceptually linear exponential curve
-  const curve = generateExponentialCurve(startVol, targetVol, resolution);
+  // Determine fade direction and resolve the appropriate curve type
+  const direction = targetVol >= startVol ? "in" : "out";
+  const curveType = getFadeCurveType(direction);
+  const curve = generateFadeCurve(startVol, targetVol, resolution, curveType);
 
-  debug(`[AF] Fade: ${startVol.toFixed(3)} → ${targetVol.toFixed(3)} over ${duration}ms (${resolution} samples)`);
+  debug(`[AF] Fade-${direction} (${curveType}): ${startVol.toFixed(3)} → ${targetVol.toFixed(3)} over ${duration}ms (${resolution} samples)`);
 
   // Schedule on the audio thread (slight offset to avoid collision with setValueAtTime)
   gain.setValueCurveAtTime(curve, context.currentTime + 0.001, durationSec);

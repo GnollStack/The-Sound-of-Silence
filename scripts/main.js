@@ -47,6 +47,8 @@ import { State } from "./state-manager.js";
 import { API } from "./api.js";
 import { AdvancedShuffle, SHUFFLE_PATTERNS } from "./advanced-shuffle.js";
 
+const AudioTimeout = foundry.audio.AudioTimeout;
+
 // =========================================================================
 // Constants & State
 // =========================================================================
@@ -123,6 +125,36 @@ Hooks.once("init", () => {
       );
     },
   });
+
+  game.settings.register(MODULE_ID, "fadeInCurveType", {
+    name: "Fade-In Curve Type",
+    hint: "Controls the volume curve shape for fade-ins. Logarithmic (default) sounds perceptually linear. Linear is a straight volume ramp. S-Curve eases in and out smoothly. Steep front-loads the volume change for a more dramatic effect.",
+    scope: "world",
+    config: true,
+    type: String,
+    choices: {
+      "logarithmic": "Logarithmic (Default)",
+      "linear": "Linear",
+      "s-curve": "S-Curve (Smooth ease in/out)",
+      "steep": "Steep (Fast attack)",
+    },
+    default: "logarithmic",
+  });
+
+  game.settings.register(MODULE_ID, "fadeOutCurveType", {
+    name: "Fade-Out Curve Type",
+    hint: "Controls the volume curve shape for fade-outs. Logarithmic (default) sounds perceptually linear. Linear is a straight volume ramp. S-Curve eases in and out smoothly. Steep front-loads the volume change for a more dramatic effect.",
+    scope: "world",
+    config: true,
+    type: String,
+    choices: {
+      "logarithmic": "Logarithmic (Default)",
+      "linear": "Linear",
+      "s-curve": "S-Curve (Smooth ease in/out)",
+      "steep": "Steep (Fast attack)",
+    },
+    default: "logarithmic",
+  });
 });
 
 Hooks.once("ready", () => {
@@ -140,6 +172,47 @@ Hooks.once("ready", () => {
 
   registerPlaylistSheetWrappers();
   registerSoundConfigWrappers();
+
+  // --- Visibility Recovery (Safety Net) ---
+  // When the browser tab regains focus, validate and recover module state.
+  // Browser throttling can cause setTimeout-based cleanup to be delayed or missed.
+  // This listener catches any stale state left behind.
+  document.addEventListener("visibilitychange", () => {
+    if (document.hidden) return; // Only act when tab comes BACK to focus
+
+    debug("[Visibility] Tab regained focus. Validating module state...");
+
+    for (const playlist of game.playlists) {
+      if (!playlist.playing) continue;
+
+      // 1. Clear stale crossfade locks
+      if (State.isPlaylistCrossfading(playlist) && !State.getCrossfadeTimer(playlist)) {
+        debug(`[Visibility] Clearing stale crossfading flag for "${playlist.name}"`);
+        State.clearPlaylistCrossfading(playlist);
+      }
+
+      // 2. Clear stale fading sound locks
+      for (const ps of playlist.sounds) {
+        if (ps.sound && State.isSoundFading(ps.sound)) {
+          const gain = ps.sound.gain?.value;
+          if (gain !== undefined && (gain < 0.01 || gain > 0.95)) {
+            debug(`[Visibility] Clearing stale fading lock for "${ps.name}" (gain=${gain.toFixed(3)})`);
+            State.clearFadingSound(ps.sound);
+          }
+        }
+      }
+
+      // 3. Re-validate crossfade scheduling for playing playlists
+      const mode = Flags.getPlaybackMode(playlist);
+      if (mode.crossfade && !State.getCrossfadeTimer(playlist)) {
+        const currentlyPlaying = playlist.sounds.find(s => s.playing && !Flags.getSoundFlag(s, "isSilenceGap"));
+        if (currentlyPlaying) {
+          debug(`[Visibility] Re-arming crossfade timer for "${currentlyPlaying.name}"`);
+          scheduleCrossfade(playlist, currentlyPlaying);
+        }
+      }
+    }
+  });
 
   // This hook reacts to flag changes caused by UI interactions or other clients.
   Hooks.on("updatePlaylistSound", (soundDoc, changes) => {
@@ -543,11 +616,11 @@ Hooks.once("ready", () => {
           `[Stop-Client] Fading out "${ps.name}" over ${dur}ms (replicated).`
         );
         advancedFade(media, { targetVol: 0, duration: dur });
-        setTimeout(() => {
+        AudioTimeout.wait(dur + 10).then(() => {
           try {
             media.stop();
           } catch (_) { }
-        }, dur + 10);
+        });
       } else {
         try {
           media.stop();

@@ -3,6 +3,8 @@
 
 import { State } from "./state-manager.js";
 
+const AudioTimeout = foundry.audio.AudioTimeout;
+
 // Module identifier for flag storage and settings as well as debug logging.
 export const MODULE_ID = "the-sound-of-silence";
 
@@ -114,7 +116,7 @@ export function waitForMedia(ps) {
                 debug(`[waitForMedia] ⌛ Timed out waiting for media for "${ps.name}"`);
                 return resolve(null);
             }
-            setTimeout(check, interval);
+            AudioTimeout.wait(interval).then(check);
         };
 
         debug(`[waitForMedia] ⏳ Waiting for media on "${ps.name}"...`);
