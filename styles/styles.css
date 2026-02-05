@@ -80,6 +80,73 @@
   --sos-shadow-lg: 0 4px 8px rgba(0, 0, 0, 0.3);
   --sos-shadow-inset: inset 0 2px 3px rgba(0, 0, 0, 0.3);
   --sos-shadow-glow: 0 0 4px var(--sos-hover-glow);
+
+  /* Button Appearance */
+  --sos-btn-bg: linear-gradient(to bottom, rgba(255,255,255,0.05), rgba(0,0,0,0.1));
+  --sos-btn-inset-shadow: inset 0 1px 0 rgba(255,255,255,0.08);
+  --sos-btn-hover-bg: linear-gradient(to bottom, rgba(255,255,255,0.08), rgba(0,0,0,0.05));
+  --sos-btn-text-shadow: 0 -1px 0 rgba(0, 0, 0, 0.4);
+}
+
+/* ========================================================= */
+/*   Light Mode Overrides                                    */
+/* ========================================================= */
+
+body.theme-light {
+  /* State Colors */
+  --sos-active-bg: rgba(40, 160, 120, 0.18);
+  --sos-active-border: rgba(40, 160, 120, 0.45);
+  --sos-active-glow: rgba(40, 160, 120, 0.5);
+
+  --sos-inactive-bg: rgba(180, 70, 50, 0.14);
+  --sos-inactive-border: rgba(180, 70, 50, 0.4);
+
+  --sos-loop-active-bg: rgba(200, 140, 40, 0.2);
+  --sos-loop-active-border: rgba(200, 140, 40, 0.45);
+
+  --sos-crossfade-bg: rgba(60, 110, 160, 0.3);
+  --sos-crossfade-border: rgba(60, 110, 160, 0.5);
+
+  --sos-neutral-bg: rgba(120, 115, 110, 0.12);
+  --sos-disabled-bg: rgba(180, 180, 180, 0.2);
+
+  /* Text Colors */
+  --sos-text-primary: #2c2a28;
+  --sos-text-secondary: #555;
+  --sos-text-disabled: #999;
+  --sos-text-label: #666;
+
+  /* Borders */
+  --sos-border-light: rgba(0, 0, 0, 0.12);
+  --sos-border-medium: rgba(0, 0, 0, 0.2);
+  --sos-border-heavy: rgba(0, 0, 0, 0.35);
+  --sos-border-subtle: rgba(0, 0, 0, 0.08);
+
+  /* Backgrounds */
+  --sos-bg-elevated: rgba(0, 0, 0, 0.04);
+  --sos-bg-sunken: rgba(0, 0, 0, 0.07);
+  --sos-bg-overlay: rgba(255, 255, 255, 0.92);
+
+  /* Effects */
+  --sos-error-bg: rgba(200, 50, 50, 0.1);
+  --sos-error-border: rgba(200, 50, 50, 0.5);
+  --sos-error-text: #c62828;
+
+  --sos-hover-overlay: rgba(0, 0, 0, 0.06);
+  --sos-hover-glow: rgba(200, 120, 40, 0.5);
+
+  /* Shadows */
+  --sos-shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.1);
+  --sos-shadow-md: 0 2px 4px rgba(0, 0, 0, 0.12);
+  --sos-shadow-lg: 0 4px 8px rgba(0, 0, 0, 0.15);
+  --sos-shadow-inset: inset 0 2px 3px rgba(0, 0, 0, 0.1);
+  --sos-shadow-glow: 0 0 4px var(--sos-hover-glow);
+
+  /* Button Appearance */
+  --sos-btn-bg: linear-gradient(to bottom, rgba(0,0,0,0.03), rgba(0,0,0,0.08));
+  --sos-btn-inset-shadow: inset 0 1px 0 rgba(255,255,255,0.5);
+  --sos-btn-hover-bg: linear-gradient(to bottom, rgba(0,0,0,0.05), rgba(0,0,0,0.1));
+  --sos-btn-text-shadow: none;
 }
 
 /* ========================================================= */
@@ -120,7 +187,7 @@ button.xfade-toggle {
   display: flex;
   align-items: center;
   justify-content: center;
-  text-shadow: 0 -1px 0 rgba(0, 0, 0, 0.4);
+  text-shadow: var(--sos-btn-text-shadow);
 }
 
 button.sos-toggle.active,
@@ -173,7 +240,7 @@ button.sos-loop-toggle {
   border-radius: var(--sos-radius-sm);
   padding: 2px 3px;
   transition: all 0.15s ease;
-  text-shadow: 0 -1px 0 rgba(0, 0, 0, 0.4);
+  text-shadow: var(--sos-btn-text-shadow);
 }
 
 button.sos-loop-toggle.active {
@@ -484,10 +551,10 @@ form[id^="PlaylistSoundConfig-"] > section.window-content {
   height: var(--sos-button-height-lg);
   line-height: 20px;
   padding: 0 6px;
-  background: linear-gradient(to bottom, rgba(255,255,255,0.05), rgba(0,0,0,0.1));
+  background: var(--sos-btn-bg);
   border: 1px solid var(--sos-border-medium);
   border-radius: var(--sos-radius-sm);
-  box-shadow: inset 0 1px 0 rgba(255,255,255,0.08), var(--sos-shadow-sm);
+  box-shadow: var(--sos-btn-inset-shadow), var(--sos-shadow-sm);
   transition: all 0.15s ease;
 }
 
@@ -539,10 +606,10 @@ form[id^="PlaylistSoundConfig-"] > section.window-content {
 
 button.sos-loop-preview-segment {
   line-height: 1.15;
-  background: linear-gradient(to bottom, rgba(255,255,255,0.05), rgba(0,0,0,0.1));
+  background: var(--sos-btn-bg);
   border: 1px solid var(--sos-border-medium);
   border-radius: var(--sos-radius-sm);
-  box-shadow: inset 0 1px 0 rgba(255,255,255,0.08), var(--sos-shadow-sm);
+  box-shadow: var(--sos-btn-inset-shadow), var(--sos-shadow-sm);
   transition: all 0.15s ease;
 }
 
@@ -807,10 +874,10 @@ p.notes.disabled-note {
   height: var(--sos-button-height-md);
   padding: 0 6px;
   font-size: var(--sos-text-md);
-  background: linear-gradient(to bottom, rgba(255,255,255,0.05), rgba(0,0,0,0.1));
+  background: var(--sos-btn-bg);
   border: 1px solid var(--sos-border-medium);
   border-radius: var(--sos-radius-sm);
-  box-shadow: inset 0 1px 0 rgba(255,255,255,0.08), var(--sos-shadow-sm);
+  box-shadow: var(--sos-btn-inset-shadow), var(--sos-shadow-sm);
   transition: all 0.15s ease;
 }
 
@@ -901,10 +968,10 @@ button.sos-loop-preview-segment.sos-compact {
   display: flex;
   align-items: center;
   gap: var(--sos-space-sm);
-  background: linear-gradient(to bottom, rgba(255,255,255,0.05), rgba(0,0,0,0.1));
+  background: var(--sos-btn-bg);
   border: 1px solid var(--sos-border-medium);
   border-radius: var(--sos-radius-sm);
-  box-shadow: inset 0 1px 0 rgba(255,255,255,0.08), var(--sos-shadow-sm);
+  box-shadow: var(--sos-btn-inset-shadow), var(--sos-shadow-sm);
   transition: all 0.15s ease;
 }
 
@@ -988,10 +1055,10 @@ button.sos-loop-preview-segment.sos-compact i {
   align-items: center;
   justify-content: center;
   gap: var(--sos-space-sm);
-  background: linear-gradient(to bottom, rgba(255,255,255,0.05), rgba(0,0,0,0.1));
+  background: var(--sos-btn-bg);
   border: 1px solid var(--sos-border-medium);
   border-radius: var(--sos-radius-sm);
-  box-shadow: inset 0 1px 0 rgba(255,255,255,0.08), var(--sos-shadow-sm);
+  box-shadow: var(--sos-btn-inset-shadow), var(--sos-shadow-sm);
   transition: all 0.15s ease;
 }
 
@@ -1142,10 +1209,10 @@ button.sos-loop-preview-segment.sos-compact i {
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
-  background: linear-gradient(to bottom, rgba(255,255,255,0.05), rgba(0,0,0,0.1));
+  background: var(--sos-btn-bg);
   border: 1px solid var(--sos-border-medium);
   border-radius: var(--sos-radius-sm);
-  box-shadow: inset 0 1px 0 rgba(255,255,255,0.08), var(--sos-shadow-sm);
+  box-shadow: var(--sos-btn-inset-shadow), var(--sos-shadow-sm);
   transition: all 0.15s ease;
 }
 
@@ -1311,11 +1378,7 @@ form[id^="PlaylistConfig-"]
 
 .sos-loop-controls button {
   padding: var(--sos-space-xs) var(--sos-space-md);
-  background: linear-gradient(
-    to bottom,
-    rgba(255, 255, 255, 0.05),
-    rgba(0, 0, 0, 0.1)
-  );
+  background: var(--sos-btn-bg);
   border: 1px solid var(--sos-border-medium);
   border-radius: var(--sos-radius-sm);
   color: var(--sos-text-primary);
@@ -1326,18 +1389,14 @@ form[id^="PlaylistConfig-"]
   display: flex;
   align-items: center;
   justify-content: center;
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08), var(--sos-shadow-sm);
-  text-shadow: 0 -1px 0 rgba(0, 0, 0, 0.4);
+  box-shadow: var(--sos-btn-inset-shadow), var(--sos-shadow-sm);
+  text-shadow: var(--sos-btn-text-shadow);
 }
 
 .sos-loop-controls button:hover:not(.disabled) {
-  background: linear-gradient(
-    to bottom,
-    rgba(255, 255, 255, 0.08),
-    rgba(0, 0, 0, 0.05)
-  );
+  background: var(--sos-btn-hover-bg);
   border-color: var(--sos-hover-glow);
-  box-shadow: var(--sos-shadow-glow), inset 0 1px 0 rgba(255, 255, 255, 0.1);
+  box-shadow: var(--sos-shadow-glow), var(--sos-btn-inset-shadow);
 }
 
 .sos-loop-controls button.disabled {
@@ -1408,4 +1467,144 @@ form[id^="PlaylistConfig-"]
 
 .currently-playing .sos-loop-controls {
   border-top: 1px solid var(--sos-border-light);
+}
+
+/* ========================================================= */
+/*   Light Mode - Targeted Rule Overrides                    */
+/* ========================================================= */
+
+/* Timeline track */
+body.theme-light .sos-loop-timeline-track {
+  background-color: #c8c4c0;
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.12);
+}
+
+/* Timeline handle */
+body.theme-light .sos-loop-timeline-handle {
+  border-color: #b8b4b0;
+  background: linear-gradient(
+    to bottom,
+    rgba(0, 0, 0, 0.05),
+    rgba(0, 0, 0, 0.15)
+  );
+}
+
+/* Crossfade stripe pattern */
+body.theme-light .sos-loop-timeline-crossfade::before {
+  background: repeating-linear-gradient(
+    -45deg,
+    rgba(0, 0, 0, 0.08),
+    rgba(0, 0, 0, 0.08) 3px,
+    transparent 3px,
+    transparent 6px
+  );
+}
+
+/* Tooltip - keep dark for readability */
+body.theme-light .sos-loop-timeline-tooltip {
+  color: #d4d0c5;
+}
+
+/* Sticky form footer */
+body.theme-light form[id^="PlaylistSoundConfig-"] > footer.form-footer {
+  background: var(--color-bg-primary, #f5f5f0);
+  border-top: 1px solid var(--color-border-dark, #ccc);
+  box-shadow: 0 -2px 8px rgba(0, 0, 0, 0.1);
+}
+
+/* Subsection subtle glow */
+body.theme-light .sos-subsection {
+  background: linear-gradient(90deg, rgba(0,0,0,0.03), transparent 20px);
+}
+
+/* Collapsible segment header hover overlay */
+body.theme-light .sos-segment-header.collapsible::before {
+  background-color: rgba(0, 0, 0, 0.04);
+}
+
+/* Compact segment section */
+body.theme-light .sos-loop-segment-section.sos-compact {
+  background: linear-gradient(
+    to bottom,
+    rgba(0, 0, 0, 0.03),
+    rgba(0, 0, 0, 0.06)
+  );
+}
+
+/* Normalized volume control background */
+body.theme-light li.sound.sos-normalized-volume-control {
+  background: linear-gradient(
+    to bottom,
+    rgba(0, 0, 0, 0.02),
+    rgba(0, 0, 0, 0.05)
+  );
+}
+
+/* Loop controls background */
+body.theme-light .sos-loop-controls {
+  background: linear-gradient(
+    to bottom,
+    rgba(0, 0, 0, 0.02),
+    rgba(0, 0, 0, 0.05)
+  );
+}
+
+/* Currently-playing sound blocks */
+body.theme-light .currently-playing .playlist-sounds.plain {
+  background: linear-gradient(
+    to bottom,
+    rgba(0, 0, 0, 0.04),
+    rgba(0, 0, 0, 0.02)
+  );
+}
+
+/* Currently-playing sound name bar */
+body.theme-light .currently-playing .playlist-sounds.plain > .sound {
+  background: linear-gradient(
+    to bottom,
+    rgba(0, 0, 0, 0.01),
+    rgba(0, 0, 0, 0.03)
+  );
+}
+
+/* Currently-playing grouped controls */
+body.theme-light .currently-playing .sos-normalized-volume-control,
+body.theme-light .currently-playing .sos-loop-controls {
+  background: linear-gradient(
+    to bottom,
+    rgba(0, 0, 0, 0.02),
+    rgba(0, 0, 0, 0.04)
+  );
+}
+
+/* Checkbox accent color & Clean up - neutralize Foundry's orange accent and artifacts in light mode */
+body.theme-light .sos-compact-checkbox input[type="checkbox"],
+body.theme-light .sos-feature-toggle input[type="checkbox"] {
+  accent-color: #ee9b3a;
+  /* Strip Foundry's default input styling (background boxes, borders) */
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+  outline: none !important;
+  /* Force native rendering and prevent custom size stretching */
+  -webkit-appearance: checkbox !important;
+  appearance: checkbox !important;
+  width: auto !important;
+  height: auto !important;
+  margin: 0 !important;
+}
+
+/* Remove the orange focus ring glow */
+body.theme-light .sos-compact-checkbox input[type="checkbox"]:focus,
+body.theme-light .sos-feature-toggle input[type="checkbox"]:focus {
+  box-shadow: none !important;
+}
+
+/* KILL the pseudo-elements (::before/::after) seen in the inspector that cause the artifacts */
+body.theme-light .sos-compact-checkbox input[type="checkbox"]::before,
+body.theme-light .sos-compact-checkbox input[type="checkbox"]::after,
+body.theme-light .sos-feature-toggle input[type="checkbox"]::before,
+body.theme-light .sos-feature-toggle input[type="checkbox"]::after {
+  display: none !important;
+  content: none !important;
 }
