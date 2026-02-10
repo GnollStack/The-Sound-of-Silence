@@ -16,8 +16,12 @@ import { State } from "./state-manager.js";
  * uses the advanced fader to smoothly transition the sound's volume.
  * @param {Playlist} playlist The parent playlist document.
  * @param {PlaylistSound} ps The playlist sound to fade in.
+ * @param {object} [options] Optional configuration.
+ * @param {number} [options.targetVolume] Explicit target volume for the fade-in.
+ *   If provided, overrides ps.volume. This avoids race conditions when ps.volume
+ *   may not reflect the normalized value.
  */
-export async function applyFadeIn(playlist, ps) {
+export async function applyFadeIn(playlist, ps, { targetVolume } = {}) {
     // Check for an API override first, fall back to the playlist flag.
     const fadeOverride = ps._sos_fadeInOverride;
     const fadeTotal = typeof fadeOverride === 'number'
@@ -48,8 +52,8 @@ export async function applyFadeIn(playlist, ps) {
     const media = await waitForMedia(ps);
     if (!media) return;
 
-    // Get the sound's intended final volume from the document
-    const targetVol = ps.volume ?? 1;
+    // Use explicit target volume if provided, otherwise fall back to document volume
+    const targetVol = (typeof targetVolume === 'number') ? targetVolume : (ps.volume ?? 1);
 
     // In our main.js wrapper, we will pre-mute the sound before it plays,
     // so the fade will correctly start from an actual volume of 0.

@@ -294,13 +294,22 @@ export async function fadeOutAndStop(sound, ms = 500) {
  * @param {Sound} soundOut The sound to fade out.
  * @param {Sound} soundIn The sound to fade in.
  * @param {number} duration The duration of the crossfade in milliseconds.
+ * @param {object} [options] Optional configuration.
+ * @param {number} [options.targetVolIn] Explicit target volume for the incoming sound.
+ *   If not provided, falls back to soundIn._manager?.volume ?? 1.0.
  */
-export function equalPowerCrossfade(soundOut, soundIn, duration) {
+export function equalPowerCrossfade(soundOut, soundIn, duration, { targetVolIn: explicitTargetVolIn } = {}) {
   debug(`[AF] Starting equal-power crossfade over ${duration}ms.`);
   if (!soundOut || !soundIn) return;
+
+  // Resolve target volume: explicit parameter > _manager.volume > 1.0
+  const resolvedTargetVolIn = (typeof explicitTargetVolIn === 'number')
+    ? explicitTargetVolIn
+    : (soundIn._manager?.volume ?? 1.0);
+
   if (!Number.isFinite(duration) || duration <= 0) {
     soundOut.volume = 0;
-    soundIn.volume = soundIn._manager?.volume ?? 1.0;
+    soundIn.volume = resolvedTargetVolIn;
     return;
   }
 
@@ -319,7 +328,7 @@ export function equalPowerCrossfade(soundOut, soundIn, duration) {
   }
 
   const startVolOut = gainOut.value;
-  const targetVolIn = soundIn._manager?.volume ?? 1.0;
+  const targetVolIn = resolvedTargetVolIn;
 
   const durationSec = duration / 1000;
 
@@ -337,7 +346,7 @@ export function equalPowerCrossfade(soundOut, soundIn, duration) {
     curveIn[i] = targetVolIn * Math.sin(progress * 0.5 * Math.PI);
   }
 
-  debug(`[AF] Crossfade: ${resolution} samples over ${duration}ms`);
+  debug(`[AF] Crossfade: ${resolution} samples over ${duration}ms, targetVolIn=${targetVolIn.toFixed(3)}`);
 
   gainOut.cancelScheduledValues(contextOut.currentTime);
   gainIn.cancelScheduledValues(contextIn.currentTime);

@@ -415,6 +415,27 @@ class FlagService {
 
         return flags;
     }
+
+    /**
+     * Resolves the effective target volume for a PlaylistSound, accounting for
+     * playlist-level volume normalization. This is the single source of truth for
+     * "what volume should this sound be playing at?"
+     * @param {PlaylistSound} ps The playlist sound document.
+     * @returns {number} The target volume (0-1, logarithmic/converted scale).
+     */
+    resolveTargetVolume(ps) {
+        const playlist = ps?.parent;
+        if (!playlist) return ps?.volume ?? 1;
+
+        const normEnabled = this.getPlaylistFlag(playlist, "volumeNormalizationEnabled");
+        const hasOverride = this.getSoundFlag(ps, "allowVolumeOverride");
+
+        if (normEnabled && !hasOverride) {
+            const normalizedVolume = this.getPlaylistFlag(playlist, "normalizedVolume");
+            return foundry.audio.AudioHelper.inputToVolume(normalizedVolume);
+        }
+        return ps.volume;
+    }
 }
 
 /**

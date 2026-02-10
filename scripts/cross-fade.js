@@ -114,9 +114,11 @@ export async function performCrossfade(playlist, soundToFade) {
 
     State.recordCrossfade(fadeMs);
 
-    // 3. Perform the equal-power crossfade.
-    debug(`[CF] Crossfading from "${soundToFade.name}" to "${soundToPlay.name}".`);
-    equalPowerCrossfade(soundOut, soundIn, fadeMs);
+    // 3. Perform the equal-power crossfade, passing the normalized target volume
+    //    explicitly so it doesn't rely on _manager.volume (which may be stale).
+    const targetVolIn = Flags.resolveTargetVolume(soundToPlay);
+    debug(`[CF] Crossfading from "${soundToFade.name}" to "${soundToPlay.name}" (targetVol=${targetVolIn.toFixed(3)}).`);
+    equalPowerCrossfade(soundOut, soundIn, fadeMs, { targetVolIn });
 
     // 4. Immediately update the outgoing sound's document state for UI purposes.
     //    The audio continues playing/fading, but the UI shows the new track as current.

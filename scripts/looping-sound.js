@@ -74,7 +74,8 @@ export class LoopingSound {
 
       const playlist = this.ps.parent;
       const fadeInMs = Flags.getPlaylistFlag(playlist, "fadeIn");
-      const startVolume = (fadeInMs > 0) ? 0 : this.ps.volume;
+      const resolvedVolume = Flags.resolveTargetVolume(this.ps);
+      const startVolume = (fadeInMs > 0) ? 0 : resolvedVolume;
 
       try {
         const oldSound = this.soundA;
@@ -110,11 +111,10 @@ export class LoopingSound {
           await oldSound.stop();
         } catch (err) { /* Ignore if already stopped */ }
 
-        // Apply fade-in on the new sound, using the correct volume from the sound document.
+        // Apply fade-in on the new sound, using the normalized target volume.
         if (fadeInMs > 0 && startVolume === 0) {
-          const soundDocumentVolume = this.ps.volume;
-          debug(`[LoopingSound] Fading in to ${(soundDocumentVolume * 100).toFixed(0)}% over ${fadeInMs}ms`);
-          advancedFade(newSound, { targetVol: soundDocumentVolume, duration: fadeInMs });
+          debug(`[LoopingSound] Fading in to ${(resolvedVolume * 100).toFixed(0)}% over ${fadeInMs}ms`);
+          advancedFade(newSound, { targetVol: resolvedVolume, duration: fadeInMs });
         }
 
         const waitForStablePosition = () => {
@@ -540,14 +540,18 @@ export class LoopingSound {
       return false;
     }
 
-    equalPowerCrossfade(sourceSound, targetSound, crossfadeMs);
+    const targetVolIn = Flags.resolveTargetVolume(this.ps);
+    equalPowerCrossfade(sourceSound, targetSound, crossfadeMs, { targetVolIn });
 
     // Force volume after a short delay in case the crossfade fails to ramp up.
     // Uses AudioTimeout to avoid browser throttling in background tabs.
     AudioTimeout.wait(crossfadeMs / 2).then(() => {
-      if (!this.isDestroyed && targetSound?.playing && targetSound.volume < this.ps.volume / 2) {
-        debug(`[LoopingSound] Crossfade may have stalled, forcing volume to target`);
-        targetSound.volume = this.ps.volume;
+      if (!this.isDestroyed && targetSound?.playing) {
+        const expectedVol = Flags.resolveTargetVolume(this.ps);
+        if (targetSound.volume < expectedVol / 2) {
+          debug(`[LoopingSound] Crossfade may have stalled, forcing volume to ${expectedVol.toFixed(3)}`);
+          targetSound.volume = expectedVol;
+        }
       }
     });
 

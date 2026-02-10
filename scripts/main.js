@@ -211,6 +211,27 @@ Hooks.once("ready", () => {
           scheduleCrossfade(playlist, currentlyPlaying);
         }
       }
+
+      // 4. Verify and correct volumes on normalized playlists.
+      //    If a song started while the tab was hidden, its volume may not have
+      //    been set correctly due to browser throttling or async race conditions.
+      const normEnabled = Flags.getPlaylistFlag(playlist, "volumeNormalizationEnabled");
+      if (normEnabled) {
+        const normalizedVolume = Flags.getPlaylistFlag(playlist, "normalizedVolume");
+        const expectedVolume = foundry.audio.AudioHelper.inputToVolume(normalizedVolume);
+
+        for (const ps of playlist.sounds) {
+          if (!ps.playing || !ps.sound) continue;
+          if (Flags.getSoundFlag(ps, "isSilenceGap")) continue;
+          if (Flags.getSoundFlag(ps, "allowVolumeOverride")) continue;
+
+          const currentGain = ps.sound.gain?.value;
+          if (currentGain !== undefined && Math.abs(currentGain - expectedVolume) > 0.01) {
+            debug(`[Visibility] Volume correction for "${ps.name}": gain=${currentGain.toFixed(3)} -> expected=${expectedVolume.toFixed(3)}`);
+            ps.sound.volume = expectedVolume;
+          }
+        }
+      }
     }
   });
 
@@ -733,14 +754,28 @@ Hooks.once("ready", () => {
       _handleShuffleOnPlay(ps);
 
       // 3. Determine target volume and pre-mute for fade-in
-      const targetVolume = _determineTargetVolume(ps);
+      const targetVolume = Flags.resolveTargetVolume(ps);
       const fadeInMs = Flags.getPlaylistFlag(ps.parent, "fadeIn");
+      const preMuteVolume = (fadeInMs > 0 && ps?.pausedTime === 0) ? 0 : targetVolume;
       _applyPreMute(this, ps, fadeInMs, targetVolume);
 
-      // 4. Play the sound
+      // 4. Override options.volume so Foundry's internal play() uses our
+      //    normalized/pre-muted value instead of the raw document volume.
+      options = { ...options, volume: preMuteVolume };
+
+      // 5. Play the sound
       const result = await wrapped.call(this, options);
 
-      // 5. Schedule all post-play actions
+      // 6. Post-play volume assertion (safety net for background tabs).
+      //    If no fade-in is pending, ensure volume matches the normalized target.
+      if (fadeInMs <= 0 || ps?.pausedTime > 0) {
+        if (Math.abs(this.volume - targetVolume) > 0.001) {
+          debug(`[Sound.play] Post-play volume correction: ${this.volume.toFixed(3)} -> ${targetVolume.toFixed(3)} for "${ps.name}"`);
+          this.volume = targetVolume;
+        }
+      }
+
+      // 7. Schedule all post-play actions
       _schedulePostPlayActions(ps, this);
 
       return result;
@@ -1045,29 +1080,11 @@ Hooks.once("ready", () => {
 
   /**
    * Determines the correct target volume for a sound, accounting for volume normalization.
+   * Delegates to Flags.resolveTargetVolume() which is the single source of truth.
    * @returns {number} The calculated target volume (0-1).
    */
   function _determineTargetVolume(ps) {
-    const playlist = ps.parent;
-    const normEnabled = Flags.getPlaylistFlag(
-      playlist,
-      "volumeNormalizationEnabled"
-    );
-    const hasOverride = Flags.getSoundFlag(ps, "allowVolumeOverride");
-
-    if (normEnabled && !hasOverride) {
-      const normalizedVolume = Flags.getPlaylistFlag(
-        playlist,
-        "normalizedVolume"
-      );
-      debug(
-        `[Volume] Will use normalized volume ${(normalizedVolume * 100).toFixed(
-          0
-        )}% for "${ps.name}"`
-      );
-      return foundry.audio.AudioHelper.inputToVolume(normalizedVolume);
-    }
-    return ps.volume;
+    return Flags.resolveTargetVolume(ps);
   }
 
   /**
@@ -1099,15 +1116,12 @@ Hooks.once("ready", () => {
       scheduleLoopWithin(ps);
     }
 
-    // Apply fade-in
+    // Apply fade-in, passing the normalized target volume directly to avoid
+    // race conditions (applyFadeIn is async but not awaited here).
     const fadeInMs = Flags.getPlaylistFlag(playlist, "fadeIn");
     if (fadeInMs > 0 && !ps?.getFlag(MODULE_ID, "isSilenceGap")) {
-      // We need to determine the target volume again here for the fade logic
-      const targetVolume = _determineTargetVolume(ps);
-      const originalDocVolume = ps.volume;
-      ps.volume = targetVolume; // Temporarily set for fade logic
-      applyFadeIn(playlist, ps);
-      ps.volume = originalDocVolume; // Restore
+      const targetVolume = Flags.resolveTargetVolume(ps);
+      applyFadeIn(playlist, ps, { targetVolume });
     }
 
     // Re-arm automatic crossfade timer
