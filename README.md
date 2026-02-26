@@ -7,6 +7,7 @@
 [![Downloads](https://img.shields.io/github/downloads/GnollStack/The-Sound-of-Silence/total)](https://github.com/GnollStack/The-Sound-of-Silence/releases) 
 ![Downloads@latest](https://img.shields.io/github/downloads/GnollStack/The-Sound-of-Silence/latest/total)
 [![Foundry VTT](https://img.shields.io/badge/Foundry-v13-informational)](https://foundryvtt.com)
+[![Ko-fi](https://img.shields.io/badge/Ko--fi-Buy%20a%20Steak-FF5E5B?logo=ko-fi&logoColor=white)](https://ko-fi.com/gnollstack)
 
 > Professional audio engineering for your tabletop RPG. Create complex musical compositions with seamless loops, cinematic crossfades, and dynamic silence—without touching a single audio file.
 
@@ -321,15 +322,22 @@ console.log(metrics.crossfades.total); // Total crossfades since module load
 
 ---
 
-## Support Development
+## 🥩 Support Development
 
-This module represents **hundreds of hours** of research, development, testing, and refinement. It implements professional audio engineering techniques that are typically only found in commercial game engines.
+This module represents **many hours** of developement.
+
+**If this module enhanced your immersion, consider treating me to a steak, much better than coffee!**
+
+<a href='https://ko-fi.com/gnollstack' target='_blank'>
+<img height='36' style='border:0px;height:36px;' src='https://storage.ko-fi.com/cdn/kofi3.png?v=3' border='0' alt='Buy Me a Steak at ko-fi.com' />
+</a>
+
+> *"Thanks for the support! It helps me maintain support for the module and puts a nice steak on the table."*
 
 ### Ways You Can Help:
 - ⭐ **Star this repository** if you find it useful
 - 🐛 **Report bugs** with detailed reproduction steps
 - 📝 **Share your use cases** in GitHub Discussions or on Reddit
-- 🎥 **Create tutorial videos** or write guides
 
 ---
 
