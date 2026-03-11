@@ -248,15 +248,6 @@ Segment 4: 04:45 - 06:00 (Victory, loop 1x, play through)
 
 ---
 
-##  Community
-
-- ** Star this repo** if you find it useful!
-
-- **🐛 [Report Bugs](https://github.com/GnollStack/The-Sound-of-Silence/issues)** — Help improve the module with detailed reproduction steps
-- **💡 [Request Features](https://github.com/GnollStack/The-Sound-of-Silence/issues)** — Shape the roadmap with your ideas, If its within the scope of the module and relatively easy to create there is high chance Ill do it!
-
----
-
 ## 🔧 Compatibility
 
 ### Tested & Compatible With:
