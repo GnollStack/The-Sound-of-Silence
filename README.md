@@ -17,19 +17,19 @@
 
 ## Quick Start
 
+**Get started in 30 seconds:**
+
 1. **Install** from Foundry's Add-on Modules browser (search "Sound of Silence")
-2. **Open any playlist** — click the toggle buttons in the header to enable silence gaps, crossfading, or playlist looping
-3. **Configure** individual sounds with the loop icon, or open playlist settings for global controls
+2. **Open any playlist** → Click the toggle buttons in the header ( 🔀 🔁)
+3. **Configure** individual sounds with the orange loop icon or playlist settings
 
----
+## Why The Sound of Silence?
 
-## Demo Videos
-
-| Feature | Video | Description |
-|---------|-------|-------------|
-| **Silence Gaps** | [Watch (1 min)](https://youtu.be/qWQ8Ci46iiw) | Add natural pauses between tracks, static or random |
-| **Crossfading** | [Watch (1 min)](https://youtu.be/7K72lde_jus) | Seamless transitions without harsh cuts |
-| **Internal Loops** | [Watch (2 min)](https://youtu.be/ykLuKt_UPlg) | Create intro, loop, outro structures with true crossfade |
+| Feature | Demo Video | What You'll See |
+|---------|------------|-----------------|
+| **Silence Gaps** | [▶️ 1 min](https://youtu.be/qWQ8Ci46iiw) | Add natural pauses between tracks, static or random |
+| **Crossfading** | [▶️ 1 min](https://youtu.be/7K72lde_jus) | Seamless transitions without harsh cuts |
+| **Internal Loops** | [▶️ 2 min](https://youtu.be/ykLuKt_UPlg) | Create intro → loop → outro structures, True Crossfade! |
 
 ---
 
@@ -152,9 +152,9 @@ Built-in diagnostics panel (stethoscope icon in the playlist directory header) f
 1. **Configure playlist settings** — Right-click a playlist > **Configure** to set fade-in duration, silence mode/duration, crossfade options, volume normalization, and playlist looping.
 
 2. **Toggle features from the sidebar** — Click the toggle buttons in any playlist header:
-   - Hourglass = Silence Gaps
-   - Arrows = Auto-Crossfade
-   - Loop indicator = Loop Playlist
+   - ⌛ = Silence Gaps
+   - 🔀 = Auto-Crossfade
+   - 🔁 = Loop Playlist
 
 3. **Set up internal loops** (optional) — Right-click any sound > **Configure**, enable Internal Looping, then add segments with start/end times, crossfade duration, and loop counts.
 
@@ -168,7 +168,7 @@ Segment 3: 03:00 - 04:45 (Phase 2, loop infinitely)
 Segment 4: 04:45 - 06:00 (Victory, loop 1x, play through)
 ```
 
-How it works:
+**How it works:**
 1. Track plays the intro once
 2. Automatically jumps to Phase 1 loop
 3. Click the break-loop button in the UI when the boss enters Phase 2
@@ -177,7 +177,7 @@ How it works:
 
 ---
 
-## Important Notes
+## 🔒 Important Notes
 
 ### Feature Interactions
 - **Crossfade and silence are mutually exclusive** — enabling crossfade automatically disables silence (by design, for clean transitions)
@@ -194,11 +194,12 @@ How it works:
 ## For Developers
 
 ### Architecture
-- Web Audio API for sample-accurate timing
-- Dual-buffer crossfading system (soundA/soundB architecture)
-- AudioTimeout (Foundry v13) for browser-throttle-resistant scheduling
-- Equal-power crossfades (sin²θ + cos²θ = 1 for constant perceived power)
-- Exponential curves for perceptually-linear volume changes
+- **Web Audio API** for sample-accurate timing
+- **Dual-buffer crossfading** system (soundA/soundB architecture)
+- **WeakMap-based state management** for automatic garbage collection
+- **Audio-thread scheduling** via AudioContext.currentTime
+- **Exponential curves** for perceptually-linear volume changes
+- **Equal-power crossfades** (sin²θ + cos²θ = 1 for constant perceived power)
 
 ### Public API
 
@@ -275,7 +276,7 @@ None reported. If you find a compatibility issue, please [open an issue](https:/
 
 ---
 
-## License & Permissions
+## ⚖️ License & Permissions
 
 ### Proprietary EULA
 This module is licensed under the **GnollStack Proprietary EULA**.
@@ -291,9 +292,10 @@ I am open to partnerships. If you are a map maker, adventure writer, or develope
 * Custom feature development
 
 ### Contact
-For licensing inquiries:
-* **Discord:** `GnollStack` (preferred)
+For licensing inquiries or permission slips:
+* **Discord:** `GnollStack` (Preferred)
 * **Email:** `Somedudeed@gmail.com`
+* *Please do not open GitHub Issues for commercial licensing discussions. But feel free to contact me via Discord or Email*
 
 Please do not open GitHub issues for commercial licensing discussions.
 
@@ -306,6 +308,6 @@ Please do not open GitHub issues for commercial licensing discussions.
 
 <div align="center">
 
-[Back to Top](#the-sound-of-silence)
+[⬆ Back to Top](#the-sound-of-silence)
 
 </div>
