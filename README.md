@@ -274,7 +274,7 @@ Currently tracking [open issues on GitHub](https://github.com/GnollStack/The-Sou
 - [ ] Intro → Playlist linking, play intro track, then auto-switch to looping playlist
 - [ ] Preset system (save/load/share loop configurations)
 - [ ] Playlist automation triggers (conditions: "on combat start", "on scene change")
-- [ ] API expansion for macro/module integration
+- [x] API expansion for macro/module integration
 - [ ] Building out the Performance profiler and diagnostics dashboard more
 - [ ] Ability to Play Loop Segments in any Order, so go from segment one from 1:00-1:45 to a segment at 00:20-00:40
 
