@@ -2,7 +2,7 @@
   "id": "the-sound-of-silence",
   "title": "The Sound of Silence",
   "description": "Transform Foundry's playlists into a dynamic sound design studio. Create complex tracks with intros and seamless loops using the multi-segment sequencer, blend songs perfectly with equal-power crossfading, and control the mood with configurable silence gaps.",
-  "version": "13.11.7",
+  "version": "13.11.8",
   "compatibility": {
     "minimum": "13",
     "verified": "13"
@@ -47,7 +47,7 @@
   ],
   "styles": ["styles/styles.css"],
   "url": "https://github.com/GnollStack/The-Sound-of-Silence",
-  "manifest": "https://github.com//GnollStack/The-Sound-of-Silence/releases/latest/download/module.json",
+  "manifest": "https://github.com/GnollStack/The-Sound-of-Silence/releases/latest/download/module.json",
   "download": "https://github.com/GnollStack/The-Sound-of-Silence/releases/latest/download/the-sound-of-silence.zip",
   "license": "proprietary",
   "readme": "https://github.com/GnollStack/The-Sound-of-Silence/blob/main/README.md",

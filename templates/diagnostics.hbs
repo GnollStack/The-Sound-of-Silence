@@ -34,21 +34,21 @@
     <ul class="playlist-list">
         {{#each playlists}}
         <li class="playlist-item">
-            <h4><i class="fas fa-music"></i> {{this.playlistName}}</h4>
-            <div class="features">
+            <h4><i class="fas fa-music" aria-hidden="true"></i> {{this.playlistName}}</h4>
+            <div class="features" role="group" aria-label="Active features">
                 {{#if this.features.crossfade}}
                 <div class="feature-tag crossfade">
-                    <i class="fas fa-hourglass-half"></i> Crossfade Scheduled
+                    <i class="fas fa-hourglass-half" aria-hidden="true"></i> Crossfade Scheduled
                 </div>
                 {{/if}}
                 {{#if this.features.scheduledSilenceFade}}
                 <div class="feature-tag silence-fade">
-                    <i class="fas fa-stopwatch"></i> Silence Fade Scheduled
+                    <i class="fas fa-stopwatch" aria-hidden="true"></i> Silence Fade Scheduled
                 </div>
                 {{/if}}
                 {{#if this.features.silence}}
                 <div class="feature-tag silence">
-                    <i class="fas fa-volume-mute"></i> Silent Gap Active
+                    <i class="fas fa-volume-mute" aria-hidden="true"></i> Silent Gap Active
                 </div>
                 {{/if}}
 
@@ -56,7 +56,7 @@
                 <ul class="loop-list">
                     {{#each this.features.loops}}
                     <li class="loop-item">
-                        <i class="fas fa-sync-alt"></i> <strong>{{this.soundName}}</strong>
+                        <i class="fas fa-sync-alt" aria-hidden="true"></i> <strong>{{this.soundName}}</strong>
                         <span>(Completed: {{this.loopsCompleted}})</span>
                         {{#if this.isCrossfading}}
                         <span class="loop-state">[Crossfading]</span>

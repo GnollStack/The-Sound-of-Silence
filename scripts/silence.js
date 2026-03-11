@@ -150,8 +150,8 @@ async function createAndPlayGap(playlist, durationMs) {
  * @param {object} state The state object for the silent gap from SOS_STATE.
  */
 async function teardownGap(playlist, state) {
-  State.clearSilenceState(playlist);
-
+  // Delete the gap document first, then clear state to avoid race conditions
+  // where another system checks hasSilenceState between clear and delete
   if (state.gap && playlist.sounds.has(state.gap.id)) {
     try {
       await state.gap.delete();
@@ -160,6 +160,8 @@ async function teardownGap(playlist, state) {
       console.warn(`[${MODULE_ID}] ❌ Failed to delete gap:`, err);
     }
   }
+
+  State.clearSilenceState(playlist);
 }
 
 

@@ -218,6 +218,13 @@ export function executeSegmentSkip(ps, targetIndex) {
     return;
   }
 
+  // Bounds check to prevent out-of-range segment access
+  const config = Flags.getLoopConfig(ps);
+  if (targetIndex < 0 || targetIndex >= config.segments.length) {
+    debug(`[Manager] Segment index ${targetIndex} out of bounds (0-${config.segments.length - 1}) for "${ps.name}".`);
+    return;
+  }
+
   debug(`[Manager] Executing replicated skip to segment ${targetIndex} for "${ps.name}".`);
   looper.skipToSegmentByIndex(targetIndex);
 }

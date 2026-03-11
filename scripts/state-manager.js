@@ -207,7 +207,7 @@ class StateManager {
                 totalGaps: this._metrics.silence.totalGaps,
                 totalDuration: this._metrics.silence.totalDuration,
                 cancelled: this._metrics.silence.cancelled,
-                averageDuration: this._metrics.silence.totalGaps > 0
+                averageDuration: (this._metrics.silence.totalGaps - this._metrics.silence.cancelled) > 0
                     ? Math.round(this._metrics.silence.totalDuration / (this._metrics.silence.totalGaps - this._metrics.silence.cancelled))
                     : 0
             }
@@ -276,6 +276,7 @@ class StateManager {
     setSilenceState(playlist, state) {
         this._silentGaps.set(playlist, state);
         debug(`[State] Set silence state for "${playlist.name}"`);
+        this._emitStateChange();
     }
 
     /**
@@ -285,7 +286,10 @@ class StateManager {
     clearSilenceState(playlist) {
         const had = this._silentGaps.has(playlist);
         this._silentGaps.delete(playlist);
-        if (had) debug(`[State] Cleared silence state for "${playlist.name}"`);
+        if (had) {
+            debug(`[State] Cleared silence state for "${playlist.name}"`);
+            this._emitStateChange();
+        }
     }
 
     /**
@@ -344,6 +348,7 @@ class StateManager {
     setCrossfadeTimer(playlist, handle) {
         this._crossfadeTimers.set(playlist, handle);
         debug(`[State] Set crossfade timer for "${playlist.name}"`);
+        this._emitStateChange();
     }
 
     /**
@@ -353,7 +358,10 @@ class StateManager {
     clearCrossfadeTimer(playlist) {
         const had = this._crossfadeTimers.has(playlist);
         this._crossfadeTimers.delete(playlist);
-        if (had) debug(`[State] Cleared crossfade timer for "${playlist.name}"`);
+        if (had) {
+            debug(`[State] Cleared crossfade timer for "${playlist.name}"`);
+            this._emitStateChange();
+        }
     }
 
     /**
@@ -448,6 +456,7 @@ class StateManager {
     setActiveLooper(sound, looper) {
         this._activeLoopers.set(sound, looper);
         debug(`[State] Set active looper for "${sound.name}"`);
+        this._emitStateChange();
     }
 
     /**
@@ -457,7 +466,10 @@ class StateManager {
     clearActiveLooper(sound) {
         const had = this._activeLoopers.has(sound);
         this._activeLoopers.delete(sound);
-        if (had) debug(`[State] Cleared active looper for "${sound.name}"`);
+        if (had) {
+            debug(`[State] Cleared active looper for "${sound.name}"`);
+            this._emitStateChange();
+        }
     }
 
     /**
@@ -744,54 +756,6 @@ class StateManager {
             Hooks.callAll(`${MODULE_ID}.stateChanged`);
             this._emitTimeout = null;
         }, 50); // A 50ms debounce is a good starting point
-    }
-
-    // Now, call this new method from all of your state mutation functions.
-    // Here are a few examples:
-
-    setSilenceState(playlist, state) {
-        this._silentGaps.set(playlist, state);
-        debug(`[State] Set silence state for "${playlist.name}"`);
-        this._emitStateChange();
-    }
-
-    clearSilenceState(playlist) {
-        const had = this._silentGaps.has(playlist);
-        this._silentGaps.delete(playlist);
-        if (had) {
-            debug(`[State] Cleared silence state for "${playlist.name}"`);
-            this._emitStateChange();
-        }
-    }
-
-    setCrossfadeTimer(playlist, handle) {
-        this._crossfadeTimers.set(playlist, handle);
-        debug(`[State] Set crossfade timer for "${playlist.name}"`);
-        this._emitStateChange();
-    }
-
-    clearCrossfadeTimer(playlist) {
-        const had = this._crossfadeTimers.has(playlist);
-        this._crossfadeTimers.delete(playlist);
-        if (had) {
-            debug(`[State] Cleared crossfade timer for "${playlist.name}"`);
-            this._emitStateChange();
-        }
-    }
-
-    setActiveLooper(sound, looper) {
-        this._activeLoopers.set(sound, looper);
-        debug(`[State] Set active looper for "${sound.name}"`);
-        this._emitStateChange();
-    }
-
-    clearActiveLooper(sound) {
-        const had = this._activeLoopers.has(sound);
-        this._activeLoopers.delete(sound);
-        if (had) {
-            debug(`[State] Cleared active looper for "${sound.name}"`);
-            this._emitStateChange();
-        }
     }
 
     // ============================================

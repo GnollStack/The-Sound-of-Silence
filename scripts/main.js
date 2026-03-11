@@ -641,7 +641,7 @@ Hooks.once("ready", () => {
           try {
             media.stop();
           } catch (_) { }
-        });
+        }).catch(() => { });
       } else {
         try {
           media.stop();
@@ -1121,7 +1121,9 @@ Hooks.once("ready", () => {
     const fadeInMs = Flags.getPlaylistFlag(playlist, "fadeIn");
     if (fadeInMs > 0 && !ps?.getFlag(MODULE_ID, "isSilenceGap")) {
       const targetVolume = Flags.resolveTargetVolume(ps);
-      applyFadeIn(playlist, ps, { targetVolume });
+      applyFadeIn(playlist, ps, { targetVolume }).catch(err => {
+        debug(`[FadeIn] Error during fade-in for "${ps.name}":`, err.message);
+      });
     }
 
     // Re-arm automatic crossfade timer

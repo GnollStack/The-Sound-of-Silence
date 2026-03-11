@@ -241,7 +241,7 @@ export function advancedFade(sound, { targetVol, duration }) {
   let startVol = gain.value;
   if (!Number.isFinite(startVol)) {
     // Fallback: use the Sound's volume property or target as starting point
-    startVol = sound.volume ?? targetVol;
+    startVol = Number.isFinite(sound.volume) ? sound.volume : targetVol;
     debug(`[AF] Recovered from NaN gain.value, using fallback: ${startVol}`);
   }
 

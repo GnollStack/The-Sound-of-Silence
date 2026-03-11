@@ -45,6 +45,11 @@
   --sos-hover-overlay: rgba(255, 255, 255, 0.08);
   --sos-hover-glow: rgba(255, 160, 80, 0.5);
 
+  /* Timeline */
+  --sos-timeline-track-bg: #302831;
+  --sos-timeline-handle-border: #191813;
+  --sos-checkbox-accent: #ee9b3a;
+
   /* Spacing Scale */
   --sos-space-xs: 2px;
   --sos-space-sm: 3px;
@@ -147,6 +152,10 @@ body.theme-light {
   --sos-btn-inset-shadow: inset 0 1px 0 rgba(255,255,255,0.5);
   --sos-btn-hover-bg: linear-gradient(to bottom, rgba(0,0,0,0.05), rgba(0,0,0,0.1));
   --sos-btn-text-shadow: none;
+
+  /* Timeline */
+  --sos-timeline-track-bg: #c8c4c0;
+  --sos-timeline-handle-border: #b8b4b0;
 }
 
 /* ========================================================= */
@@ -372,7 +381,7 @@ form[id^="PlaylistSoundConfig-"] > section.window-content {
   transform: translateY(-50%);
   width: 100%;
   height: 4px;
-  background-color: #302831; /*Same color as the base foundry timeline tracks*/
+  background-color: var(--sos-timeline-track-bg);
   border-radius: 2px;
   box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.3);
   transition: background-color 0.2s ease-in-out;
@@ -416,7 +425,7 @@ form[id^="PlaylistSoundConfig-"] > section.window-content {
   transform: translate(-50%, -50%);
   width: var(--sos-icon-size-sm);
   height: var(--sos-icon-size-sm);
-  border: 2px solid #191813;
+  border: 2px solid var(--sos-timeline-handle-border);
   background: linear-gradient(
     to bottom,
     rgba(255, 255, 255, 0.1),
@@ -625,7 +634,7 @@ button.sos-loop-preview-segment i {
 .sos-loop-controls-footer {
   display: flex;
   justify-content: center;
-  gap: 0.7em;
+  gap: var(--sos-space-xl);
   margin-top: var(--sos-space-xl);
   border-top: 1px solid var(--sos-border-light);
   padding-top: var(--sos-space-lg);
@@ -722,12 +731,12 @@ form[id^="PlaylistSoundConfig-"] > footer.form-footer button[type="submit"] {
   border-left: 2px solid var(--sos-border-light);
   padding-left: var(--sos-space-xl);
   margin-left: 6px;
-  margin-bottom: 6px;
+  margin-bottom: var(--sos-space-sm);
   background: linear-gradient(90deg, rgba(255,255,255,0.02), transparent 20px);
 }
 
 .sos-section-divider {
-  margin: var(--sos-space-lg) 0;
+  margin: var(--sos-space-md) 0;
   border-color: var(--sos-border-light);
 }
 
@@ -795,20 +804,11 @@ p.notes.disabled-note {
   margin: 0 0 6px 0;
 }
 
-.sos-section-divider {
-  margin: var(--sos-space-md) 0;
-}
-
 /* A container for the main feature toggles */
 .sos-toggle-cluster {
   display: flex;
   flex-direction: column;
   gap: var(--sos-space-xs);
-}
-
-/* Reduce the bottom margin of subsections to pull them closer to their master toggle */
-.sos-subsection {
-  margin-bottom: var(--sos-space-sm);
 }
 
 /* ========================================================= */
@@ -1360,7 +1360,7 @@ form[id^="PlaylistConfig-"]
 }
 
 .sos-controls-label {
-  font-size: 9px;
+  font-size: var(--sos-text-xs);
   font-weight: 600;
   color: var(--sos-text-label);
   text-transform: uppercase;
@@ -1475,13 +1475,13 @@ form[id^="PlaylistConfig-"]
 
 /* Timeline track */
 body.theme-light .sos-loop-timeline-track {
-  background-color: #c8c4c0;
+  background-color: var(--sos-timeline-track-bg);
   box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.12);
 }
 
 /* Timeline handle */
 body.theme-light .sos-loop-timeline-handle {
-  border-color: #b8b4b0;
+  border-color: var(--sos-timeline-handle-border);
   background: linear-gradient(
     to bottom,
     rgba(0, 0, 0, 0.05),
@@ -1500,7 +1500,7 @@ body.theme-light .sos-loop-timeline-crossfade::before {
   );
 }
 
-/* Tooltip - keep dark for readability */
+/* Tooltip - keep light text for readability on dark tooltip background */
 body.theme-light .sos-loop-timeline-tooltip {
   color: #d4d0c5;
 }
@@ -1577,15 +1577,14 @@ body.theme-light .currently-playing .sos-loop-controls {
   );
 }
 
-/* Checkbox accent color & Clean up - neutralize Foundry's orange accent and artifacts in light mode */
+/* Checkbox accent color & Clean up - neutralize Foundry's default styling in light mode */
 body.theme-light .sos-compact-checkbox input[type="checkbox"],
 body.theme-light .sos-feature-toggle input[type="checkbox"] {
-  accent-color: #ee9b3a;
+  accent-color: var(--sos-checkbox-accent, #ee9b3a);
   /* Strip Foundry's default input styling (background boxes, borders) */
   background: transparent !important;
   border: none !important;
   box-shadow: none !important;
-  outline: none !important;
   /* Force native rendering and prevent custom size stretching */
   -webkit-appearance: checkbox !important;
   appearance: checkbox !important;
@@ -1594,17 +1593,10 @@ body.theme-light .sos-feature-toggle input[type="checkbox"] {
   margin: 0 !important;
 }
 
-/* Remove the orange focus ring glow */
-body.theme-light .sos-compact-checkbox input[type="checkbox"]:focus,
-body.theme-light .sos-feature-toggle input[type="checkbox"]:focus {
+/* Visible focus indicator for keyboard accessibility */
+body.theme-light .sos-compact-checkbox input[type="checkbox"]:focus-visible,
+body.theme-light .sos-feature-toggle input[type="checkbox"]:focus-visible {
+  outline: 2px solid var(--sos-hover-glow) !important;
+  outline-offset: 2px;
   box-shadow: none !important;
-}
-
-/* KILL the pseudo-elements (::before/::after) seen in the inspector that cause the artifacts */
-body.theme-light .sos-compact-checkbox input[type="checkbox"]::before,
-body.theme-light .sos-compact-checkbox input[type="checkbox"]::after,
-body.theme-light .sos-feature-toggle input[type="checkbox"]::before,
-body.theme-light .sos-feature-toggle input[type="checkbox"]::after {
-  display: none !important;
-  content: none !important;
 }

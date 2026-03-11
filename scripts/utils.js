@@ -302,9 +302,10 @@ function cleanupOldSequences() {
     }
 }
 
-// Start cleanup interval when module initializes
+// Start cleanup interval when module initializes (store ID for potential future cleanup)
+let _sequenceCleanupInterval = null;
 if (typeof window !== 'undefined') {
-    setInterval(cleanupOldSequences, SEQUENCE_CLEANUP_INTERVAL);
+    _sequenceCleanupInterval = setInterval(cleanupOldSequences, SEQUENCE_CLEANUP_INTERVAL);
 }
 
 export function getNextSequence(playlistId) {
@@ -364,6 +365,7 @@ export const LogSymbols = {
     // System
     INIT: '🚀',
     CLEANUP: '🧹',
+    WARNING: '⚠️',
     ERROR: '⚠️',
     STATE: '💾',
     REUSE: '♻️'
