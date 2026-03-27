@@ -1,0 +1,14 @@
+{{#with currentlyPlaying}}
+<div class="currently-playing global-control {{ class }}">
+    <header class="playlist-header">
+        <strong>{{ localize "PLAYLIST.CurrentlyPlaying" }}</strong>
+        <button type="button" class="inline-control pin icon fa-solid fa-caret-{{ pin.caret }}"
+                data-tooltip aria-label="{{ localize pin.label }}" data-action="pinCurrentlyPlaying"></button>
+    </header>
+    <ol class="playlist-sounds plain">
+        {{#each sounds}}
+            {{> "modules/the-sound-of-silence/templates/sos-sound-partial.hbs" }}
+        {{/each}}
+    </ol>
+</div>
+{{/with}}

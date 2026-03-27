@@ -1,0 +1,161 @@
+<li class="sound sos-now-playing {{ css }}" data-playlist-id="{{ playlistId }}"
+    data-sound-uuid="{{ uuid }}" data-sound-id="{{ id }}">
+
+    {{!-- Row 1: Playlist name (primary) --}}
+    <header class="sos-playlist-header">
+        <i class="fa-solid fa-list-music" inert></i>
+        <span class="ellipsis">{{ sos.playlistName }}</span>
+    </header>
+
+    {{!-- Row 2: Track name (secondary) --}}
+    <div class="sos-track-header">
+        <i class="fa-thin fa-music" inert></i>
+        <label class="ellipsis">{{ name }}</label>
+    </div>
+
+    {{!-- Row 2: Transport controls --}}
+    <div class="sos-transport-row">
+        <div class="sound-timer">
+            <span class="current">{{ currentTime }}</span>
+            <span class="sep">&sol;</span>
+            <span class="duration">{{ durationTime }}</span>
+        </div>
+        <div class="sos-transport-controls">
+            {{!-- Repeat (Foundry native) --}}
+            {{#if isOwner}}
+            <button type="button" class="sos-transport-btn icon fa-solid fa-arrows-rotate
+                    {{#unless repeat}}inactive{{/unless}}"
+                    data-action="soundRepeat" data-tooltip
+                    aria-label="{{ localize "PLAYLIST.SoundLoop" }}"></button>
+            {{/if}}
+
+            {{!-- Silence toggle (playlist-level) --}}
+            {{#if sos.isGM}}
+            <button type="button" class="sos-transport-btn sos-toggle {{#if sos.silenceEnabled}}active{{/if}}"
+                    data-playlist-id="{{ playlistId }}"
+                    data-tooltip="{{#if sos.silenceEnabled}}Disable Sound of Silence{{else}}Enable Sound of Silence{{/if}}">
+                <i class="fa-solid fa-hourglass-half"></i>
+            </button>
+            {{/if}}
+
+            {{!-- Crossfade toggle (playlist-level) --}}
+            {{#if sos.isGM}}
+            <button type="button" class="sos-transport-btn xfade-toggle {{#if sos.crossfadeEnabled}}active{{/if}}"
+                    data-playlist-id="{{ playlistId }}"
+                    data-tooltip="{{#if sos.crossfadeEnabled}}Disable Auto-Crossfade{{else}}Enable Auto-Crossfade{{/if}}">
+                <i class="fa-solid fa-right-left"></i>
+            </button>
+            {{/if}}
+
+            {{!-- Internal loop toggle (module) --}}
+            {{#if sos.loopEnabled}}
+            <button type="button" class="sos-transport-btn sos-loop-toggle-btn
+                    {{#if sos.loopActive}}active{{/if}}"
+                    data-sos-action="toggleLoop" data-sound-id="{{ id }}"
+                    data-tooltip="Internal Loop">
+                <i class="fa-solid fa-repeat"></i>
+            </button>
+            {{/if}}
+
+            {{!-- Playlist mode cycle --}}
+            {{#if isOwner}}
+            <button type="button" class="sos-transport-btn sos-mode-btn icon {{ sos.playlistMode.icon }}"
+                    data-sos-action="cyclePlaylistMode" data-playlist-id="{{ playlistId }}"
+                    data-tooltip aria-label="{{ localize sos.playlistMode.label }}"></button>
+            {{/if}}
+
+            {{!-- Playback controls group (visually separated from toggles) --}}
+            <div class="sos-playback-group">
+            {{!-- Previous track --}}
+            <button type="button" class="sos-transport-btn"
+                    data-sos-action="prevTrack" data-playlist-id="{{ playlistId }}"
+                    {{#unless isOwner}}disabled{{/unless}}
+                    data-tooltip="Previous Track">
+                <i class="fa-solid fa-backward-step"></i>
+            </button>
+
+            {{!-- Next track --}}
+            <button type="button" class="sos-transport-btn"
+                    data-sos-action="nextTrack" data-playlist-id="{{ playlistId }}"
+                    {{#unless isOwner}}disabled{{/unless}}
+                    data-tooltip="Next Track">
+                <i class="fa-solid fa-forward-step"></i>
+            </button>
+
+            {{!-- Pause/Resume toggle (must keep .pause class for updateTimestamps) --}}
+            {{#if pause.paused}}
+            <button type="button" class="sos-transport-btn pause icon {{ play.icon }}"
+                    data-action="soundPlay"
+                    {{#unless isOwner}}disabled{{/unless}} data-tooltip
+                    aria-label="{{ localize play.label }}"></button>
+            {{else}}
+            <button type="button" class="sos-transport-btn pause icon {{ pause.icon }}"
+                    data-action="soundPause"
+                    {{ disabled pause.disabled }} data-tooltip
+                    aria-label="{{ localize "PLAYLIST.SoundPause" }}"></button>
+            {{/if}}
+
+            {{!-- Stop (Foundry native — gold accent) --}}
+            <button type="button" class="sos-transport-btn sos-stop-btn icon fa-solid fa-square"
+                    data-action="soundStop"
+                    {{#unless isOwner}}disabled{{/unless}} data-tooltip
+                    aria-label="{{ localize "PLAYLIST.SoundStop" }}"></button>
+            </div>
+        </div>
+    </div>
+
+    {{!-- Row 3: Track Volume --}}
+    <div class="sos-volume-row">
+        <div class="sos-vol-label-wrap">
+            <span class="sos-vol-label">Track</span>
+            <span class="sos-vol-sublabel">Volume</span>
+        </div>
+        <i class="volume-icon fa-fw fa-solid fa-volume-low" inert></i>
+        {{#with volume}}
+        {{ formInput field classes="sound-volume" value=modifier dataset=dataset aria=aria }}
+        {{/with}}
+    </div>
+
+    {{!-- Row 4: Playlist Volume (only when normalization is enabled) --}}
+    {{#if sos.normalizationEnabled}}
+    <div class="sos-volume-row sos-playlist-volume-row" data-playlist-id="{{ playlistId }}">
+        <div class="sos-vol-label-wrap">
+            <span class="sos-vol-label">Playlist</span>
+            <span class="sos-vol-sublabel">Volume</span>
+        </div>
+        <i class="volume-icon fa-fw fa-solid fa-volume-low" inert></i>
+        <range-picker class="sos-playlist-volume-slider"
+                      name="normalizedVolume-{{ playlistId }}"
+                      value="{{ sos.normalizedVolume }}"
+                      min="0" max="1" step="0.05"
+                      data-playlist-id="{{ playlistId }}"
+                      {{#unless sos.isGM}}disabled{{/unless}}>
+        </range-picker>
+    </div>
+    {{/if}}
+
+    {{!-- Row 5: Loop Controls (only when loop segments are active) --}}
+    {{#if sos.showLoopControls}}
+    <div class="sos-loop-controls-row" data-sound-id="{{ id }}">
+        <span class="sos-controls-label">Loop</span>
+        <div class="sos-button-group">
+            <button class="sos-loop-ctrl" data-sos-action="loopPrev"
+                    data-sound-id="{{ id }}" data-tooltip="Previous Segment">
+                <i class="fa-solid fa-backward-step"></i>
+            </button>
+            <button class="sos-loop-ctrl" data-sos-action="loopNext"
+                    data-sound-id="{{ id }}" data-tooltip="Next Segment">
+                <i class="fa-solid fa-forward-step"></i>
+            </button>
+            <button class="sos-loop-ctrl" data-sos-action="loopBreak"
+                    data-sound-id="{{ id }}" data-tooltip="Break Loop">
+                <i class="fa-solid fa-eject"></i>
+            </button>
+            <button class="sos-loop-ctrl" data-sos-action="loopDisable"
+                    data-sound-id="{{ id }}" data-tooltip="Disable Loops">
+                <i class="fa-solid fa-ban"></i>
+            </button>
+        </div>
+    </div>
+    {{/if}}
+</li>

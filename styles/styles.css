@@ -3,13 +3,13 @@
 /* ========================================================= */
 
 :root {
-  /* State Colors - Brighter & More Saturated */
-  --sos-active-bg: rgba(70, 180, 140, 0.28);
-  --sos-active-border: rgba(90, 200, 160, 0.5);
-  --sos-active-glow: rgba(120, 220, 180, 0.6);
+  /* State Colors - Warm amber palette aligned with Foundry's --color-warm-1 (#ee9b3a) */
+  --sos-active-bg: rgba(238, 155, 58, 0.25);
+  --sos-active-border: rgba(238, 155, 58, 0.5);
+  --sos-active-glow: rgba(238, 155, 58, 0.4);
 
-  --sos-inactive-bg: rgba(160, 90, 70, 0.24);
-  --sos-inactive-border: rgba(180, 110, 85, 0.45);
+  --sos-inactive-bg: rgba(80, 75, 70, 0.3);
+  --sos-inactive-border: rgba(100, 95, 90, 0.4);
 
   --sos-loop-active-bg: rgba(220, 160, 70, 0.32);
   --sos-loop-active-border: rgba(240, 180, 90, 0.5);
@@ -98,13 +98,13 @@
 /* ========================================================= */
 
 body.theme-light {
-  /* State Colors */
-  --sos-active-bg: rgba(40, 160, 120, 0.18);
-  --sos-active-border: rgba(40, 160, 120, 0.45);
-  --sos-active-glow: rgba(40, 160, 120, 0.5);
+  /* State Colors - Warm amber for light mode */
+  --sos-active-bg: rgba(238, 155, 58, 0.18);
+  --sos-active-border: rgba(238, 155, 58, 0.45);
+  --sos-active-glow: rgba(238, 155, 58, 0.5);
 
-  --sos-inactive-bg: rgba(180, 70, 50, 0.14);
-  --sos-inactive-border: rgba(180, 70, 50, 0.4);
+  --sos-inactive-bg: rgba(120, 115, 110, 0.15);
+  --sos-inactive-border: rgba(120, 115, 110, 0.35);
 
   --sos-loop-active-bg: rgba(200, 140, 40, 0.2);
   --sos-loop-active-border: rgba(200, 140, 40, 0.45);
@@ -203,23 +203,21 @@ button.sos-toggle.active,
 button.xfade-toggle.active {
   background: linear-gradient(
     to bottom,
-    rgba(70, 180, 140, 0.35),
-    rgba(70, 180, 140, 0.22)
+    var(--sos-active-bg),
+    rgba(238, 155, 58, 0.15)
   );
   border: 1px solid var(--sos-active-border);
-  box-shadow: inset 0 1px 0 rgba(120, 220, 180, 0.25),
-              0 0 4px rgba(120, 220, 180, 0.4);
+  color: var(--sos-checkbox-accent);
+  box-shadow: inset 0 1px 0 rgba(238, 155, 58, 0.2),
+              0 0 4px var(--sos-active-glow);
 }
 
 button.sos-toggle:not(.active),
 button.xfade-toggle:not(.active) {
-  background: linear-gradient(
-    to bottom,
-    rgba(160, 90, 70, 0.28),
-    rgba(160, 90, 70, 0.18)
-  );
+  background: var(--sos-inactive-bg);
   border: 1px solid var(--sos-inactive-border);
   box-shadow: inset 0 1px 0 rgba(0, 0, 0, 0.1);
+  opacity: 0.6;
 }
 
 button.sos-toggle:hover:not(.disabled),
@@ -661,7 +659,7 @@ button.sos-loop-preview-segment i {
   .checkbox
   input[type="checkbox"][name*="skipToNext"]:checked
   + label {
-  color: rgba(240, 180, 90, 0.95);
+  color: var(--sos-checkbox-accent);
   font-weight: 500;
 }
 
@@ -1221,115 +1219,6 @@ button.sos-loop-preview-segment.sos-compact i {
   box-shadow: var(--sos-shadow-glow);
 }
 
-/* ========================================================= */
-/*   Normalized Volume Control - Currently Playing         */
-/* ========================================================= */
-
-li.sound.sos-normalized-volume-control {
-  display: flex;
-  align-items: center;
-  gap: var(--sos-space-sm);
-  padding: var(--sos-space-xs) 6px;
-  background: linear-gradient(
-    to bottom,
-    rgba(0, 0, 0, 0.08),
-    rgba(0, 0, 0, 0.12)
-  );
-  border-top: 1px solid var(--sos-border-light);
-  margin: 0;
-  min-height: 20px;
-}
-
-li.sound.sos-normalized-volume-control label.sos-volume-label {
-  display: flex;
-  align-items: center;
-  gap: var(--sos-space-sm);
-  margin: 0;
-  font-size: var(--sos-text-xs);
-  font-weight: 400;
-  color: var(--sos-text-label);
-  white-space: nowrap;
-  flex-shrink: 0;
-  min-width: 100px;
-}
-
-li.sound.sos-normalized-volume-control .volume-icon {
-  flex-shrink: 0;
-  font-size: var(--sos-text-xs);
-  color: var(--sos-text-secondary);
-  opacity: 0.7;
-}
-
-li.sound.sos-normalized-volume-control .sos-volume-slider-container {
-  flex: 1;
-  display: flex;
-  align-items: center;
-  margin-right: 6px;
-}
-
-li.sound.sos-normalized-volume-control range-picker {
-  width: 100%;
-}
-
-/* Disabled state */
-li.sound.sos-normalized-volume-control.sos-is-disabled
-  .sos-volume-slider-container {
-  opacity: 0.4;
-  pointer-events: none;
-}
-
-li.sound.sos-normalized-volume-control.sos-is-disabled label.sos-volume-label,
-li.sound.sos-normalized-volume-control.sos-is-disabled .volume-icon {
-  opacity: 0.5;
-  color: var(--sos-text-disabled);
-}
-
-.currently-playing li.sos-normalized-volume-control label.sos-volume-label {
-  color: var(--sos-text-primary) !important;
-  opacity: 1 !important;
-}
-
-/* The row itself */
-.sos-normalized-volume-control {
-  display: flex;
-  align-items: center;
-  gap: var(--sos-space-md);
-  width: 100%;
-}
-
-/* Label + icon as a single inline unit */
-.sos-normalized-volume-control .sos-volume-label {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  margin: 0;
-  white-space: nowrap;
-}
-
-/* Icon sizing/alignment */
-.sos-normalized-volume-control .volume-icon {
-  flex-shrink: 0;
-  width: 1em;
-  text-align: center;
-}
-
-/* Let the slider take the remaining space */
-.sos-normalized-volume-control .sos-volume-slider-container {
-  flex: 1;
-  min-width: 110px;
-}
-
-/* Optional: disabled state visuals */
-.sos-normalized-volume-control.sos-is-disabled .sos-volume-slider-container {
-  opacity: 0.5;
-  pointer-events: none;
-}
-.sos-normalized-volume-control.sos-is-disabled .sos-volume-label,
-.sos-normalized-volume-control.sos-is-disabled .volume-icon {
-  opacity: 0.75;
-  color: var(--sos-text-disabled);
-}
-
 form[id^="PlaylistConfig-"]
   .form-group.slim:has(input[name="fade"])
   .form-fields
@@ -1341,11 +1230,237 @@ form[id^="PlaylistConfig-"]
   text-align: left;
 }
 
-/* ========================================================
-   Loop Control Buttons
-   ======================================================== */
+/* ========================================================= */
+/*   Currently Playing - Overhauled Layout                   */
+/* ========================================================= */
 
-.sos-loop-controls {
+/* Sound list container */
+.currently-playing .playlist-sounds.plain {
+  border: 1px solid var(--sos-border-medium);
+  border-radius: var(--sos-radius-sm);
+  margin-bottom: var(--sos-space-md);
+  overflow: hidden;
+  background: linear-gradient(
+    to bottom,
+    rgba(0, 0, 0, 0.18),
+    rgba(0, 0, 0, 0.08)
+  );
+  box-shadow: var(--sos-shadow-md);
+}
+
+.currently-playing .playlist-sounds.plain:last-child {
+  margin-bottom: 0;
+}
+
+/* Row 0: Playlist name (primary header) */
+.sos-playlist-header {
+  display: flex;
+  align-items: center;
+  gap: var(--sos-space-md);
+  line-height: var(--entry-height, 24px);
+}
+
+.sos-playlist-header > i {
+  flex-shrink: 0;
+  color: var(--sos-checkbox-accent);
+}
+
+.sos-playlist-header span {
+  flex: 1;
+  font-weight: 600;
+  font-size: var(--sos-text-base);
+}
+
+/* Track card */
+.sos-now-playing {
+  display: flex;
+  flex-direction: column;
+  padding: var(--sos-space-sm) 6px;
+  background: linear-gradient(
+    to bottom,
+    rgba(255, 255, 255, 0.02),
+    rgba(0, 0, 0, 0.05)
+  );
+  border-bottom: 1px solid var(--sos-border-light);
+}
+
+.sos-now-playing:last-child {
+  border-bottom: none;
+}
+
+/* Row 1: Track header (secondary) */
+.sos-track-header {
+  display: flex;
+  align-items: center;
+  gap: var(--sos-space-md);
+  padding-left: calc(var(--sos-space-md) + 4px);
+  line-height: var(--entry-height, 24px);
+}
+
+.sos-track-header i {
+  flex-shrink: 0;
+  color: #9f8475;
+}
+
+.sos-track-header label {
+  flex: 1;
+  font-weight: 400;
+  font-size: var(--sos-text-sm);
+  color: #9f8475;
+}
+
+/* Row 2: Transport controls */
+.sos-transport-row {
+  display: flex;
+  align-items: center;
+  gap: var(--sos-space-md);
+  padding: var(--sos-space-xs) 0;
+}
+
+.sos-transport-row .sound-timer {
+  flex: 0 0 auto;
+  font-size: var(--font-size-12, 12px);
+  color: #d0b8a3;
+  white-space: nowrap;
+}
+
+.sos-transport-controls {
+  display: flex;
+  align-items: center;
+  gap: var(--sos-space-xs);
+  flex: 1;
+  justify-content: flex-end;
+  flex-wrap: nowrap;
+}
+
+/* Playback controls group — visually separated from toggle buttons */
+.sos-playback-group {
+  display: flex;
+  align-items: center;
+  gap: var(--sos-space-xs);
+  margin-left: var(--sos-space-sm);
+  padding-left: var(--sos-space-md);
+  border-left: 1px solid var(--sos-border-medium);
+}
+
+/* Transport button base */
+.sos-transport-btn {
+  padding: var(--sos-space-xs) var(--sos-space-sm);
+  background: var(--sos-btn-bg);
+  border: 1px solid var(--sos-border-medium);
+  border-radius: var(--sos-radius-sm);
+  color: var(--sos-text-primary);
+  cursor: pointer;
+  transition: all 0.15s ease;
+  min-width: 22px;
+  height: var(--sos-button-height-sm);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: var(--sos-btn-inset-shadow), var(--sos-shadow-sm);
+  text-shadow: var(--sos-btn-text-shadow);
+  font-size: 11px;
+}
+
+.sos-transport-btn i {
+  font-size: 10px;
+  pointer-events: none;
+}
+
+.sos-transport-btn:hover:not(.disabled):not([disabled]) {
+  background: var(--sos-btn-hover-bg);
+  border-color: var(--sos-hover-glow);
+  box-shadow: var(--sos-shadow-glow), var(--sos-btn-inset-shadow);
+}
+
+.sos-transport-btn.disabled,
+.sos-transport-btn[disabled] {
+  opacity: 0.3;
+  cursor: not-allowed;
+  background: var(--sos-disabled-bg);
+  border-color: var(--sos-border-light);
+  box-shadow: none;
+  filter: grayscale(100%);
+}
+
+/* Repeat button inactive state */
+.sos-transport-btn.inactive {
+  opacity: 0.4;
+}
+
+/* Stop button — gold accent */
+.sos-stop-btn {
+  color: var(--sos-checkbox-accent);
+}
+
+/* Loop toggle button — highlighted when active */
+.sos-loop-toggle-btn.active {
+  background: var(--sos-loop-active-bg);
+  border-color: var(--sos-loop-active-border);
+  color: var(--sos-checkbox-accent);
+}
+
+
+/* Row 3/4: Volume rows */
+.sos-volume-row {
+  display: flex;
+  align-items: center;
+  gap: var(--sos-space-sm);
+  padding: var(--sos-space-xs) 0;
+  border-top: 1px solid var(--sos-border-light);
+  background: linear-gradient(
+    to bottom,
+    rgba(0, 0, 0, 0.04),
+    rgba(0, 0, 0, 0.08)
+  );
+  padding-left: 6px;
+  padding-right: 6px;
+}
+
+/* Fixed-width label wrapper — keeps sliders aligned across all volume rows */
+.sos-vol-label-wrap {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  flex: 0 0 92px;
+  min-width: 92px;
+}
+
+.sos-vol-label {
+  font-size: var(--sos-text-xs);
+  font-weight: 600;
+  color: var(--sos-checkbox-accent);
+  white-space: nowrap;
+}
+
+.sos-vol-sublabel {
+  font-size: var(--sos-text-xs);
+  font-weight: 400;
+  color: var(--sos-text-label);
+  white-space: nowrap;
+}
+
+.sos-volume-row .volume-icon {
+  flex: 0 0 1rem;
+  font-size: var(--sos-text-xs);
+  color: var(--sos-text-secondary);
+  opacity: 0.7;
+}
+
+.sos-volume-row range-picker,
+.sos-volume-row .sound-volume {
+  flex: 1;
+}
+
+/* Disabled volume slider (managed by normalization) */
+.sos-volume-row range-picker[disabled],
+.sos-volume-row .sound-volume[disabled] {
+  opacity: 0.4;
+  pointer-events: none;
+}
+
+/* Row 5: Loop controls */
+.sos-loop-controls-row {
   display: flex;
   align-items: center;
   gap: 4px;
@@ -1356,7 +1471,6 @@ form[id^="PlaylistConfig-"]
     rgba(0, 0, 0, 0.12)
   );
   border-top: 1px solid var(--sos-border-light);
-  margin: 0;
 }
 
 .sos-controls-label {
@@ -1376,7 +1490,7 @@ form[id^="PlaylistConfig-"]
   justify-content: flex-end;
 }
 
-.sos-loop-controls button {
+.sos-loop-ctrl {
   padding: var(--sos-space-xs) var(--sos-space-md);
   background: var(--sos-btn-bg);
   border: 1px solid var(--sos-border-medium);
@@ -1393,13 +1507,18 @@ form[id^="PlaylistConfig-"]
   text-shadow: var(--sos-btn-text-shadow);
 }
 
-.sos-loop-controls button:hover:not(.disabled) {
+.sos-loop-ctrl i {
+  font-size: 10px;
+  pointer-events: none;
+}
+
+.sos-loop-ctrl:hover:not(.disabled) {
   background: var(--sos-btn-hover-bg);
   border-color: var(--sos-hover-glow);
   box-shadow: var(--sos-shadow-glow), var(--sos-btn-inset-shadow);
 }
 
-.sos-loop-controls button.disabled {
+.sos-loop-ctrl.disabled {
   opacity: 0.3;
   cursor: not-allowed;
   background: var(--sos-disabled-bg);
@@ -1408,65 +1527,9 @@ form[id^="PlaylistConfig-"]
   filter: grayscale(100%);
 }
 
-.sos-loop-controls button i {
-  font-size: 10px;
-  pointer-events: none;
-}
-
-/* Make the "Currently Playing" section more compact */
-.currently-playing .sound {
-  padding: var(--sos-space-sm) 6px;
-}
-
-.currently-playing .sound .sound-controls {
-  gap: var(--sos-space-xs);
-}
-
-/* Visual separation for currently playing sound blocks */
-.currently-playing .playlist-sounds.plain {
-  border: 1px solid var(--sos-border-medium);
-  border-radius: var(--sos-radius-sm);
-  margin-bottom: var(--sos-space-md);
-  overflow: hidden;
-  background: linear-gradient(
-    to bottom,
-    rgba(0, 0, 0, 0.18),
-    rgba(0, 0, 0, 0.08)
-  );
-  box-shadow: var(--sos-shadow-md);
-}
-
-.currently-playing .playlist-sounds.plain:last-child {
-  margin-bottom: 0;
-}
-
-/* Subtle highlight on the sound name bar */
-.currently-playing .playlist-sounds.plain > .sound {
-  background: linear-gradient(
-    to bottom,
-    rgba(255, 255, 255, 0.02),
-    rgba(0, 0, 0, 0.05)
-  );
-  border-bottom: 1px solid var(--sos-border-light);
-}
-
-/* Ensure controls beneath are visually grouped */
-.currently-playing .sos-normalized-volume-control,
-.currently-playing .sos-loop-controls {
-  background: linear-gradient(
-    to bottom,
-    rgba(0, 0, 0, 0.08),
-    rgba(0, 0, 0, 0.12)
-  );
-}
-
-/* Add subtle top border to controls for definition */
-.currently-playing .sos-normalized-volume-control {
-  border-top: 1px solid var(--sos-border-light);
-}
-
-.currently-playing .sos-loop-controls {
-  border-top: 1px solid var(--sos-border-light);
+/* Hide the old loop toggle in Currently Playing (now in transport row) */
+.currently-playing .sos-loop-toggle {
+  display: none !important;
 }
 
 /* ========================================================= */
@@ -1502,7 +1565,7 @@ body.theme-light .sos-loop-timeline-crossfade::before {
 
 /* Tooltip - keep light text for readability on dark tooltip background */
 body.theme-light .sos-loop-timeline-tooltip {
-  color: #d4d0c5;
+  color: var(--sos-text-primary);
 }
 
 /* Sticky form footer */
@@ -1531,24 +1594,6 @@ body.theme-light .sos-loop-segment-section.sos-compact {
   );
 }
 
-/* Normalized volume control background */
-body.theme-light li.sound.sos-normalized-volume-control {
-  background: linear-gradient(
-    to bottom,
-    rgba(0, 0, 0, 0.02),
-    rgba(0, 0, 0, 0.05)
-  );
-}
-
-/* Loop controls background */
-body.theme-light .sos-loop-controls {
-  background: linear-gradient(
-    to bottom,
-    rgba(0, 0, 0, 0.02),
-    rgba(0, 0, 0, 0.05)
-  );
-}
-
 /* Currently-playing sound blocks */
 body.theme-light .currently-playing .playlist-sounds.plain {
   background: linear-gradient(
@@ -1558,8 +1603,8 @@ body.theme-light .currently-playing .playlist-sounds.plain {
   );
 }
 
-/* Currently-playing sound name bar */
-body.theme-light .currently-playing .playlist-sounds.plain > .sound {
+/* Currently-playing track card */
+body.theme-light .sos-now-playing {
   background: linear-gradient(
     to bottom,
     rgba(0, 0, 0, 0.01),
@@ -1567,9 +1612,18 @@ body.theme-light .currently-playing .playlist-sounds.plain > .sound {
   );
 }
 
-/* Currently-playing grouped controls */
-body.theme-light .currently-playing .sos-normalized-volume-control,
-body.theme-light .currently-playing .sos-loop-controls {
+/* Timer and track header — darker for light backgrounds */
+body.theme-light .sos-transport-row .sound-timer {
+  color: #555;
+}
+body.theme-light .sos-track-header i,
+body.theme-light .sos-track-header label {
+  color: #666;
+}
+
+/* Volume rows and loop controls */
+body.theme-light .sos-volume-row,
+body.theme-light .sos-loop-controls-row {
   background: linear-gradient(
     to bottom,
     rgba(0, 0, 0, 0.02),

@@ -348,7 +348,7 @@ class StateManager {
     setCrossfadeTimer(playlist, handle) {
         this._crossfadeTimers.set(playlist, handle);
         debug(`[State] Set crossfade timer for "${playlist.name}"`);
-        this._emitStateChange();
+        this._emitStateChange(true);
     }
 
     /**
@@ -360,7 +360,7 @@ class StateManager {
         this._crossfadeTimers.delete(playlist);
         if (had) {
             debug(`[State] Cleared crossfade timer for "${playlist.name}"`);
-            this._emitStateChange();
+            this._emitStateChange(true);
         }
     }
 
@@ -388,8 +388,8 @@ class StateManager {
      * @param {Object} waiter - {sound: Sound, onPlay: Function}
      */
     setPlayWaiter(playlist, waiter) {
-        this._emitStateChange()
         this._playWaiters.set(playlist, waiter);
+        this._emitStateChange(true);
         debug(`[State] Set play waiter for "${playlist.name}"`);
     }
 
@@ -398,8 +398,8 @@ class StateManager {
      * @param {Playlist} playlist
      */
     clearPlayWaiter(playlist) {
-        this._emitStateChange()
         this._playWaiters.delete(playlist);
+        this._emitStateChange(true);
     }
 
     /**
@@ -749,13 +749,16 @@ class StateManager {
  * Emits a generic hook to notify listeners that the module's state has changed.
  * @private
  */
-    _emitStateChange() {
+    _emitStateChange(silent = false) {
+        // Silent emissions are for internal audio-engine bookkeeping (crossfade timers,
+        // play waiters) that have no visual representation in the UI.
+        if (silent) return;
         // Use a debounce to prevent spamming renders during rapid changes (like a crossfade)
         if (this._emitTimeout) return;
         this._emitTimeout = setTimeout(() => {
             Hooks.callAll(`${MODULE_ID}.stateChanged`);
             this._emitTimeout = null;
-        }, 50); // A 50ms debounce is a good starting point
+        }, 150);
     }
 
     // ============================================

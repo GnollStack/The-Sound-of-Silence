@@ -202,16 +202,7 @@ function generateFadeCurve(startVol, targetVol, resolution, curveType) {
 
 // --- Fader Functions ---
 
-const ACTIVE_FADES = new WeakMap();
-
 export function cancelActiveFade(sound) {
-  const id = ACTIVE_FADES.get(sound);
-  if (id !== undefined) {
-    try {
-      cancelAnimationFrame(id);
-    } catch (_) { }
-    ACTIVE_FADES.delete(sound);
-  }
   sound?.gain?.cancelScheduledValues(sound.context.currentTime);
 }
 
@@ -350,6 +341,11 @@ export function equalPowerCrossfade(soundOut, soundIn, duration, { targetVolIn: 
 
   gainOut.cancelScheduledValues(contextOut.currentTime);
   gainIn.cancelScheduledValues(contextIn.currentTime);
+
+  // Establish known starting values before scheduling curves (Web Audio API spec requirement).
+  // After cancelScheduledValues, the gain value can be in an undefined state.
+  gainOut.setValueAtTime(startVolOut, contextOut.currentTime);
+  gainIn.setValueAtTime(0, contextIn.currentTime);
 
   gainOut.setValueCurveAtTime(curveOut, contextOut.currentTime, durationSec);
   gainIn.setValueCurveAtTime(curveIn, contextIn.currentTime, durationSec);

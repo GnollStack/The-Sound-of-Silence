@@ -1,5 +1,5 @@
 // looping-sound.js
-import { advancedFade, equalPowerCrossfade } from "./audio-fader.js";
+import { advancedFade, equalPowerCrossfade, fadeOutAndStop } from "./audio-fader.js";
 import { maybeLoopPlaylist } from "./playlist-loop.js";
 import { performCrossfade } from "./cross-fade.js";
 import { Silence } from "./silence.js";
@@ -132,11 +132,8 @@ export class LoopingSound {
               const currentTime = this.soundA.currentTime;
               if (Math.abs(currentTime - targetPos) < POSITION_CHECK_TOLERANCE) {
                 stableCount++;
-                // Only log when position is stable, not each check
                 if (stableCount >= POSITION_CHECK_REQUIRED) {
                   logFeature(LogSymbols.LOOP, 'Loop', `Position stable @ ${currentTime.toFixed(2)}s`);
-                }
-                if (stableCount >= POSITION_CHECK_REQUIRED) {
                   debug(`[LoopingSound] Position stable at ${currentTime.toFixed(2)}s`);
                   return resolve(true);
                 }
@@ -543,18 +540,6 @@ export class LoopingSound {
     const targetVolIn = Flags.resolveTargetVolume(this.ps);
     equalPowerCrossfade(sourceSound, targetSound, crossfadeMs, { targetVolIn });
 
-    // Force volume after a short delay in case the crossfade fails to ramp up.
-    // Uses AudioTimeout to avoid browser throttling in background tabs.
-    AudioTimeout.wait(crossfadeMs / 2).then(() => {
-      if (!this.isDestroyed && targetSound?.playing) {
-        const expectedVol = Flags.resolveTargetVolume(this.ps);
-        if (targetSound.volume < expectedVol / 2) {
-          debug(`[LoopingSound] Crossfade may have stalled, forcing volume to ${expectedVol.toFixed(3)}`);
-          targetSound.volume = expectedVol;
-        }
-      }
-    });
-
     this.handoffTimer?.cancel();
     this.handoffTimer = new AudioTimeout(crossfadeMs + HANDOFF_BUFFER);
 
@@ -644,7 +629,6 @@ export class LoopingSound {
 
     } else {
       // --- ROBUST LOGIC FOR SILENCE/DEFAULT MODES ---
-      const { fadeOutAndStop } = await import("./audio-fader.js");
       const fadeMs = Number(playlist?.fade) || 500;
 
       debug(`[LoopingSound] Fading out over ${fadeMs}ms...`);
@@ -681,7 +665,7 @@ export class LoopingSound {
         debug(`[LoopingSound] Silence is enabled. Injecting silent gap.`);
         // Manually trigger the silent gap. The `playSilence` function returns a
         // promise that resolves to `true` if cancelled, `false` otherwise.
-        const wasCancelled = await Silence.playSilence(playlist);
+        const wasCancelled = await Silence.playSilence(playlist, this.ps);
         if (!wasCancelled) {
           playNextOrLoop();
         }
@@ -906,6 +890,8 @@ export class LoopingSound {
     }
 
     // --- Explicitly break references ---
+    if (this.soundA) this.soundA._manager = null;
+    if (this.soundB) this.soundB._manager = null;
     this.soundA = null;
     this.soundB = null;
   }

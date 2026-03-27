@@ -33,9 +33,10 @@ export async function performCrossfade(playlist, soundToFade) {
     return;
   }
 
+  const fadingSoundRef = soundToFade.sound;
   AudioTimeout.wait(fadeMs + 500).then(() => {
-    if (soundToFade?.sound) {
-      State.clearFadingSound(soundToFade.sound);
+    if (fadingSoundRef) {
+      State.clearFadingSound(fadingSoundRef);
       debug(`[CF] (debounce) Released lock for "${soundToFade.name}".`);
     }
   });

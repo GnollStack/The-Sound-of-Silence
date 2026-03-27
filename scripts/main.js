@@ -46,14 +46,13 @@ import { Flags } from "./flag-service.js";
 import { State } from "./state-manager.js";
 import { API } from "./api.js";
 import { AdvancedShuffle, SHUFFLE_PATTERNS } from "./advanced-shuffle.js";
+import { registerCurrentlyPlaying } from "./currently-playing.js";
 
 const AudioTimeout = foundry.audio.AudioTimeout;
 
 // =========================================================================
 // Constants & State
 // =========================================================================
-
-const FLAG_ENABLED = "silenceEnabled";
 
 export async function cancelSilentGap(playlist) {
   // Delegate to the centralized cleanup utility, specifically targeting only the silence feature.
@@ -67,15 +66,6 @@ export async function cancelSilentGap(playlist) {
 // =========================================================================
 // Helpers
 // =========================================================================
-
-/**
- * A simple helper to check if the "Sound of Silence" feature is enabled for a playlist.
- * @param {Playlist} playlist The playlist to check.
- * @returns {boolean} True if silence is enabled, false otherwise.
- */
-function silenceIsEnabled(playlist) {
-  return playlist.getFlag(MODULE_ID, FLAG_ENABLED) ?? false;
-}
 
 // =========================================================================
 // Foundry Hooks
@@ -172,6 +162,7 @@ Hooks.once("ready", () => {
 
   registerPlaylistSheetWrappers();
   registerSoundConfigWrappers();
+  registerCurrentlyPlaying();
 
   // --- Visibility Recovery (Safety Net) ---
   // When the browser tab regains focus, validate and recover module state.
@@ -226,7 +217,7 @@ Hooks.once("ready", () => {
           if (Flags.getSoundFlag(ps, "allowVolumeOverride")) continue;
 
           const currentGain = ps.sound.gain?.value;
-          if (currentGain !== undefined && Math.abs(currentGain - expectedVolume) > 0.01) {
+          if (currentGain !== undefined && Math.abs(currentGain - expectedVolume) > 0.01 && !State.isSoundFading(ps.sound)) {
             debug(`[Visibility] Volume correction for "${ps.name}": gain=${currentGain.toFixed(3)} -> expected=${expectedVolume.toFixed(3)}`);
             ps.sound.volume = expectedVolume;
           }
@@ -723,14 +714,14 @@ Hooks.once("ready", () => {
       const result = await wrapped.call(this, ...args);
 
       // After playAll starts, find the first track and arm its features.
-      setTimeout(() => {
+      AudioTimeout.wait(0).then(() => {
         let first = this.sounds.find((s) => s.playing);
         if (Array.isArray(first)) first = first.pop();
         if (first) {
           scheduleCrossfade(this, first);
           scheduleLoopWithin(first);
         }
-      }, 0);
+      });
       return result;
     },
     "WRAPPER"
@@ -766,16 +757,9 @@ Hooks.once("ready", () => {
       // 5. Play the sound
       const result = await wrapped.call(this, options);
 
-      // 6. Post-play volume assertion (safety net for background tabs).
-      //    If no fade-in is pending, ensure volume matches the normalized target.
-      if (fadeInMs <= 0 || ps?.pausedTime > 0) {
-        if (Math.abs(this.volume - targetVolume) > 0.001) {
-          debug(`[Sound.play] Post-play volume correction: ${this.volume.toFixed(3)} -> ${targetVolume.toFixed(3)} for "${ps.name}"`);
-          this.volume = targetVolume;
-        }
-      }
-
-      // 7. Schedule all post-play actions
+      // 6. Schedule all post-play actions (fade-in, loops, crossfade timers).
+      //    Volume safety net is inside _schedulePostPlayActions, AFTER scheduling,
+      //    so it doesn't destroy fade curves that were just set up.
       _schedulePostPlayActions(ps, this);
 
       return result;
@@ -1079,15 +1063,6 @@ Hooks.once("ready", () => {
   }
 
   /**
-   * Determines the correct target volume for a sound, accounting for volume normalization.
-   * Delegates to Flags.resolveTargetVolume() which is the single source of truth.
-   * @returns {number} The calculated target volume (0-1).
-   */
-  function _determineTargetVolume(ps) {
-    return Flags.resolveTargetVolume(ps);
-  }
-
-  /**
    * Sets the initial volume of a sound object before playback.
    * Mutes the sound if a fade-in is required, otherwise sets it to its target volume.
    */
@@ -1140,6 +1115,16 @@ Hooks.once("ready", () => {
       // at the end of the track. Our new utility handles this perfectly.
       // Skip if the sound is set to repeat (native loop) to avoid NaN gain issues.
       scheduleEndOfTrackFade(ps);
+    }
+
+    // Post-schedule volume safety net (for background tabs).
+    // Runs AFTER all scheduling so it doesn't destroy fade curves that were just set up.
+    if ((fadeInMs <= 0 || ps?.pausedTime > 0) && !State.isSoundFading(sound)) {
+      const target = Flags.resolveTargetVolume(ps);
+      if (Math.abs(sound.volume - target) > 0.001) {
+        debug(`[Sound.play] Post-schedule volume correction: ${sound.volume.toFixed(3)} -> ${target.toFixed(3)} for "${ps.name}"`);
+        sound.volume = target;
+      }
     }
   }
 });

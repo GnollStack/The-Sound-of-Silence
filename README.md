@@ -36,8 +36,9 @@
 <details>
 <summary> <strong>UI Screenshots</strong></summary>
 
-### Playlist Header Controls
-<img width="271" alt="Toggle buttons for silence, crossfade, and loop" src="https://github.com/user-attachments/assets/f8f895d2-091a-4128-9531-539f7a7becdc" />
+### Currently Playing
+<!-- Replace the src below with an uploaded GitHub asset URL after taking a screenshot -->
+<img width="367" height="245" alt="image" src="https://github.com/user-attachments/assets/7c833a43-041b-469d-884d-002ad427c3c9" />
 
 ### Playlist Configuration
 <img width="281" alt="Extended playlist settings" src="https://github.com/user-attachments/assets/005a5e91-faa2-470c-a287-a1ed4a362fb5" />
@@ -60,7 +61,7 @@ Create professional game audio structures within a single track:
 - **Skip intro** — Jump directly to your first loop point for instant atmosphere, with a configurable fade-in at the loop point
 - **Visual timeline** — Interactive preview with draggable handles, color-coded segments, and crossfade zone visualization
 - **Loop preview** — Play full segment loops or just the transition points to fine-tune your crossfade timing
-- **Live controls** — Break the current loop, skip to next/previous segments, or disable all loops from the currently-playing section
+- **Live controls** — Break the current loop, skip to next/previous segments, or disable all loops directly from the redesigned Currently Playing panel
 - **Equal-power crossfades** between loop iterations for seamless transitions
 
 ### Automatic Crossfading
@@ -102,6 +103,19 @@ Four shuffle algorithms (configured in module settings):
 - **Exhaustive** — all tracks play once before reshuffling
 - **Weighted Random** — favors less-recently-played tracks
 - **Round-Robin** — strict even distribution over time
+
+### Redesigned Currently Playing Section
+
+The "Currently Playing" panel in the sidebar has been completely overhauled with a proper transport control layout:
+
+- **Playlist-first layout** — each track card shows the playlist name as the primary header, with the track name secondary below it
+- **Full transport row** — repeat, silence toggle, crossfade toggle, internal loop toggle, playlist mode cycle, previous track, next track, pause/resume, stop
+- **Inline playlist controls** — toggle silence gaps, auto-crossfade, and cycle playback mode (disabled/sequential/shuffle/simultaneous) directly from the Currently Playing panel, even when the playlist is hidden in a folder
+- **Bidirectional sync** — all toggles stay in sync with the sidebar playlist header buttons
+- **Pause/Resume toggle** — when a track is paused, the button switches to a play icon so you can resume without stopping
+- **Dual volume sliders** — separate Track Volume and Playlist Volume sliders, aligned for easy comparison
+- **Loop controls row** — appears automatically when a track has active loop segments; prev/next segment, break loop, and disable loops
+- **Live state** — crossfade status and loop segment changes update the panel automatically
 
 ### Diagnostics
 
@@ -262,9 +276,9 @@ None reported. If you find a compatibility issue, please [open an issue](https:/
 - [ ] Intro-to-playlist linking (play intro track, then auto-switch to looping playlist)
 - [ ] Preset system (save/load/share loop configurations)
 - [ ] Playlist automation triggers (on combat start, on scene change)
-- [ ] API expansion for macro/module integration
 - [ ] Expanded diagnostics dashboard
 - [ ] Non-sequential segment playback (jump between segments in any order)
+- [ ] Keyboard shortcuts for transport controls
 
 ---
 
