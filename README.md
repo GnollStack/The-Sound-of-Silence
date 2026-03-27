@@ -260,8 +260,8 @@ const api = game.modules.get("the-sound-of-silence").api;
 ## Compatibility
 
 ### Tested & Compatible
-- Monk's Enhanced Audio
-- Playlist Enhancements
+- ~Monk's Enhanced Audio~ TSOS UI IS OVERIDDEN AS OF 13.12.0, will be looking for a fix as soon as I can
+- ~Playlist Enhancements~ TSOS UI IS OVERIDDEN AS OF 13.12.0, will be looking for a fix as soon as I can
 - All game systems
 - Foundry VTT v13+
 
