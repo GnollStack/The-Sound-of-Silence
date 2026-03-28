@@ -90,6 +90,23 @@ export { LOG_LEVELS };
 
 
 /**
+ * Ensures all Foundry AudioContexts are in the "running" state.
+ * Browsers can suspend AudioContext in background tabs, which freezes
+ * setValueCurveAtTime() curves and AudioTimeout timers.
+ * Call this before any audio operation that relies on the Web Audio thread.
+ */
+export function ensureAudioContext() {
+    if (!game?.audio) return;
+    for (const name of ["music", "environment", "interface"]) {
+        const ctx = game.audio[name];
+        if (ctx?.state === "suspended") {
+            debug(`[AudioCtx] Resuming suspended "${name}" context`);
+            ctx.resume().catch(() => {});
+        }
+    }
+}
+
+/**
  * A robust, non-polling utility to get the Howler.js Sound object
  * from a PlaylistSound, which may not be immediately available.
  * @param {PlaylistSound} ps The playlist sound.

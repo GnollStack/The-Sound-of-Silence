@@ -1,6 +1,6 @@
 // cross-fade.js - Automatic cross-fading for Foundry VTT playlists
 
-import { MODULE_ID, debug, waitForMedia, logFeature, LogSymbols, safeStop } from "./utils.js";
+import { MODULE_ID, debug, waitForMedia, logFeature, LogSymbols, safeStop, getNextSequence } from "./utils.js";
 import { equalPowerCrossfade, fadeOutAndStop } from "./audio-fader.js";
 import { Flags } from "./flag-service.js";
 import { State } from "./state-manager.js";
@@ -136,14 +136,26 @@ export async function performCrossfade(playlist, soundToFade) {
     debug(`[CF] Crossfading from "${soundToFade.name}" to "${soundToPlay.name}" (targetVol=${targetVolIn.toFixed(3)}).`);
     equalPowerCrossfade(soundOut, soundIn, fadeMs, { targetVolIn });
 
-    // 4. Immediately update the outgoing sound's document state for UI purposes.
+    // 4. Replicate the crossfade to non-GM clients BEFORE marking the outgoing sound
+    //    as stopped — ensures clients receive the instruction while the outgoing sound
+    //    is still playing so they can apply the equal-power curves.
+    await playlist.setFlag(MODULE_ID, "crossfadeTransition", {
+      incomingSoundId: soundToPlay.id,
+      outgoingSoundId: soundToFade.id,
+      fadeMs,
+      targetVolIn,
+      seq: getNextSequence(playlist.id),
+      gmId: game.user.id,
+    });
+
+    // 5. Immediately update the outgoing sound's document state for UI purposes.
     //    The audio continues playing/fading, but the UI shows the new track as current.
-    await soundToFade.update({ playing: false, pausedTime: 0 }, { render: false });
-    ui.playlists.render();
+    //    Omit render: false so Foundry re-renders the playlist UI on ALL clients.
+    await soundToFade.update({ playing: false, pausedTime: 0 });
 
     crossfadeSuccessful = true;
 
-    // 5. After the fade completes, stop the audio and emit the completion event.
+    // 6. After the fade completes, stop the audio and emit the completion event.
     // Uses AudioTimeout to avoid browser throttling in background tabs.
     AudioTimeout.wait(fadeMs + 50).then(() => {
       // Clear the crossfading flag now that the audio transition is truly complete

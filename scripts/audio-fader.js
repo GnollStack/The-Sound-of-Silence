@@ -1,6 +1,6 @@
 // audio-fader.js - Advanced audio fading utilities for Foundry VTT
 
-import { debug, MODULE_ID } from "./utils.js";
+import { debug, MODULE_ID, ensureAudioContext } from "./utils.js";
 import { State } from "./state-manager.js";
 
 const AudioTimeout = foundry.audio.AudioTimeout;
@@ -216,6 +216,7 @@ export function cancelActiveFade(sound) {
  * @param {number} options.duration The duration of the fade in milliseconds.
  */
 export function advancedFade(sound, { targetVol, duration }) {
+  ensureAudioContext();
   if (!sound?.gain) return;
   if (!Number.isFinite(duration) || duration <= 0) {
     sound.volume = targetVol;
@@ -290,6 +291,7 @@ export async function fadeOutAndStop(sound, ms = 500) {
  *   If not provided, falls back to soundIn._manager?.volume ?? 1.0.
  */
 export function equalPowerCrossfade(soundOut, soundIn, duration, { targetVolIn: explicitTargetVolIn } = {}) {
+  ensureAudioContext();
   debug(`[AF] Starting equal-power crossfade over ${duration}ms.`);
   if (!soundOut || !soundIn) return;
 

@@ -811,6 +811,7 @@ class StateManager {
     clearPlaylistCrossfading(playlist) {
         if (this._crossfadingPlaylists.delete(playlist)) {
             debug(`[State] Cleared crossfading flag for playlist "${playlist.name}".`);
+            this._emitStateChange();
         }
     }
 

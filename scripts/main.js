@@ -28,6 +28,7 @@ import {
   scheduleEndOfTrackFade,
   cancelActiveFade,
   fadeOutAndStop,
+  equalPowerCrossfade,
 } from "./audio-fader.js";
 import {
   debug,
@@ -41,6 +42,7 @@ import {
   logFeature,
   LogSymbols,
   safeStop,
+  ensureAudioContext,
 } from "./utils.js";
 import { Flags } from "./flag-service.js";
 import { State } from "./state-manager.js";
@@ -180,6 +182,9 @@ Hooks.once("ready", () => {
     if (document.hidden) return; // Only act when tab comes BACK to focus
 
     debug("[Visibility] Tab regained focus. Validating module state...");
+
+    // Resume any AudioContexts that the browser suspended while backgrounded
+    ensureAudioContext();
 
     for (const playlist of game.playlists) {
       if (!playlist.playing) continue;
@@ -567,7 +572,8 @@ Hooks.once("ready", () => {
 
   // Use the centralized sequence system instead of timestamp deduplication
   Hooks.on("updatePlaylist", async (pl, changes) => {
-    const next = changes?.flags?.[MODULE_ID]?.skipTransition;
+    if (!changes?.flags?.[MODULE_ID]?.skipTransition) return;
+    const next = pl.getFlag(MODULE_ID, "skipTransition");
     if (!next) return;
 
     const { fromSoundId, fadeMs, seq, ts, gmId } = next;
@@ -603,7 +609,8 @@ Hooks.once("ready", () => {
   // This hook listens for the 'stopTransition' flag to mirror GM "Stop All" actions on all clients.
   // NOTE: Deduplication handled by shouldProcessAction - no local Map needed
   Hooks.on("updatePlaylist", async (pl, changes) => {
-    const stop = changes?.flags?.[MODULE_ID]?.stopTransition;
+    if (!changes?.flags?.[MODULE_ID]?.stopTransition) return;
+    const stop = pl.getFlag(MODULE_ID, "stopTransition");
     if (!stop) return;
 
     const { soundIds, fadeMs, seq, gmId } = stop;
@@ -647,6 +654,71 @@ Hooks.once("ready", () => {
         } catch (_) { }
       }
     }
+  });
+
+  // Replicates the equal-power crossfade to non-GM players.
+  // The GM sets the "crossfadeTransition" flag right before marking the outgoing sound
+  // as stopped, so players can apply the matching curve while both sounds are still playing.
+  Hooks.on("updatePlaylist", async (playlist, changes) => {
+    // Foundry only sends the diff in `changes`, so if fadeMs/targetVolIn didn't change
+    // they won't appear in the diff. Always read the full flag from the document.
+    if (!changes?.flags?.[MODULE_ID]?.crossfadeTransition) return;
+    const cf = playlist.getFlag(MODULE_ID, "crossfadeTransition");
+    if (!cf) return;
+
+    const { incomingSoundId, outgoingSoundId, fadeMs, targetVolIn, seq, gmId } = cf;
+
+    if (!shouldProcessAction(playlist.id, seq)) {
+      debug(`[Crossfade-Sync] Ignoring duplicate/out-of-order (seq ${seq})`);
+      return;
+    }
+    if (gmId === game.user.id) return;  // GM already applied it locally
+    if (playlist.isOwner) return;       // Safety: owners skip
+
+    // Mark crossfading IMMEDIATELY (before any await) so any in-flight applyFadeIn
+    // sees the flag and exits early at the State.isPlaylistCrossfading() check.
+    State.markPlaylistAsCrossfading(playlist);
+
+    const psOut = playlist.sounds.get(outgoingSoundId);
+    const psIn  = playlist.sounds.get(incomingSoundId);
+    if (!psIn) {
+      State.clearPlaylistCrossfading(playlist);
+      return;
+    }
+
+    const [soundOut, soundIn] = await Promise.all([
+      psOut ? waitForMedia(psOut) : Promise.resolve(null),
+      waitForMedia(psIn),
+    ]);
+
+    if (!soundIn) {
+      State.clearPlaylistCrossfading(playlist);
+      return;
+    }
+
+    // Protect both sounds from sync() and the volume safety net during crossfade
+    State.markSoundAsFading(soundIn);
+    if (soundOut) State.markSoundAsFading(soundOut);
+
+    // Graceful fallback: outgoing already stopped (network reorder) — snap incoming to target
+    if (!soundOut?.playing) {
+      debug(`[Crossfade-Sync] Outgoing sound already stopped; snapping "${psIn.name}" to target volume.`);
+      soundIn.volume = targetVolIn;
+      State.clearFadingSound(soundIn);
+      State.clearPlaylistCrossfading(playlist);
+      return;
+    }
+
+    debug(`[Crossfade-Sync] Applying equal-power crossfade "${psOut?.name}" → "${psIn.name}" (${fadeMs}ms)`);
+
+    // equalPowerCrossfade internally cancels any pending S-curve from applyFadeIn
+    equalPowerCrossfade(soundOut, soundIn, fadeMs, { targetVolIn });
+
+    AudioTimeout.wait(fadeMs + 50).then(() => {
+      State.clearFadingSound(soundIn);
+      if (soundOut) State.clearFadingSound(soundOut);
+      State.clearPlaylistCrossfading(playlist);
+    });
   });
 
   // Wrap playNext to clean up loopers, handle crossfading, and manage advanced shuffle state.
@@ -740,8 +812,11 @@ Hooks.once("ready", () => {
     MODULE_ID,
     "foundry.audio.Sound.prototype.play",
     async function (wrapped, options = {}) {
+      // 0. Ensure AudioContext is running (browser may suspend it in background tabs)
+      ensureAudioContext();
+
       // 1. Initial checks and setup
-      if (options?._fromLoop || options?._fromCrossfade) {
+      if (options?._fromLoop) {
         return wrapped.call(this, options);
       }
       const ps = findPlaylistSoundForSound(this);
@@ -752,15 +827,18 @@ Hooks.once("ready", () => {
       // 2. Handle shuffle state
       _handleShuffleOnPlay(ps);
 
-      // 3. Determine target volume and pre-mute for fade-in
-      const targetVolume = Flags.resolveTargetVolume(ps);
-      const fadeInMs = Flags.getPlaylistFlag(ps.parent, "fadeIn");
-      const preMuteVolume = (fadeInMs > 0 && ps?.pausedTime === 0) ? 0 : targetVolume;
-      _applyPreMute(this, ps, fadeInMs, targetVolume);
+      // 3. Determine target volume and pre-mute for fade-in.
+      //    Skip when called from crossfade — equalPowerCrossfade() manages the volume curve.
+      if (!options?._fromCrossfade) {
+        const targetVolume = Flags.resolveTargetVolume(ps);
+        const fadeInMs = Flags.getPlaylistFlag(ps.parent, "fadeIn");
+        const preMuteVolume = (fadeInMs > 0 && ps?.pausedTime === 0) ? 0 : targetVolume;
+        _applyPreMute(this, ps, fadeInMs, targetVolume);
 
-      // 4. Override options.volume so Foundry's internal play() uses our
-      //    normalized/pre-muted value instead of the raw document volume.
-      options = { ...options, volume: preMuteVolume };
+        // 4. Override options.volume so Foundry's internal play() uses our
+        //    normalized/pre-muted value instead of the raw document volume.
+        options = { ...options, volume: preMuteVolume };
+      }
 
       // 5. Play the sound
       const result = await wrapped.call(this, options);
@@ -768,7 +846,7 @@ Hooks.once("ready", () => {
       // 6. Schedule all post-play actions (fade-in, loops, crossfade timers).
       //    Volume safety net is inside _schedulePostPlayActions, AFTER scheduling,
       //    so it doesn't destroy fade curves that were just set up.
-      _schedulePostPlayActions(ps, this);
+      _schedulePostPlayActions(ps, this, { fromCrossfade: !!options?._fromCrossfade });
 
       return result;
     },
@@ -1107,7 +1185,7 @@ Hooks.once("ready", () => {
    * Schedules all module features that must run after a sound begins playback.
    * This includes loops, fades, and crossfade timers.
    */
-  function _schedulePostPlayActions(ps, sound) {
+  function _schedulePostPlayActions(ps, sound, { fromCrossfade = false } = {}) {
     const playlist = ps.parent;
 
     // Resume or schedule new loop
@@ -1123,7 +1201,7 @@ Hooks.once("ready", () => {
     // Apply fade-in, passing the normalized target volume directly to avoid
     // race conditions (applyFadeIn is async but not awaited here).
     const fadeInMs = Flags.getPlaylistFlag(playlist, "fadeIn");
-    if (fadeInMs > 0 && !ps?.getFlag(MODULE_ID, "isSilenceGap")) {
+    if (fadeInMs > 0 && !ps?.getFlag(MODULE_ID, "isSilenceGap") && !fromCrossfade) {
       const targetVolume = Flags.resolveTargetVolume(ps);
       applyFadeIn(playlist, ps, { targetVolume }).catch(err => {
         debug(`[FadeIn] Error during fade-in for "${ps.name}":`, err.message);
@@ -1157,7 +1235,7 @@ Hooks.once("ready", () => {
 
     // Post-schedule volume safety net (for background tabs).
     // Runs AFTER all scheduling so it doesn't destroy fade curves that were just set up.
-    if ((fadeInMs <= 0 || ps?.pausedTime > 0) && !State.isSoundFading(sound)) {
+    if ((fadeInMs <= 0 || ps?.pausedTime > 0) && !State.isSoundFading(sound) && !fromCrossfade) {
       const target = Flags.resolveTargetVolume(ps);
       if (Math.abs(sound.volume - target) > 0.001) {
         debug(`[Sound.play] Post-schedule volume correction: ${sound.volume.toFixed(3)} -> ${target.toFixed(3)} for "${ps.name}"`);
