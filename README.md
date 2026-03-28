@@ -259,14 +259,64 @@ const api = game.modules.get("the-sound-of-silence").api;
 
 ## Compatibility
 
-### Tested & Compatible
-- Monk's Enhanced Audio
-- Playlist Enhancements
-- All game systems
-- Foundry VTT v13+
+### Foundry VTT
+- **v13+** required
+- Compatible with all game systems
 
-### Known Conflicts
-None reported. If you find a compatibility issue, please [open an issue](https://github.com/GnollStack/The-Sound-of-Silence/issues).
+### Third-Party Playlist Modules
+
+> **Recommended: Use The Sound of Silence as your only playlist/audio module.** SoS is a superset of both Monks Sound Enhancements and Playlist Enchantment's audio features — it provides crossfading, volume normalization, fade-in/out, enhanced shuffle, and playlist looping. Running additional audio modules forces SoS to activate defensive guards (sync interception, fade blocking, scheduled fade-out cancellation) to protect its audio pipeline from interference. These guards work, but they add complexity and fragility — if the other modules update and change how they interact with Foundry's audio graph, the guards may miss new code paths. **If you only use SoS, none of this is needed and the audio pipeline runs cleanly.**
+>
+> The only reasons to keep the modules below are their **non-audio features** — Monks' actor/token sound effects and `@Sound[]` journal links, or Enchantment's drag-drop file upload and prehear preview. If you don't use those features, disable them.
+
+SoS includes a built-in integration layer that automatically detects and cooperates with these modules. SoS always owns the audio pipeline and the Currently Playing UI — crossfades, silence gaps, internal loops, and fade curves are never shared with or delegated to other modules.
+
+#### Monks Sound Enhancements
+
+| | |
+|-|-|
+| **Status** | Compatible with caveats |
+| **Module ID** | `monks-sound-enhancements` |
+
+**Overridden by SoS** (SoS provides its own version — these Monks features will not function):
+- Currently Playing UI and playlist directory templates
+- Playlist configuration sheet
+- Sound effect volume slider in the controls panel
+
+**Still works alongside SoS:**
+- Actor/Token sound effects (speaker icon in Token HUD, actor/item sheet buttons)
+- `@Sound[]` text enricher links in journal entries
+- Combat turn sound effects (`playsound-combat` setting)
+- Drag-and-drop sounds between playlists (Shift+drag to move)
+- Hotbar macro creation for sounds
+- Playlist description tooltips
+- Sound name hiding and playlist hiding flags
+
+#### Playlist Enchantment
+
+| | |
+|-|-|
+| **Status** | Compatible with caveats |
+| **Module ID** | `playlistenchantment` |
+
+**Overridden by SoS** (SoS provides its own version — these Enchantment features will not function):
+- Currently Playing UI and playlist directory templates
+- Crossfade between playlists (use SoS crossfading instead)
+- Volume normalization sliders (use SoS normalization instead)
+- Fade-in/fade-out controls (use SoS fade settings instead)
+- Playlist loop toggle (use SoS playlist looping instead)
+- Global play/stop/skip-all controls
+
+**Still works alongside SoS:**
+- Drag-and-drop audio file upload to playlists
+- Prehear (sound preview) context menu option
+- Hotbar macro creation for playlists/sounds/folders
+- Hotbar hover popup with sound controls
+
+> **Warning:** Playlist Enchantment's `alwaysFade` setting forces Foundry to apply fade transitions on every playlist update, which can interfere with SoS crossfades. SoS guards against this, but for best results consider disabling the `alwaysFade` option in Enchantment's settings if you experience audio glitches during crossfade transitions.
+
+### Other Modules
+No known conflicts with non-playlist modules. If you find a compatibility issue, please [open an issue](https://github.com/GnollStack/The-Sound-of-Silence/issues).
 
 ---
 

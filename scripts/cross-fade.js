@@ -105,6 +105,21 @@ export async function performCrossfade(playlist, soundToFade) {
       return;
     }
 
+    // Cancel Foundry's built-in _scheduleFadeOut on both sounds.
+    // When third-party modules force a non-zero playlist.fade, _onStart() schedules
+    // an independent fade-out near the end of the track that competes with our
+    // crossfade timer and can destroy our setValueCurveAtTime curves.
+    if (typeof soundToFade._cancelFadeOut === "function") {
+      soundToFade._cancelFadeOut();
+    }
+    if (typeof soundToPlay._cancelFadeOut === "function") {
+      soundToPlay._cancelFadeOut();
+    }
+
+    // Mark the INCOMING sound as fading so the sync() wrapper and audio fade guard
+    // protect it from external interference during the crossfade.
+    State.markSoundAsFading(soundIn);
+
     // Emit crossfade start event
     Hooks.callAll('the-sound-of-silence.crossfadeStart', {
       playlist,
@@ -133,6 +148,9 @@ export async function performCrossfade(playlist, soundToFade) {
     AudioTimeout.wait(fadeMs + 50).then(() => {
       // Clear the crossfading flag now that the audio transition is truly complete
       State.clearPlaylistCrossfading(playlist);
+
+      // Clear the fading marker on the incoming sound
+      State.clearFadingSound(soundIn);
 
       // Only stop if the sound is still around and playing
       if (soundOut.playing) {

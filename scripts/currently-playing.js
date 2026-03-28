@@ -15,6 +15,7 @@ import {
     previousSegmentWithin,
     disableAllLoopsWithin,
 } from "./internal-loop.js";
+import { Integrations } from "./integrations.js";
 
 // =========================================================================
 // Double-click protection (survives DOM re-renders)
@@ -30,13 +31,19 @@ const _disabledActions = new Set();
  * Called from main.js during the `ready` hook.
  */
 export function registerCurrentlyPlaying() {
-    // Override the PARTS definition to use our custom templates
-    foundry.applications.sidebar.tabs.PlaylistDirectory.PARTS.playing = {
-        template: `modules/${MODULE_ID}/templates/currently-playing.hbs`,
-        templates: [`modules/${MODULE_ID}/templates/sos-sound-partial.hbs`],
-    };
+    const sosTemplate = `modules/${MODULE_ID}/templates/currently-playing.hbs`;
+    const sosPartials = [`modules/${MODULE_ID}/templates/sos-sound-partial.hbs`];
 
-    // Wrap _preparePlayingContext to enrich with module state
+    // Patch PARTS.playing on the ACTUAL CONFIG.ui.playlists class.
+    // When third-party modules (Monks, Playlist Enchantment) replace
+    // CONFIG.ui.playlists with a subclass, that subclass defines its own
+    // static PARTS which shadow the base PlaylistDirectory.PARTS.
+    // The integrations layer patches the correct class.
+    Integrations.patchPlayingParts(sosTemplate, sosPartials);
+
+    // Wrap _preparePlayingContext to enrich with module state.
+    // This targets the base class prototype — subclasses that call
+    // super._preparePlayingContext() will trigger this wrapper.
     libWrapper.register(
         MODULE_ID,
         "foundry.applications.sidebar.tabs.PlaylistDirectory.prototype._preparePlayingContext",
@@ -54,6 +61,12 @@ export function registerCurrentlyPlaying() {
     Hooks.on("renderPlaylistDirectory", _onRenderPlaylistDirectory);
 
     debug("[CurrentlyPlaying] Registered custom templates and wrappers.");
+    if (Integrations.hasConflictingModules) {
+        debug(
+            `[CurrentlyPlaying] Patched through integration layer ` +
+            `(actual class: ${CONFIG.ui.playlists?.name || "unknown"})`
+        );
+    }
 }
 
 // =========================================================================

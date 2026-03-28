@@ -47,6 +47,7 @@ import { State } from "./state-manager.js";
 import { API } from "./api.js";
 import { AdvancedShuffle, SHUFFLE_PATTERNS } from "./advanced-shuffle.js";
 import { registerCurrentlyPlaying } from "./currently-playing.js";
+import { Integrations } from "./integrations.js";
 
 const AudioTimeout = foundry.audio.AudioTimeout;
 
@@ -73,6 +74,9 @@ export async function cancelSilentGap(playlist) {
 
 Hooks.once("init", () => {
   console.log(`[${MODULE_ID}] Initializing…`);
+
+  // Detect conflicting playlist modules (informational — SoS still activates)
+  Integrations.detect();
 
   game.settings.register(MODULE_ID, "debug", {
     name: "Enable Debug Logging",
@@ -159,6 +163,10 @@ Hooks.once("ready", () => {
   if (module) {
     module.api = API;
   }
+
+  // Register audio guards before UI setup (protects our fade curves
+  // from being destroyed by other playlist modules calling Sound.fade())
+  Integrations.registerAudioGuards();
 
   registerPlaylistSheetWrappers();
   registerSoundConfigWrappers();
@@ -897,6 +905,27 @@ Hooks.once("ready", () => {
     "MIXED"
   );
 
+  // Guard: Prevent Foundry's sync() from stopping sounds mid-crossfade.
+  // When performCrossfade updates the outgoing sound's document to { playing: false },
+  // Foundry calls _onUpdate() → sync(). sync() sees !this.playing and calls
+  // sound.stop({fade, volume: 0}), which runs cancelScheduledValues() + _disconnectPipeline(),
+  // destroying our active setValueCurveAtTime crossfade curves.
+  // Similarly, sync() calls sound.fade(volume, 500) for already-playing sounds to re-sync
+  // volume, which also destroys curves via cancelScheduledValues().
+  // This wrapper skips sync entirely when the sound has an active SoS fade curve.
+  libWrapper.register(
+    MODULE_ID,
+    "PlaylistSound.prototype.sync",
+    function (wrapped) {
+      if (this.sound && State.isSoundFading(this.sound)) {
+        debug(`[Sync Guard] Blocked sync() for "${this.name}" — SoS fade curve active`);
+        return;
+      }
+      return wrapped();
+    },
+    "MIXED"
+  );
+
   /**
    * Handle track additions - update shuffle state to include new tracks
    */
@@ -1104,6 +1133,15 @@ Hooks.once("ready", () => {
     // Re-arm automatic crossfade timer
     if (Flags.getPlaylistFlag(playlist, "crossfade")) {
       scheduleCrossfade(playlist, ps);
+
+      // Cancel Foundry's built-in _scheduleFadeOut. When third-party modules
+      // (e.g. Playlist Enchantment) force a non-zero playlist.fade, Foundry's
+      // _onStart() schedules an independent fade-out that competes with our
+      // crossfade timer and can destroy our setValueCurveAtTime curves.
+      if (typeof ps._cancelFadeOut === "function") {
+        ps._cancelFadeOut();
+        debug(`[PostPlay] Cancelled Foundry _scheduleFadeOut for "${ps.name}" — SoS crossfade active.`);
+      }
     }
 
     // Schedule end-of-track fade if no other feature is handling the transition
