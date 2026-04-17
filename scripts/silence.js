@@ -5,7 +5,7 @@
  * @description Manages the "Sound of Silence" feature by creating, playing,
  * and cleaning up temporary silent audio tracks to serve as gaps between playlist sounds.
  */
-import { debug, waitForMedia, MODULE_ID, logFeature, LogSymbols } from "./utils.js";
+import { debug, waitForMedia, MODULE_ID, logFeature, LogSymbols, warn } from "./utils.js";
 import { Flags } from "./flag-service.js";
 import { State } from "./state-manager.js";
 import { maybeLoopPlaylist } from "./playlist-loop.js";
@@ -103,7 +103,7 @@ async function createAndPlayGap(playlist, durationMs) {
     }]); // Ensure the noHook option is still removed from here
     gap = created;
   } catch (err) {
-    console.warn(`[${MODULE_ID}] Failed to create silent gap document:`, err);
+    warn("[Silence] Failed to create silent gap document:", err);
     debug(`[${MODULE_ID}] Silent gap creation failed, playlist will continue without gap.`);
     return null;
   }
@@ -111,7 +111,7 @@ async function createAndPlayGap(playlist, durationMs) {
   try {
     await playlist.playSound(gap);
   } catch (err) {
-    console.warn(`[${MODULE_ID}] Failed to play silent gap:`, err);
+    warn("[Silence] Failed to play silent gap:", err);
     try {
       await gap.delete({ noHook: true });
     } catch (_) { }
@@ -157,7 +157,7 @@ async function teardownGap(playlist, state) {
       await state.gap.delete();
       debug(`[${MODULE_ID}] 🧹 Deleted silent gap "${state.gap.name}"`);
     } catch (err) {
-      console.warn(`[${MODULE_ID}] ❌ Failed to delete gap:`, err);
+      warn("[Silence] Failed to delete gap:", err);
     }
   }
 

@@ -32,6 +32,7 @@ import {
 } from "./audio-fader.js";
 import {
   debug,
+  info,
   MODULE_ID,
   waitForMedia,
   cleanupPlaylistState,
@@ -75,7 +76,7 @@ export async function cancelSilentGap(playlist) {
 // =========================================================================
 
 Hooks.once("init", () => {
-  console.log(`[${MODULE_ID}] Initializing…`);
+  info("Initializing...");
 
   // Detect conflicting playlist modules (informational — SoS still activates)
   Integrations.detect();
@@ -165,6 +166,9 @@ Hooks.once("ready", () => {
   if (module) {
     module.api = API;
   }
+
+  // Register socket listener for remote diagnostics
+  game.socket.on(`module.${MODULE_ID}`, (data) => API._handleSocketMessage(data));
 
   // Register audio guards before UI setup (protects our fade curves
   // from being destroyed by other playlist modules calling Sound.fade())
@@ -275,7 +279,7 @@ Hooks.once("ready", () => {
       if (typeof targetIndex !== 'number' || !Number.isFinite(seq)) return;
 
       // Deduplicate using sequence tracking
-      if (!shouldProcessAction(soundDoc.id, seq)) {
+      if (!shouldProcessAction(soundDoc.id, seq, "snd")) {
         debug(`[Segment-Sync] Ignoring duplicate segment skip (seq ${seq}) for "${soundDoc.name}"`);
         return;
       }
@@ -292,7 +296,7 @@ Hooks.once("ready", () => {
       if (!Number.isFinite(seq)) return;
 
       // Deduplicate using sequence tracking
-      if (!shouldProcessAction(soundDoc.id, seq)) {
+      if (!shouldProcessAction(soundDoc.id, seq, "snd")) {
         debug(`[LoopBreak-Sync] Ignoring duplicate loop break (seq ${seq}) for "${soundDoc.name}"`);
         return;
       }
@@ -309,7 +313,7 @@ Hooks.once("ready", () => {
       if (!Number.isFinite(seq)) return;
 
       // Deduplicate using sequence tracking
-      if (!shouldProcessAction(soundDoc.id, seq)) {
+      if (!shouldProcessAction(soundDoc.id, seq, "snd")) {
         debug(`[LoopDisable-Sync] Ignoring duplicate loop disable (seq ${seq}) for "${soundDoc.name}"`);
         return;
       }
@@ -527,7 +531,7 @@ Hooks.once("ready", () => {
       }
 
       const useCrossfade = Flags.getPlaybackMode(playlist).crossfade;
-      const fadeMs = Number(playlist.fade) || 0;
+      const fadeMs = Flags.getCrossfadeDuration(playlist);
       const isSequentialOrShuffle = [
         CONST.PLAYLIST_MODES.SEQUENTIAL,
         CONST.PLAYLIST_MODES.SHUFFLE,
@@ -593,7 +597,9 @@ Hooks.once("ready", () => {
 
     debug(`[Skip-Sync] Processing skip from GM ${gmId}, seq ${seq}`);
 
-    for (const s of pl.sounds) cancelLoopWithin(s);
+    for (const s of pl.sounds) {
+      cancelLoopWithin(s, { restorePlaybackHandlers: false });
+    }
 
     const ps = pl.sounds.get(fromSoundId);
     if (!ps) return;
@@ -626,13 +632,29 @@ Hooks.once("ready", () => {
     debug(`[Stop-Sync] Processing stop from GM ${gmId}, seq ${seq}`);
 
     // shouldProcessAction already handled deduplication above
-
     if (pl.isOwner) return; // GM already handled their own fades.
+
+    // Mirror the GM stop lifecycle locally before any awaits so loop/crossfade
+    // timers cannot fire while the replicated fade-out is starting.
+    State.markPlaylistAsStopping(pl);
+    await cleanupPlaylistState(pl, {
+      cleanSilence: true,
+      cleanCrossfade: true,
+      cleanLoopers: true,
+      allowFadeOut: true,
+    });
 
     const dur = Number(fadeMs) || 0;
     for (const sid of soundIds) {
       const ps = pl.sounds.get(sid);
       if (!ps) continue;
+
+      const pendingFade = State.getEndOfTrackFade(ps);
+      if (pendingFade) {
+        pendingFade.cancel();
+        State.clearEndOfTrackFade(ps);
+      }
+
       const media = await waitForMedia(ps);
       if (!media) continue;
       try {
@@ -737,8 +759,8 @@ Hooks.once("ready", () => {
         allowFadeOut: true,
       });
 
-      const useCrossfade = this.getFlag(MODULE_ID, "crossfade");
-      const fadeMs = Number(this.fade) || 0;
+      const useCrossfade = Flags.getPlaybackMode(this).crossfade;
+      const fadeMs = Flags.getCrossfadeDuration(this);
       const isSequentialOrShuffle = [
         CONST.PLAYLIST_MODES.SEQUENTIAL,
         CONST.PLAYLIST_MODES.SHUFFLE,
@@ -832,12 +854,16 @@ Hooks.once("ready", () => {
       if (!options?._fromCrossfade) {
         const targetVolume = Flags.resolveTargetVolume(ps);
         const fadeInMs = Flags.getPlaylistFlag(ps.parent, "fadeIn");
-        const preMuteVolume = (fadeInMs > 0 && ps?.pausedTime === 0) ? 0 : targetVolume;
+        const isFreshPlay = ps?.pausedTime === 0;
+        const preMuteVolume = (fadeInMs > 0 && isFreshPlay) ? 0 : targetVolume;
         _applyPreMute(this, ps, fadeInMs, targetVolume);
 
         // 4. Override options.volume so Foundry's internal play() uses our
         //    normalized/pre-muted value instead of the raw document volume.
-        options = { ...options, volume: preMuteVolume };
+        //    Fresh plays also force offset 0 so a reused loop-managed Sound
+        //    cannot resume from its previous loop position after stop/replay.
+        const playOffset = (isFreshPlay && options?.offset == null) ? 0 : options?.offset;
+        options = { ...options, volume: preMuteVolume, offset: playOffset };
       }
 
       // 5. Play the sound
@@ -1032,7 +1058,7 @@ Hooks.once("ready", () => {
     debug(
       `[Manager] Sound document "${sound.name}" was deleted. Ensuring its looper is cancelled.`
     );
-    cancelLoopWithin(sound, { quiet: true });
+    cancelLoopWithin(sound, { quiet: true, preservePlayback: false });
 
     // --- Shuffle state update ---
     const playlist = sound.parent;
@@ -1194,7 +1220,7 @@ Hooks.once("ready", () => {
       resumeLoopWithin(ps);
     } else {
       debug(`[Sound.play WRAPPER] Scheduling new loop for "${ps.name}".`);
-      cancelLoopWithin(ps, { quiet: true });
+      cancelLoopWithin(ps, { quiet: true, restorePlaybackHandlers: false });
       scheduleLoopWithin(ps);
     }
 

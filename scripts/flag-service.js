@@ -3,8 +3,7 @@
  * @description A centralized service for getting, setting, and validating all module flags.
  * This service is the single source of truth for module configuration on documents.
  */
-import { MODULE_ID, toSec } from "./utils.js";
-import { debug } from "./utils.js";
+import { MODULE_ID, toSec, debug, warn } from "./utils.js";
 
 /**
  * Defines the schema for all module flags, including type, defaults, and validation rules.
@@ -115,7 +114,7 @@ class FlagService {
     getPlaylistFlag(playlist, key) {
         const schema = FlagSchemas.PLAYLIST[key];
         if (!schema) {
-            console.warn(`[${MODULE_ID}] Unknown playlist flag key: ${key}`);
+            warn(`[Flags] Unknown playlist flag key: ${key}`);
             return undefined;
         }
 
@@ -144,7 +143,7 @@ class FlagService {
     getSoundFlag(sound, key) {
         const schema = FlagSchemas.PLAYLIST_SOUND[key];
         if (!schema) {
-            console.warn(`[${MODULE_ID}] Unknown sound flag key: ${key}`);
+            warn(`[Flags] Unknown sound flag key: ${key}`);
             return undefined;
         }
 

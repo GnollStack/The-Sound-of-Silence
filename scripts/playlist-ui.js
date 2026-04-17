@@ -1,6 +1,6 @@
 // playlist-ui.js
 
-import { MODULE_ID, SoundOfSilenceDiagnostics, debug } from "./utils.js";
+import { MODULE_ID } from "./utils.js";
 import { LOOP_KEY } from "./sound-config.js";
 import { Flags } from "./flag-service.js";
 import { findSoundById, ensureCacheReady } from "./sound-cache.js";
@@ -253,18 +253,4 @@ Hooks.on("renderPlaylistDirectory", async (app, htmlRaw) => {
             // Re-enable after a short delay
             setTimeout(() => $btn.removeClass("disabled"), 500);
         });
-
-    // Diagnostic button
-    const $headerButtons = $html.find(".directory-header .header-actions");
-    if (!$headerButtons.find('.sos-diagnostics').length) {
-        $headerButtons.append(`
-        <button type="button" class="sos-diagnostics" data-tooltip="Sound of Silence Diagnostics">
-            <i class="fas fa-stethoscope"></i>
-        </button>
-        `);
-    }
-
-    $html.off('click', '.sos-diagnostics').on('click', '.sos-diagnostics', () => {
-        new SoundOfSilenceDiagnostics().render(true);
-    });
 });

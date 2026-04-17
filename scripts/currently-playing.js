@@ -111,7 +111,15 @@ async function _wrapPreparePlayingContext(wrapped, context, options) {
             // Loop state
             loopEnabled: loopConfig.enabled,
             loopActive: loopConfig.active,
-            showLoopControls: !!(loopConfig.enabled && loopConfig.active && loopConfig.segments?.length),
+            showLoopControls: !!(
+                loopConfig.enabled &&
+                loopConfig.active &&
+                loopConfig.segments?.length &&
+                looper &&
+                !looper.isDestroyed &&
+                !looper.loopingDisabled &&
+                (looper.activeLoopSegment || looper.isCrossfading)
+            ),
 
             // Normalization
             normalizationEnabled: !!(normEnabled && !hasOverride),
@@ -159,6 +167,11 @@ function _onRenderPlaylistDirectory(app, html) {
 async function _handleSosClick(event) {
     const actionEl = event.target.closest("[data-sos-action]");
     if (!actionEl) return;
+    if (actionEl.disabled || actionEl.classList.contains("disabled")) return;
+
+    event.preventDefault();
+    event.stopPropagation();
+    event.stopImmediatePropagation?.();
 
     const action = actionEl.dataset.sosAction;
     const soundId = actionEl.dataset.soundId;
@@ -175,6 +188,7 @@ async function _handleSosClick(event) {
 
     switch (action) {
         case "toggleLoop": {
+            if (!game.user.isGM) return;
             const sound = findSoundById(soundId);
             if (!sound) return;
             const currentActive = sound.getFlag(MODULE_ID, "loopWithin.active") ?? false;
@@ -207,24 +221,28 @@ async function _handleSosClick(event) {
         }
 
         case "loopPrev": {
+            if (!game.user.isGM) return;
             const sound = findSoundById(soundId);
             if (sound) await previousSegmentWithin(sound);
             break;
         }
 
         case "loopNext": {
+            if (!game.user.isGM) return;
             const sound = findSoundById(soundId);
             if (sound) await nextSegmentWithin(sound);
             break;
         }
 
         case "loopBreak": {
+            if (!game.user.isGM) return;
             const sound = findSoundById(soundId);
             if (sound) await breakLoopWithin(sound);
             break;
         }
 
         case "loopDisable": {
+            if (!game.user.isGM) return;
             const sound = findSoundById(soundId);
             if (sound) await disableAllLoopsWithin(sound);
             break;

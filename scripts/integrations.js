@@ -14,7 +14,7 @@
  * The sync() wrapper in main.js prevents Foundry's sync() from stopping sounds
  * mid-crossfade — that is the critical companion to the guards registered here.
  */
-import { MODULE_ID, debug } from "./utils.js";
+import { MODULE_ID, debug, warn } from "./utils.js";
 import { State } from "./state-manager.js";
 
 // =========================================================================
@@ -30,6 +30,9 @@ const _detected = {
     monks: false,
     enchantment: false,
 };
+
+let _audioGuardsRegistered = false;
+let _playingPartsPatched = false;
 
 // =========================================================================
 // Public API
@@ -59,13 +62,13 @@ export const Integrations = {
         _detected.enchantment = !!game.modules.get(KNOWN_MODULES.ENCHANTMENT)?.active;
 
         if (_detected.monks) {
-            console.log(
-                `[${MODULE_ID}] Detected: Monks Sound Enhancements (${KNOWN_MODULES.MONKS})`
+            warn(
+                `Detected: Monks Sound Enhancements (${KNOWN_MODULES.MONKS})`
             );
         }
         if (_detected.enchantment) {
-            console.log(
-                `[${MODULE_ID}] Detected: Playlist Enchantment (${KNOWN_MODULES.ENCHANTMENT})`
+            warn(
+                `Detected: Playlist Enchantment (${KNOWN_MODULES.ENCHANTMENT})`
             );
         }
         if (!this.hasConflictingModules) {
@@ -94,6 +97,7 @@ export const Integrations = {
         // 1. Patch the actual running class
         if (ActualClass?.PARTS) {
             ActualClass.PARTS.playing = { template, templates };
+            _playingPartsPatched = true;
             debug(`[Integrations] Patched PARTS.playing on ${className}`);
         }
 
@@ -141,6 +145,7 @@ export const Integrations = {
             "MIXED"
         );
 
+        _audioGuardsRegistered = true;
         debug("[Integrations] Audio fade guard registered on Sound.prototype.fade");
     },
 
@@ -154,12 +159,17 @@ export const Integrations = {
      */
     diagnostics() {
         const ActualClass = CONFIG.ui.playlists;
+        const detectedModuleLabels = [];
+        if (_detected.monks) detectedModuleLabels.push("Monks Sound Enhancements");
+        if (_detected.enchantment) detectedModuleLabels.push("Playlist Enchantment");
         return {
             detectedModules: { ..._detected },
+            detectedModuleLabels,
             hasConflictingModules: this.hasConflictingModules,
             actualPlaylistDirectoryClass: ActualClass?.name || "unknown",
             partsPlayingTemplate: ActualClass?.PARTS?.playing?.template || "unknown",
-            audioGuardsActive: this.hasConflictingModules,
+            playingPartsPatched: _playingPartsPatched,
+            audioGuardsActive: _audioGuardsRegistered,
         };
     },
 };

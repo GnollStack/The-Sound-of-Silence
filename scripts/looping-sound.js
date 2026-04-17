@@ -4,7 +4,7 @@ import { maybeLoopPlaylist } from "./playlist-loop.js";
 import { performCrossfade } from "./cross-fade.js";
 import { Silence } from "./silence.js";
 import { Flags } from "./flag-service.js";
-import { MODULE_ID, toSec, debug, waitForMedia, formatTime, logFeature, LogSymbols, safeStop, safeCancelTimer } from "./utils.js";
+import { MODULE_ID, toSec, debug, waitForMedia, formatTime, logFeature, LogSymbols, safeStop, safeCancelTimer, error } from "./utils.js";
 import { State } from "./state-manager.js";
 
 const AudioTimeout = foundry.audio.AudioTimeout;
@@ -36,6 +36,7 @@ export class LoopingSound {
     this.mainSchedule = null;
     this.handoffTimer = null;
     this.loopCrossfadeTimer = null;
+    this.finalTransitionTimer = null;
 
     this.wasRestarted = false; // track if we used stop/play
   }
@@ -63,7 +64,7 @@ export class LoopingSound {
         return;
       }
     } catch (err) {
-      console.error(`[${MODULE_ID}] Failed to load sound for looping:`, err);
+      error("[LoopingSound] Failed to load sound for looping:", err);
       return;
     }
 
@@ -157,7 +158,7 @@ export class LoopingSound {
           this._armNextTimer();
         }
       } catch (err) {
-        console.error(`[${MODULE_ID}] Failed to seek to first segment:`, err);
+        error("[LoopingSound] Failed to seek to first segment:", err);
         this._armNextTimer();
       }
 
@@ -207,7 +208,7 @@ export class LoopingSound {
       return newSound;
 
     } catch (err) {
-      console.error(`[${MODULE_ID}] Failed to prepare target sound:`, err);
+      error("[LoopingSound] Failed to prepare target sound:", err);
       return null;
     }
   }
@@ -218,6 +219,8 @@ export class LoopingSound {
  */
   _scheduleFinalFadeOut() {
     this.isFadingOut = true;
+    safeCancelTimer(this.finalTransitionTimer, `LoopingSound final transition timer for "${this.ps?.name}"`);
+    this.finalTransitionTimer = null;
     const sound = this.activeSound;
     if (!sound || !sound.playing) return;
 
@@ -240,7 +243,8 @@ export class LoopingSound {
 
       if (currentTime < fadeStartTime) {
         debug(`[LoopingSound] Retiring: Scheduling final CROSSFADE at ${fadeStartTime.toFixed(2)}s for "${this.ps.name}"`);
-        sound.schedule(() => {
+        this.finalTransitionTimer = sound.schedule(() => {
+          this.finalTransitionTimer = null;
           if (!sound.playing) return;
           debug(`[LoopingSound] 🔥 Triggering automatic crossfade for "${this.ps.name}"`);
           // Directly call the master crossfade function
@@ -263,7 +267,8 @@ export class LoopingSound {
 
       if (currentTime < fadeStartTime) {
         debug(`[LoopingSound] Retiring: Scheduling final FADE-OUT at ${fadeStartTime.toFixed(2)}s for "${this.ps.name}"`);
-        sound.schedule(() => {
+        this.finalTransitionTimer = sound.schedule(() => {
+          this.finalTransitionTimer = null;
           if (!sound.playing) return;
           debug(`[LoopingSound] Starting final exponential fade-out for "${this.ps.name}"`);
           advancedFade(sound, { targetVol: 0, duration: fadeMs });
@@ -280,7 +285,7 @@ export class LoopingSound {
   _armNextTimer() {
     if (this.loopingDisabled) return; // Don't schedule if looping is disabled
     if (this.isDestroyed || !this.activeSound || this.isCrossfading) return;
-    this.mainSchedule?.timeout?.cancel();
+    safeCancelTimer(this.mainSchedule, `LoopingSound main schedule for "${this.ps?.name}"`);
 
     const ct = Number(this.activeSound.currentTime);
     if (!Number.isFinite(ct)) {
@@ -523,7 +528,7 @@ export class LoopingSound {
       if (err.name === 'AbortError') {
         debug(`[LoopingSound] Crossfade play was aborted.`);
       } else {
-        console.error(`[${MODULE_ID}] Failed to start target sound for crossfade:`, err);
+        error("[LoopingSound] Failed to start target sound for crossfade:", err);
       }
       this.isCrossfading = false;
       return false;
@@ -543,7 +548,15 @@ export class LoopingSound {
     this.handoffTimer?.cancel();
     this.handoffTimer = new AudioTimeout(crossfadeMs + HANDOFF_BUFFER);
 
-    await this.handoffTimer.complete;
+    try {
+      await this.handoffTimer.complete;
+    } catch (err) {
+      debug(`[LoopingSound] Handoff timer cancelled for "${this.ps.name}".`);
+      this.handoffTimer = null;
+      this.isCrossfading = false;
+      safeStop(targetSound, "handoff timer cancelled");
+      return false;
+    }
 
     if (this.isDestroyed) {
       // If destroyed during handoff, ensure target sound is stopped.
@@ -569,7 +582,7 @@ export class LoopingSound {
   async _skipToSegment(nextSegment) {
     if (this.isDestroyed) return;
 
-    this.loopCrossfadeTimer?.timeout?.cancel();
+    safeCancelTimer(this.loopCrossfadeTimer, `skipToSegment crossfade timer for "${this.ps?.name}"`);
     this.handoffTimer?.cancel();
 
     const sourceSound = this.activeSound;
@@ -663,12 +676,10 @@ export class LoopingSound {
 
       if (isSilenceEnabled) {
         debug(`[LoopingSound] Silence is enabled. Injecting silent gap.`);
-        // Manually trigger the silent gap. The `playSilence` function returns a
-        // promise that resolves to `true` if cancelled, `false` otherwise.
-        const wasCancelled = await Silence.playSilence(playlist, this.ps);
-        if (!wasCancelled) {
-          playNextOrLoop();
-        }
+        // Fire-and-forget: playSilence handles advancement internally when the
+        // gap timer completes (calls playlist.playSound or maybeLoopPlaylist).
+        // Do NOT await and advance again — that would skip a track.
+        Silence.playSilence(playlist, this.ps);
       } else {
         // If silence is not enabled, just play the next track after a short buffer.
         debug(`[LoopingSound] Silence is disabled. Advancing to next track immediately.`);
@@ -741,6 +752,9 @@ export class LoopingSound {
     if (this.isDestroyed) return;
     debug(`[LoopingSound] Break loop requested for "${this.ps.name}".`);
 
+    safeCancelTimer(this.loopCrossfadeTimer, `breakLoop crossfade timer for "${this.ps?.name}"`);
+    this.loopCrossfadeTimer = null;
+
     // If a crossfade is happening, abort it gracefully
     if (this.isCrossfading) {
       this.handoffTimer?.cancel();
@@ -770,6 +784,7 @@ export class LoopingSound {
     safeCancelTimer(this.mainSchedule, `disableLooping main schedule for "${this.ps?.name}"`);
     safeCancelTimer(this.loopCrossfadeTimer, `disableLooping crossfade timer for "${this.ps?.name}"`);
     safeCancelTimer(this.handoffTimer, `disableLooping handoff timer for "${this.ps?.name}"`);
+    safeCancelTimer(this.finalTransitionTimer, `disableLooping final transition for "${this.ps?.name}"`);
 
     // If crossfading, abort it gracefully and restore volume
     if (this.isCrossfading) {
@@ -797,6 +812,14 @@ export class LoopingSound {
       debug(`[LoopingSound] Cannot skip to next segment: no active segment.`);
       return;
     }
+    if (this.loopingDisabled) {
+      debug(`[LoopingSound] Cannot skip to next segment: looping is disabled.`);
+      return;
+    }
+    if (this.isCrossfading) {
+      debug(`[LoopingSound] Cannot skip to next segment: transition already in progress.`);
+      return;
+    }
 
     if (this.config.segments.length <= 1) {
       debug(`[LoopingSound] Cannot skip: only one segment configured.`);
@@ -812,7 +835,12 @@ export class LoopingSound {
       return;
     }
 
-    const nextIndex = (currentIndex + 1) % this.config.segments.length;
+    if (currentIndex >= this.config.segments.length - 1) {
+      debug(`[LoopingSound] Cannot skip to next segment: already at final segment.`);
+      return;
+    }
+
+    const nextIndex = currentIndex + 1;
     const nextSegment = this.config.segments[nextIndex];
 
 
@@ -830,6 +858,14 @@ export class LoopingSound {
       debug(`[LoopingSound] Cannot skip to previous segment: no active segment.`);
       return;
     }
+    if (this.loopingDisabled) {
+      debug(`[LoopingSound] Cannot skip to previous segment: looping is disabled.`);
+      return;
+    }
+    if (this.isCrossfading) {
+      debug(`[LoopingSound] Cannot skip to previous segment: transition already in progress.`);
+      return;
+    }
 
     if (this.config.segments.length <= 1) {
       debug(`[LoopingSound] Cannot skip: only one segment configured.`);
@@ -845,7 +881,12 @@ export class LoopingSound {
       return;
     }
 
-    const prevIndex = (currentIndex - 1 + this.config.segments.length) % this.config.segments.length;
+    if (currentIndex <= 0) {
+      debug(`[LoopingSound] Cannot skip to previous segment: already at first segment.`);
+      return;
+    }
+
+    const prevIndex = currentIndex - 1;
     const prevSegment = this.config.segments[prevIndex];
 
     debug(`[LoopingSound] Skipping to previous segment: "${prevSegment.label}" at ${prevSegment.start}`);
@@ -859,6 +900,14 @@ export class LoopingSound {
    */
   skipToSegmentByIndex(index) {
     if (this.isDestroyed) return;
+    if (this.loopingDisabled) {
+      debug(`[LoopingSound] Cannot skip to segment index ${index} for "${this.ps.name}" - looping is disabled.`);
+      return;
+    }
+    if (this.isCrossfading) {
+      debug(`[LoopingSound] Cannot skip to segment index ${index} for "${this.ps.name}" - transition already in progress.`);
+      return;
+    }
 
     const targetSegment = this.config.segments[index];
     if (!targetSegment) {
@@ -870,6 +919,53 @@ export class LoopingSound {
     this._skipToSegment(targetSegment);
   }
 
+  retire() {
+    if (this.isDestroyed) return;
+
+    const activeSound = this.activeSound;
+    const inactiveSound = this.targetSound;
+
+    safeCancelTimer(this.mainSchedule, `LoopingSound main schedule for "${this.ps?.name}"`);
+    safeCancelTimer(this.loopCrossfadeTimer, `LoopingSound crossfade timer for "${this.ps?.name}"`);
+    safeCancelTimer(this.handoffTimer, `LoopingSound handoff timer for "${this.ps?.name}"`);
+    safeCancelTimer(this.finalTransitionTimer, `LoopingSound final transition timer for "${this.ps?.name}"`);
+
+    if (this.isCrossfading) {
+      safeStop(inactiveSound, `retire abort crossfade for "${this.ps?.name}"`);
+      if (activeSound) {
+        advancedFade(activeSound, {
+          targetVol: Flags.resolveTargetVolume(this.ps),
+          duration: 250
+        });
+      }
+    } else {
+      safeStop(inactiveSound, `retire inactive sound for "${this.ps?.name}"`);
+    }
+
+    if (activeSound) {
+      activeSound._manager = this.ps;
+      this.ps.sound = activeSound;
+    }
+
+    if (this.soundA && this.soundA !== activeSound) this.soundA._manager = null;
+    if (this.soundB && this.soundB !== activeSound) this.soundB._manager = null;
+
+    this.activeLoopSegment = null;
+    this.isCrossfading = false;
+    this.loopsCompleted = 0;
+    this.loopingDisabled = true;
+    this.wasRestarted = false;
+    this.mainSchedule = null;
+    this.loopCrossfadeTimer = null;
+    this.handoffTimer = null;
+    this.finalTransitionTimer = null;
+    this.isDestroyed = true;
+    this.soundA = null;
+    this.soundB = null;
+
+    debug(`[LoopingSound] Retired looper for "${this.ps.name}" and preserved active playback.`);
+  }
+
   destroy(allowFadeOut = false) {
     if (this.isDestroyed) return;
     this.isDestroyed = true;
@@ -877,6 +973,7 @@ export class LoopingSound {
     safeCancelTimer(this.mainSchedule, `LoopingSound main schedule for "${this.ps?.name}"`);
     safeCancelTimer(this.loopCrossfadeTimer, `LoopingSound crossfade timer for "${this.ps?.name}"`);
     safeCancelTimer(this.handoffTimer, `LoopingSound handoff timer for "${this.ps?.name}"`);
+    safeCancelTimer(this.finalTransitionTimer, `LoopingSound final transition timer for "${this.ps?.name}"`);
 
     if (!allowFadeOut) {
       // Clean up sounds if they exist
@@ -892,18 +989,25 @@ export class LoopingSound {
     // --- Explicitly break references ---
     if (this.soundA) this.soundA._manager = null;
     if (this.soundB) this.soundB._manager = null;
+    this.finalTransitionTimer = null;
     this.soundA = null;
     this.soundB = null;
   }
 
   pause() {
-    this.mainSchedule?.timeout?.cancel();
-    this.loopCrossfadeTimer?.timeout?.cancel();
+    safeCancelTimer(this.mainSchedule, `pause main schedule for "${this.ps?.name}"`);
+    safeCancelTimer(this.loopCrossfadeTimer, `pause crossfade timer for "${this.ps?.name}"`);
+    safeCancelTimer(this.finalTransitionTimer, `pause final transition timer for "${this.ps?.name}"`);
     // We don't need to cancel handoffTimer as it's very short-lived
   }
 
   resume() {
     if (this.isCrossfading || this.isDestroyed) return;
+
+    if (this.loopingDisabled) {
+      this._scheduleFinalFadeOut();
+      return;
+    }
 
     if (this.activeLoopSegment) {
       // If we were in the middle of a loop, re-arm the crossfade

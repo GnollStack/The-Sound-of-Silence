@@ -1,6 +1,6 @@
 // loop-previewer.js
 
-import { debug, toSec, formatTime, MODULE_ID, SEGMENT_COLORS } from "./utils.js";
+import { debug, toSec, formatTime, MODULE_ID, SEGMENT_COLORS, error } from "./utils.js";
 import { equalPowerCrossfade } from "./audio-fader.js";
 
 export class LoopPreviewer {
@@ -107,7 +107,7 @@ export class LoopPreviewer {
         this.segments.forEach(seg => {
             seg.startSec = toSec(seg.$startInput.val());
             seg.endSec = toSec(seg.$endInput.val());
-            seg.crossfadeMs = Number(seg.$crossfadeInput.val()) ?? 0;
+            seg.crossfadeMs = Number(seg.$crossfadeInput.val()) || 0;
         });
         this._validateAllSegments();
     }
@@ -128,7 +128,7 @@ export class LoopPreviewer {
             }).appendTo(this.$container);
 
             // Crossfade indicator (darker shade, extends from end handle backwards)
-            const crossfadeMs = Number(seg.$crossfadeInput?.val()) ?? 0;
+            const crossfadeMs = Number(seg.$crossfadeInput?.val()) || 0;
             const segmentDurationMs = (seg.endSec - seg.startSec) * 1000;
 
             // The crossfade bar should always be sticky to the end bar.
@@ -520,7 +520,7 @@ export class LoopPreviewer {
 
         const startSec = toSec(segment.$startInput.val());
         const endSec = toSec(segment.$endInput.val());
-        const crossfadeMs = Number(segment.$crossfadeInput.val()) ?? 0;
+        const crossfadeMs = Number(segment.$crossfadeInput.val()) || 0;
 
         // Validate segment duration
         const segmentDuration = endSec - startSec;
@@ -549,8 +549,6 @@ export class LoopPreviewer {
             // Use _fromLoop to bypass playlist fade effects
             await targetSound.play({ offset: startSec, volume: 0, _fromLoop: true });
 
-            // Import the crossfade function
-            const { equalPowerCrossfade } = await import('./audio-fader.js');
             equalPowerCrossfade(sourceSound, targetSound, safeCrossfadeMs);
 
             this.timeoutIds.push(setTimeout(() => {
@@ -599,7 +597,7 @@ export class LoopPreviewer {
 
         const startSec = toSec(segment.$startInput.val());
         const endSec = toSec(segment.$endInput.val());
-        const crossfadeMs = Number(segment.$crossfadeInput.val()) ?? 0;
+        const crossfadeMs = Number(segment.$crossfadeInput.val()) || 0;
 
         // Validate segment
         const segmentDuration = endSec - startSec;
@@ -658,7 +656,6 @@ export class LoopPreviewer {
                 await targetSound.play({ offset: startSec, volume: 0, _fromLoop: true });
 
                 // Perform crossfade
-                const { equalPowerCrossfade } = await import('./audio-fader.js');
                 equalPowerCrossfade(sourceSound, targetSound, crossfadeMs);
 
                 // Stop source sound after crossfade completes
@@ -684,7 +681,7 @@ export class LoopPreviewer {
             }, delayUntilCrossfade));
 
         } catch (err) {
-            console.error("[Previewer] Error during loop point preview:", err);
+            error("[Previewer] Error during loop point preview:", err);
             this.stopAll(true);
         }
     }

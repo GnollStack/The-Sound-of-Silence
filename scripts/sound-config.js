@@ -1,7 +1,7 @@
 // sound-config.js
 
 import { LoopPreviewer } from "./loop-previewer.js";
-import { debug, MODULE_ID, toSec, SEGMENT_COLORS } from "./utils.js";
+import { debug, MODULE_ID, toSec, SEGMENT_COLORS, warn, error } from "./utils.js";
 import { Flags } from "./flag-service.js";
 
 // max amount of Loop Segments
@@ -165,18 +165,18 @@ export function registerSoundConfigWrappers() {
 
       } catch (err) {
         // ... (Error handling is unchanged and correct) ...
-        console.error(`[${MODULE_ID}] Critical error in form data processing:`, err);
+        error("[SoundConfig] Critical error in form data processing:", err);
         try {
           if (existingFlags) {
-            console.warn(`[${MODULE_ID}] Recovery Level 1: Restoring previous flag data`);
+            warn("[SoundConfig] Recovery Level 1: Restoring previous flag data");
             for (const key of Object.keys(formData.object)) {
               if (key.startsWith(modulePath)) delete formData.object[key];
             }
             foundry.utils.setProperty(formData.object, modulePath, existingFlags);
           } else { throw new Error("No previous flags available"); }
         } catch (recoveryErr) {
-          console.error(`[${MODULE_ID}] Recovery Level 1 failed:`, recoveryErr);
-          console.warn(`[${MODULE_ID}] Recovery Level 2: Using default values`);
+          error("[SoundConfig] Recovery Level 1 failed:", recoveryErr);
+          warn("[SoundConfig] Recovery Level 2: Using default values");
           try {
             for (const key of Object.keys(formData.object)) {
               if (key.startsWith(modulePath)) delete formData.object[key];
@@ -186,8 +186,8 @@ export function registerSoundConfigWrappers() {
               [LOOP_KEY]: foundry.utils.duplicate(DEFAULTS)
             });
           } catch (finalErr) {
-            console.error(`[${MODULE_ID}] Recovery Level 2 failed:`, finalErr);
-            console.warn(`[${MODULE_ID}] Recovery Level 3: Restoring entire original form data`);
+            error("[SoundConfig] Recovery Level 2 failed:", finalErr);
+            warn("[SoundConfig] Recovery Level 3: Restoring entire original form data");
             formData.object = originalFormData;
           }
         }
@@ -280,7 +280,7 @@ function _createSegmentHtml(segmentData, index) {
       </div>
     `);
   } catch (err) {
-    console.error(`[${MODULE_ID}] Failed to create segment HTML:`, err);
+    error("[SoundConfig] Failed to create segment HTML:", err);
     return $(`<div class="sos-loop-segment-section error sos-compact">
       <p class="error-text">Error rendering segment ${index + 1}. Please remove and re-add.</p>
     </div>`);

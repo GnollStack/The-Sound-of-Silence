@@ -52,6 +52,7 @@
             <button type="button" class="sos-transport-btn sos-loop-toggle-btn
                     {{#if sos.loopActive}}active{{/if}}"
                     data-sos-action="toggleLoop" data-sound-id="{{ id }}"
+                    {{#unless sos.isGM}}disabled{{/unless}}
                     data-tooltip="Internal Loop">
                 <i class="fa-solid fa-repeat"></i>
             </button>
@@ -136,23 +137,27 @@
 
     {{!-- Row 5: Loop Controls (only when loop segments are active) --}}
     {{#if sos.showLoopControls}}
-    <div class="sos-loop-controls-row" data-sound-id="{{ id }}">
+    <div class="sos-loop-controls-row {{#unless sos.isGM}}sos-disabled{{/unless}}" data-sound-id="{{ id }}">
         <span class="sos-controls-label">Loop</span>
         <div class="sos-button-group">
-            <button class="sos-loop-ctrl" data-sos-action="loopPrev"
-                    data-sound-id="{{ id }}" data-tooltip="Previous Segment">
+            <button type="button" class="sos-loop-ctrl" data-sos-action="loopPrev"
+                    data-sound-id="{{ id }}" {{#unless sos.isGM}}disabled{{/unless}}
+                    data-tooltip="Previous Segment">
                 <i class="fa-solid fa-backward-step"></i>
             </button>
-            <button class="sos-loop-ctrl" data-sos-action="loopNext"
-                    data-sound-id="{{ id }}" data-tooltip="Next Segment">
+            <button type="button" class="sos-loop-ctrl" data-sos-action="loopNext"
+                    data-sound-id="{{ id }}" {{#unless sos.isGM}}disabled{{/unless}}
+                    data-tooltip="Next Segment">
                 <i class="fa-solid fa-forward-step"></i>
             </button>
-            <button class="sos-loop-ctrl" data-sos-action="loopBreak"
-                    data-sound-id="{{ id }}" data-tooltip="Break Loop">
+            <button type="button" class="sos-loop-ctrl" data-sos-action="loopBreak"
+                    data-sound-id="{{ id }}" {{#unless sos.isGM}}disabled{{/unless}}
+                    data-tooltip="Break Loop">
                 <i class="fa-solid fa-eject"></i>
             </button>
-            <button class="sos-loop-ctrl" data-sos-action="loopDisable"
-                    data-sound-id="{{ id }}" data-tooltip="Disable Loops">
+            <button type="button" class="sos-loop-ctrl" data-sos-action="loopDisable"
+                    data-sound-id="{{ id }}" {{#unless sos.isGM}}disabled{{/unless}}
+                    data-tooltip="Disable Loops">
                 <i class="fa-solid fa-ban"></i>
             </button>
         </div>

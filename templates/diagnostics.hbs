@@ -18,11 +18,69 @@
         </div>
         <div class="metric-item">
             <label>Active Loopers</label>
-            <span>{{metrics.loops.activeSessions}}</span>
+            <span>{{totalActiveLoopers}}</span>
         </div>
         <div class="metric-item">
             <label>Silent Gaps</label>
             <span>{{metrics.silence.totalGaps}}</span>
+        </div>
+        <div class="metric-item">
+            <label>Feature Playlists</label>
+            <span>{{playlists.length}}</span>
+        </div>
+        <div class="metric-item">
+            <label>Scheduled Crossfades</label>
+            <span>{{totalCrossfades}}</span>
+        </div>
+        <div class="metric-item">
+            <label>Active Gaps</label>
+            <span>{{totalSilentGaps}}</span>
+        </div>
+    </div>
+
+    <hr>
+
+    <h3>Runtime</h3>
+    <div class="metrics-grid runtime-grid">
+        <div class="metric-item">
+            <label>Debug Logging</label>
+            <span>{{#if debug.enabled}}On{{else}}Off{{/if}}</span>
+        </div>
+        <div class="metric-item">
+            <label>Client Role</label>
+            <span>{{debug.roleLabel}}</span>
+        </div>
+        <div class="metric-item">
+            <label>Authority</label>
+            <span>{{debug.authorityLabel}}</span>
+        </div>
+        <div class="metric-item metric-item-wide">
+            <label>Playlist UI Class</label>
+            <span class="diag-mono">{{integrations.actualPlaylistDirectoryClass}}</span>
+        </div>
+        <div class="metric-item metric-item-wide">
+            <label>Playing Template</label>
+            <span class="diag-mono">{{integrations.partsPlayingTemplate}}</span>
+        </div>
+        <div class="metric-item">
+            <label>Audio Guards</label>
+            <span>{{#if integrations.audioGuardsActive}}Active{{else}}Inactive{{/if}}</span>
+        </div>
+        <div class="metric-item">
+            <label>Playing PARTS Patch</label>
+            <span>{{#if integrations.playingPartsPatched}}Applied{{else}}Not Applied{{/if}}</span>
+        </div>
+        <div class="metric-item metric-item-wide">
+            <label>Conflicting Modules</label>
+            <div class="tag-row">
+                {{#if integrations.hasConflictingModules}}
+                    {{#each integrations.detectedModuleLabels}}
+                    <span class="feature-tag">{{this}}</span>
+                    {{/each}}
+                {{else}}
+                    <span>None</span>
+                {{/if}}
+            </div>
         </div>
     </div>
 
@@ -73,72 +131,3 @@
     <p class="notes">No playlists with active Sound of Silence features.</p>
     {{/if}}
 </div>
-
-<style>
-    .sos-diagnostics-content .metrics-grid {
-        display: grid;
-        grid-template-columns: 1fr 1fr 1fr;
-        gap: 8px;
-        margin-bottom: 10px;
-    }
-
-    .sos-diagnostics-content .metric-item {
-        display: flex;
-        flex-direction: column;
-        background: var(--sos-bg-elevated);
-        padding: 5px;
-        border-radius: 3px;
-        text-align: center;
-    }
-
-    .sos-diagnostics-content .metric-item label {
-        font-weight: bold;
-        font-size: 11px;
-        opacity: 0.7;
-    }
-
-    .sos-diagnostics-content .metric-item span {
-        font-size: 1.2em;
-    }
-
-    .sos-diagnostics-content .playlist-list {
-        list-style: none;
-        padding: 0;
-        margin: 0;
-    }
-
-    .sos-diagnostics-content .playlist-item {
-        border: 1px solid var(--sos-border-medium);
-        border-radius: 5px;
-        padding: 10px;
-        margin-bottom: 8px;
-    }
-
-    .sos-diagnostics-content .playlist-item h4 {
-        margin: 0 0 8px 0;
-    }
-
-    .sos-diagnostics-content .feature-tag {
-        background: var(--sos-hover-overlay);
-        padding: 3px 6px;
-        border-radius: 5px;
-        display: inline-block;
-        margin-bottom: 5px;
-        font-size: 0.9em;
-    }
-
-    .sos-diagnostics-content .loop-list {
-        list-style: none;
-        padding-left: 15px;
-        margin: 0;
-    }
-
-    .sos-diagnostics-content .loop-item {
-        margin-bottom: 3px;
-    }
-
-    .sos-diagnostics-content .loop-state {
-        font-style: italic;
-        color: var(--sos-hover-glow);
-    }
-</style>

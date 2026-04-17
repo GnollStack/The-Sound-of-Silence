@@ -119,7 +119,23 @@ The "Currently Playing" panel in the sidebar has been completely overhauled with
 
 ### Diagnostics
 
-Built-in diagnostics panel (stethoscope icon in the playlist directory header) for inspecting module state and performance metrics.
+Debug logging is the primary troubleshooting path. Developer inspection remains available through `game.modules.get('the-sound-of-silence').api.inspectAll()`.
+
+#### Remote Client Diagnostics
+
+When debugging multi-client issues (GM hears audio but players don't, sounds breaking mid-playback), the GM can request a state snapshot from every connected client:
+
+```javascript
+game.modules.get('the-sound-of-silence').api.requestClientDiagnostics()
+```
+
+After 3 seconds, a dialog appears showing each client's audio state side-by-side:
+- **Per-sound gain values** — immediately reveals if a sound is stuck at gain 0
+- **Fade status** — shows which sounds have active `setValueCurveAtTime` curves
+- **AudioContext state** — detects suspended contexts from background tabs
+- **Sequence numbers** — compares GM and player dedup counters to diagnose replication failures
+
+Visual indicators highlight problems automatically: red for stuck gains or suspended contexts, amber for active fades.
 
 ---
 
@@ -238,11 +254,14 @@ const api = game.modules.get("the-sound-of-silence").api;
 - `getCurrentLoopSegment(sound)` — active segment info
 - `getAllLoopingSounds()` — all currently looping sounds across playlists
 - `getActivePlaylists()` — all playlists with active features
-- `inspectPlaylist(playlist)` / `inspectAll()` — detailed state snapshots
-- `getMetrics()` / `resetMetrics()` — performance data
 
 **Feature Management:**
 - `enableFeature(playlist, feature)` / `disableFeature(playlist, feature)`
+
+**Diagnostics:**
+- `requestClientDiagnostics()` — (GM-only) query all connected clients' audio state, display side-by-side comparison dialog
+- `inspectPlaylist(playlist)` / `inspectAll()` — detailed state snapshots
+- `getMetrics()` / `resetMetrics()` — performance data
 
 **Utilities:**
 - `findSounds(name)` — search by partial name

@@ -1,0 +1,112 @@
+<div class="sos-diagnostics-content sos-remote-diagnostics-content">
+    <p class="sos-remote-timestamp">Snapshot taken at <strong>{{timestamp}}</strong> &mdash; {{clients.length}} client(s) responded</p>
+
+    {{#each clients}}
+    <div class="client-card {{#if _anyContextSuspended}}problem{{/if}}">
+        <div class="client-header">
+            <h3>
+                <i class="fas {{#if client.isGM}}fa-crown{{else}}fa-user{{/if}}" aria-hidden="true"></i>
+                {{client.userName}}
+                <span class="role-badge {{#if client.isGM}}gm{{else}}player{{/if}}">
+                    {{#if client.isGM}}GM{{else}}Player{{/if}}
+                </span>
+            </h3>
+            <div class="context-states">
+                {{#each _contextEntries}}
+                <span class="context-chip {{#if isOk}}ok{{else}}warn{{/if}}">
+                    {{name}}: {{state}}
+                </span>
+                {{/each}}
+            </div>
+        </div>
+
+        {{!-- Playing Sounds --}}
+        {{#if playingSounds.length}}
+        <table class="sound-table">
+            <thead>
+                <tr>
+                    <th>Sound</th>
+                    <th>Playlist</th>
+                    <th>Gain</th>
+                    <th>Volume</th>
+                    <th>Fading</th>
+                    <th>Context</th>
+                    <th>Time</th>
+                </tr>
+            </thead>
+            <tbody>
+                {{#each playingSounds}}
+                <tr class="{{#if _gainZero}}problem{{/if}} {{#if _contextSuspended}}problem{{/if}}">
+                    <td>
+                        <span class="status-dot {{#if playing}}ok{{else}}error{{/if}}"></span>
+                        {{soundName}}
+                    </td>
+                    <td>{{playlistName}}</td>
+                    <td class="mono {{#if _gainZero}}error-text{{/if}}">{{gainValue}}</td>
+                    <td class="mono">{{volume}}</td>
+                    <td>
+                        {{#if isFading}}
+                        <span class="fade-badge">Fading</span>
+                        {{else}}
+                        <span class="no-fade">No</span>
+                        {{/if}}
+                    </td>
+                    <td class="{{#if _contextSuspended}}error-text{{/if}}">{{contextState}}</td>
+                    <td class="mono">{{currentTime}} / {{duration}}</td>
+                </tr>
+                {{/each}}
+            </tbody>
+        </table>
+        {{else}}
+        <p class="notes">No sounds currently playing on this client.</p>
+        {{/if}}
+
+        {{!-- Module Features --}}
+        {{#if playlists.length}}
+        <div class="client-features">
+            <h4>Active Features</h4>
+            <ul class="feature-list">
+                {{#each playlists}}
+                <li>
+                    <strong>{{playlistName}}</strong>
+                    {{#if features.crossfade}}<span class="feature-tag crossfade">Crossfade</span>{{/if}}
+                    {{#if features.silence}}<span class="feature-tag silence">Silence</span>{{/if}}
+                    {{#if features.scheduledSilenceFade}}<span class="feature-tag silence-fade">Silence Fade</span>{{/if}}
+                    {{#if features.loops}}
+                    {{#each features.loops}}
+                    <span class="feature-tag loop">Loop: {{soundName}} ({{loopsCompleted}}x)</span>
+                    {{/each}}
+                    {{/if}}
+                </li>
+                {{/each}}
+            </ul>
+        </div>
+        {{/if}}
+
+        {{!-- Sequence Numbers --}}
+        {{#if _sequenceEntries.length}}
+        <details class="sequence-details">
+            <summary>Sequence Numbers ({{_sequenceEntries.length}})</summary>
+            <table class="sequence-table">
+                <thead>
+                    <tr>
+                        <th>Key</th>
+                        <th>Seq</th>
+                        <th>Age</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {{#each _sequenceEntries}}
+                    <tr>
+                        <td class="mono">{{key}}</td>
+                        <td class="mono">{{seq}}</td>
+                        <td>{{age}}s ago</td>
+                    </tr>
+                    {{/each}}
+                </tbody>
+            </table>
+        </details>
+        {{/if}}
+    </div>
+    {{/each}}
+</div>

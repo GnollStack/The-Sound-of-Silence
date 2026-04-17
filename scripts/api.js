@@ -12,8 +12,9 @@ import { advancedFade, equalPowerCrossfade, fadeOutAndStop } from "./audio-fader
 import { scheduleCrossfade, performCrossfade, cancelCrossfade } from "./cross-fade.js";
 import { scheduleLoopWithin, cancelLoopWithin, breakLoopWithin } from "./internal-loop.js";
 import { Silence } from "./silence.js";
-import { cleanupPlaylistState, toSec, formatTime } from "./utils.js";
+import { cleanupPlaylistState, toSec, formatTime, info, debug, getSequenceSnapshot, MODULE_ID } from "./utils.js";
 import { State } from "./state-manager.js";
+import { Integrations } from "./integrations.js";
 
 /**
  * Public API for The Sound of Silence module
@@ -52,7 +53,7 @@ class SoundOfSilenceAPI {
         if (this._initialized) return;
         this._initialized = true;
 
-        console.log(`[SoS API] Initialized. Access via game.modules.get('the-sound-of-silence').api`);
+        info("[API] Initialized. Access via game.modules.get('the-sound-of-silence').api");
     }
 
     // ============================================
@@ -266,7 +267,7 @@ class SoundOfSilenceAPI {
         const fadeOut = overrideFadeOutMs ?? (Number(sound.parent.fade) || 0);
 
         // Clean up any active loopers on the sound.
-        cancelLoopWithin(sound, { allowFadeOut: true });
+        cancelLoopWithin(sound, { restorePlaybackHandlers: false });
 
         await fadeOutAndStop(sound.sound, fadeOut);
 
@@ -389,7 +390,22 @@ class SoundOfSilenceAPI {
      * @returns {Object} Summary across all playlists
      */
     inspectAll() {
-        return State.inspectAll();
+        const integrations = Integrations.diagnostics();
+        const isGM = Boolean(game.user?.isGM);
+        const activeGMs = game.users ? game.users.filter(u => u.isGM && u.active) : [];
+        const authorizedGM = isGM && activeGMs[0]?.id === game.user?.id;
+
+        return {
+            ...State.inspectAll(),
+            debug: {
+                enabled: Boolean(game.settings?.get(this.ID, "debug")),
+                isGM,
+                authorizedGM,
+                roleLabel: isGM ? "GM" : "Player",
+                authorityLabel: authorizedGM ? "Primary GM" : (isGM ? "Secondary GM" : "Not GM")
+            },
+            integrations
+        };
     }
 
     // ============================================
@@ -447,17 +463,28 @@ class SoundOfSilenceAPI {
             throw new Error(`Unknown event: ${event}. Valid events: ${validEvents.join(', ')}`);
         }
 
-        return Hooks.on(`the-sound-of-silence.${event}`, callback);
+        const hookName = `the-sound-of-silence.${event}`;
+        const hookId = Hooks.on(hookName, callback);
+        return { hookName, hookId };
     }
 
     /**
      * Remove a registered callback
-     * @param {number} hookId - Hook ID returned from on()
+     * @param {Object|number} hook - Hook object returned from on(), or legacy hook ID
+     * @param {string} [hook.hookName] - The full hook name
+     * @param {number} [hook.hookId] - The hook ID
      * @example
-     * api.off(hookId);
+     * const hook = api.on('crossfadeStart', cb);
+     * api.off(hook);
      */
-    off(hookId) {
-        Hooks.off(hookId);
+    off(hook) {
+        if (typeof hook === 'object' && hook.hookName && hook.hookId != null) {
+            Hooks.off(hook.hookName, hook.hookId);
+        } else if (typeof hook === 'number') {
+            // Legacy fallback — caller must have tracked the name themselves.
+            // Can't unregister without the hook name, so warn.
+            console.warn(`[${this.ID}] api.off() called with just a number. Use the object returned by api.on() instead.`);
+        }
     }
 
     // ============================================
@@ -697,6 +724,176 @@ class SoundOfSilenceAPI {
      */
     resetMetrics() {
         State.resetMetrics();
+    }
+    // ============================================
+    // Remote Diagnostics API
+    // ============================================
+
+    /**
+     * Gather a complete diagnostic snapshot of this client's audio state.
+     * Extends inspectAll() with per-sound gain/fade data and AudioContext states.
+     * @returns {Object} Full diagnostic payload for this client
+     * @private
+     */
+    _gatherLocalDiagnostics() {
+        const base = this.inspectAll();
+
+        // Per-playing-sound audio state — the critical data inspectAll() doesn't include
+        const playingSounds = [];
+        for (const playlist of game.playlists) {
+            for (const ps of playlist.sounds) {
+                if (!ps.sound?.playing) continue;
+                const sound = ps.sound;
+                playingSounds.push({
+                    playlistName: playlist.name,
+                    playlistId: playlist.id,
+                    soundName: ps.name,
+                    soundId: ps.id,
+                    playing: sound.playing,
+                    gainValue: sound.gain?.value ?? null,
+                    volume: sound.volume,
+                    isFading: State.isSoundFading(sound),
+                    currentTime: sound.currentTime,
+                    duration: sound.duration,
+                    contextState: sound.context?.state ?? "unknown",
+                });
+            }
+        }
+
+        // AudioContext states for all three Foundry channels
+        const audioContexts = {};
+        for (const name of ["music", "environment", "interface"]) {
+            const ctx = game.audio?.[name];
+            audioContexts[name] = ctx ? ctx.state : "unavailable";
+        }
+
+        return {
+            ...base,
+            playingSounds,
+            audioContexts,
+            sequences: getSequenceSnapshot(),
+            client: {
+                userId: game.user.id,
+                userName: game.user.name,
+                isGM: game.user.isGM,
+                timestamp: Date.now(),
+            },
+        };
+    }
+
+    /**
+     * Request diagnostic snapshots from all connected clients.
+     * GM-only. Broadcasts a socket request, waits 3 seconds for responses,
+     * then renders a dialog comparing all clients side-by-side.
+     * @returns {Promise<void>}
+     * @example
+     * game.modules.get('the-sound-of-silence').api.requestClientDiagnostics()
+     */
+    async requestClientDiagnostics() {
+        if (!game.user.isGM) {
+            ui.notifications.warn("Only the GM can request client diagnostics.");
+            return;
+        }
+
+        const requestId = foundry.utils.randomID();
+        const responses = [];
+
+        // Collect own state immediately
+        responses.push(this._gatherLocalDiagnostics());
+
+        // Listen for responses from other clients
+        const handler = (data) => {
+            if (data.action === "diagnostics-response" && data.requestId === requestId) {
+                responses.push(data.diagnostics);
+            }
+        };
+        game.socket.on(`module.${this.ID}`, handler);
+
+        // Broadcast request to all other clients
+        game.socket.emit(`module.${this.ID}`, {
+            action: "diagnostics-request",
+            requestId,
+            senderId: game.user.id,
+        });
+
+        debug("[Remote Diagnostics] Request sent, waiting for responses...");
+
+        // Wait for responses (3 seconds)
+        await new Promise(r => setTimeout(r, 3000));
+        game.socket.off(`module.${this.ID}`, handler);
+
+        debug(`[Remote Diagnostics] Received ${responses.length} response(s)`);
+
+        // Render the comparison dialog
+        this._renderRemoteDiagnostics(responses);
+    }
+
+    /**
+     * Handle incoming socket messages for the module.
+     * Currently supports diagnostics-request for remote state queries.
+     * @param {Object} data - The socket message payload
+     * @private
+     */
+    _handleSocketMessage(data) {
+        if (data.action === "diagnostics-request") {
+            debug("[Remote Diagnostics] Received request, sending local state...");
+            game.socket.emit(`module.${this.ID}`, {
+                action: "diagnostics-response",
+                requestId: data.requestId,
+                diagnostics: this._gatherLocalDiagnostics(),
+            });
+        }
+    }
+
+    /**
+     * Render the multi-client diagnostics dialog.
+     * @param {Array<Object>} responses - Array of client diagnostic payloads
+     * @private
+     */
+    async _renderRemoteDiagnostics(responses) {
+        // Pre-process for template: add problem flags for visual indicators
+        for (const client of responses) {
+            for (const sound of client.playingSounds) {
+                sound._gainZero = sound.gainValue !== null && sound.gainValue < 0.001 && !sound.isFading;
+                sound._contextSuspended = sound.contextState !== "running";
+                // Round numeric values for display
+                if (sound.gainValue !== null) sound.gainValue = Math.round(sound.gainValue * 1000) / 1000;
+                if (sound.volume !== null) sound.volume = Math.round(sound.volume * 1000) / 1000;
+                if (sound.currentTime !== null) sound.currentTime = Math.round(sound.currentTime * 10) / 10;
+                if (sound.duration !== null) sound.duration = Math.round(sound.duration * 10) / 10;
+            }
+            client._anyContextSuspended = Object.values(client.audioContexts).some(s => s !== "running" && s !== "unavailable");
+            client._contextEntries = Object.entries(client.audioContexts).map(([name, state]) => ({
+                name,
+                state,
+                isOk: state === "running",
+            }));
+            client._sequenceEntries = Object.entries(client.sequences || {}).map(([key, val]) => ({
+                key,
+                seq: val.seq,
+                age: Math.round((Date.now() - val.timestamp) / 1000),
+            }));
+        }
+
+        const html = await foundry.applications.handlebars.renderTemplate(
+            `modules/${this.ID}/templates/remote-diagnostics.hbs`,
+            { clients: responses, timestamp: new Date().toLocaleTimeString() }
+        );
+
+        await foundry.applications.api.DialogV2.prompt({
+            window: {
+                title: "Sound of Silence — Remote Diagnostics",
+                resizable: true,
+                contentClasses: ["sos-diagnostics-window", "sos-remote-diagnostics"],
+            },
+            position: { width: 700 },
+            content: html,
+            ok: {
+                icon: "fas fa-times",
+                label: "Close",
+            },
+            rejectClose: false,
+        });
     }
 }
 

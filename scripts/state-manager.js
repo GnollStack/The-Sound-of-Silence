@@ -6,7 +6,7 @@
  * For persistent configuration, see flag-service.js
  */
 
-import { debug, MODULE_ID, logFeature, LogSymbols } from "./utils.js";
+import { debug, MODULE_ID, logFeature, LogSymbols, warn } from "./utils.js";
 
 /**
  * Manages all runtime state for the module.
@@ -531,7 +531,7 @@ class StateManager {
                 }
                 this.clearPlayWaiter(playlist);
             } catch (err) {
-                console.warn(`[State] Error during crossfade cleanup for "${playlist?.name}":`, err);
+                warn(`[State] Error during crossfade cleanup for "${playlist?.name}":`, err);
             }
         }
 
@@ -569,7 +569,7 @@ class StateManager {
                     this.clearSilenceState(playlist); // Clean up the state
                 }
             } catch (err) {
-                console.warn(`[State] Error during silence cleanup for "${playlist?.name}":`, err);
+                warn(`[State] Error during silence cleanup for "${playlist?.name}":`, err);
             }
         }
 
@@ -586,7 +586,7 @@ class StateManager {
                     }
                 }
             } catch (err) {
-                console.warn(`[State] Error during looper cleanup for "${playlist?.name}":`, err);
+                warn(`[State] Error during looper cleanup for "${playlist?.name}":`, err);
             }
         }
 
@@ -753,12 +753,14 @@ class StateManager {
         // Silent emissions are for internal audio-engine bookkeeping (crossfade timers,
         // play waiters) that have no visual representation in the UI.
         if (silent) return;
-        // Use a debounce to prevent spamming renders during rapid changes (like a crossfade)
-        if (this._emitTimeout) return;
-        this._emitTimeout = setTimeout(() => {
+        // Use a debounce to prevent spamming renders during rapid changes (like a crossfade).
+        // Uses AudioTimeout instead of setTimeout for consistency with background-tab behavior.
+        if (this._emitPending) return;
+        this._emitPending = true;
+        foundry.audio.AudioTimeout.wait(150).then(() => {
+            this._emitPending = false;
             Hooks.callAll(`${MODULE_ID}.stateChanged`);
-            this._emitTimeout = null;
-        }, 150);
+        });
     }
 
     // ============================================

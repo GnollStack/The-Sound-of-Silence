@@ -6,11 +6,42 @@
  */
 import { MODULE_ID, debug, getNextSequence, shouldProcessAction } from "./utils.js";
 import { LoopingSound } from "./looping-sound.js";
-import { cancelCrossfade } from "./cross-fade.js";
+import { scheduleEndOfTrackFade } from "./audio-fader.js";
+import { cancelCrossfade, scheduleCrossfade } from "./cross-fade.js";
 import { Flags } from "./flag-service.js";
 import { State } from "./state-manager.js";  //  Import State manager
 
 const AudioTimeout = foundry.audio.AudioTimeout;
+
+function cancelStandardTransitionScheduling(ps) {
+  const playlist = ps?.parent;
+  if (!playlist) return;
+
+  cancelCrossfade(playlist);
+
+  const pendingFade = State.getEndOfTrackFade(ps);
+  if (pendingFade) {
+    pendingFade.cancel?.();
+    State.clearEndOfTrackFade(ps);
+  }
+}
+
+function restoreStandardTransitionScheduling(ps) {
+  if (!ps?.playing || !ps.sound) return;
+
+  cancelStandardTransitionScheduling(ps);
+
+  const playlist = ps.parent;
+  const mode = Flags.getPlaybackMode(playlist);
+  if (mode.crossfade) {
+    scheduleCrossfade(playlist, ps);
+    return;
+  }
+
+  if (!ps.repeat) {
+    scheduleEndOfTrackFade(ps);
+  }
+}
 
 /**
  * Creates and starts a new LoopingSound instance for a given PlaylistSound.
@@ -28,11 +59,13 @@ export function scheduleLoopWithin(ps) {
   const isActive = cfg.enabled && cfg.active; // undefined defaults to true
 
   // Cancel any existing looper for this sound to prevent duplicates.
-  cancelLoopWithin(ps, { quiet: true });
+  cancelLoopWithin(ps, { quiet: true, restorePlaybackHandlers: false });
 
   if (!cfg.enabled || !isActive) {
     return;
   }
+
+  cancelStandardTransitionScheduling(ps);
 
   // If we are about to create a looper, it becomes the authority for this
   // sound's lifecycle. Cancel any playlist-level crossfade timer.
@@ -61,13 +94,27 @@ export function scheduleLoopWithin(ps) {
  * @param {object} [options]
  * @param {boolean} [options.quiet=false] - Suppress debug logs.
  * @param {boolean} [options.allowFadeOut=false] - Allow active sound to fade out naturally.
+ * @param {boolean} [options.preservePlayback=true] - Keep the active sound playing.
+ * @param {boolean} [options.restorePlaybackHandlers=preservePlayback] - Re-arm standard end-of-track handling.
  */
-export function cancelLoopWithin(ps, { quiet = false, allowFadeOut = false } = {}) {
+export function cancelLoopWithin(ps, {
+  quiet = false,
+  allowFadeOut = false,
+  preservePlayback = true,
+  restorePlaybackHandlers = preservePlayback
+} = {}) {
   const looper = State.getActiveLooper(ps);  //  Use State manager
   if (looper) {
     if (!quiet) debug(`[Manager] Cancelling LoopingSound for "${ps.name}". (skip/stop)`);
     looper.isAborted = true;
-    looper.destroy(allowFadeOut);
+    if (preservePlayback) {
+      looper.retire();
+      if (restorePlaybackHandlers) {
+        restoreStandardTransitionScheduling(ps);
+      }
+    } else {
+      looper.destroy(allowFadeOut);
+    }
     State.clearActiveLooper(ps);  //  Use State manager
   }
 }
@@ -94,7 +141,7 @@ export async function breakLoopWithin(ps) {
   // 2. Then set flag to replicate to other clients
   debug(`[Manager] Replicating loop break for "${ps.name}" to other clients.`);
   await ps.setFlag(MODULE_ID, 'loopBreak', {
-    seq: getNextSequence(ps.id),
+    seq: getNextSequence(ps.id, "snd"),
     gmId: game.user.id
   });
 }
@@ -129,6 +176,14 @@ export async function nextSegmentWithin(ps) {
     debug(`[Manager] Cannot skip to next segment for "${ps.name}" - no active segment.`);
     return;
   }
+  if (looper.loopingDisabled) {
+    debug(`[Manager] Cannot skip to next segment for "${ps.name}" - looping is disabled.`);
+    return;
+  }
+  if (looper.isCrossfading) {
+    debug(`[Manager] Cannot skip to next segment for "${ps.name}" - transition already in progress.`);
+    return;
+  }
 
   const config = Flags.getLoopConfig(ps);
   if (config.segments.length <= 1) {
@@ -145,7 +200,12 @@ export async function nextSegmentWithin(ps) {
     return;
   }
 
-  const nextIndex = (currentIndex + 1) % config.segments.length;
+  if (currentIndex >= config.segments.length - 1) {
+    debug(`[Manager] Cannot skip to next segment for "${ps.name}" - already at final segment.`);
+    return;
+  }
+
+  const nextIndex = currentIndex + 1;
 
   // 1. Execute locally on GM first
   debug(`[Manager] Executing local skip to segment ${nextIndex} for "${ps.name}".`);
@@ -155,7 +215,7 @@ export async function nextSegmentWithin(ps) {
   debug(`[Manager] Replicating segment skip to index ${nextIndex} for "${ps.name}".`);
   await ps.setFlag(MODULE_ID, 'segmentSkip', {
     targetIndex: nextIndex,
-    seq: getNextSequence(ps.id),
+    seq: getNextSequence(ps.id, "snd"),
     gmId: game.user.id
   });
 }
@@ -174,6 +234,14 @@ export async function previousSegmentWithin(ps) {
     debug(`[Manager] Cannot skip to previous segment for "${ps.name}" - no active segment.`);
     return;
   }
+  if (looper.loopingDisabled) {
+    debug(`[Manager] Cannot skip to previous segment for "${ps.name}" - looping is disabled.`);
+    return;
+  }
+  if (looper.isCrossfading) {
+    debug(`[Manager] Cannot skip to previous segment for "${ps.name}" - transition already in progress.`);
+    return;
+  }
 
   const config = Flags.getLoopConfig(ps);
   if (config.segments.length <= 1) {
@@ -190,7 +258,12 @@ export async function previousSegmentWithin(ps) {
     return;
   }
 
-  const prevIndex = (currentIndex - 1 + config.segments.length) % config.segments.length;
+  if (currentIndex <= 0) {
+    debug(`[Manager] Cannot skip to previous segment for "${ps.name}" - already at first segment.`);
+    return;
+  }
+
+  const prevIndex = currentIndex - 1;
 
   // 1. Execute locally on GM first
   debug(`[Manager] Executing local skip to segment ${prevIndex} for "${ps.name}".`);
@@ -200,7 +273,7 @@ export async function previousSegmentWithin(ps) {
   debug(`[Manager] Replicating segment skip to index ${prevIndex} for "${ps.name}".`);
   await ps.setFlag(MODULE_ID, 'segmentSkip', {
     targetIndex: prevIndex,
-    seq: getNextSequence(ps.id),
+    seq: getNextSequence(ps.id, "snd"),
     gmId: game.user.id
   });
 }
@@ -251,7 +324,7 @@ export async function disableAllLoopsWithin(ps) {
   // 2. Then set flag to replicate to other clients
   debug(`[Manager] Replicating loop disable for "${ps.name}".`);
   await ps.setFlag(MODULE_ID, 'loopDisable', {
-    seq: getNextSequence(ps.id),
+    seq: getNextSequence(ps.id, "snd"),
     gmId: game.user.id
   });
 }

@@ -1,6 +1,6 @@
 // cross-fade.js - Automatic cross-fading for Foundry VTT playlists
 
-import { MODULE_ID, debug, waitForMedia, logFeature, LogSymbols, safeStop, getNextSequence } from "./utils.js";
+import { MODULE_ID, debug, waitForMedia, logFeature, LogSymbols, safeStop, getNextSequence, error } from "./utils.js";
 import { equalPowerCrossfade, fadeOutAndStop } from "./audio-fader.js";
 import { Flags } from "./flag-service.js";
 import { State } from "./state-manager.js";
@@ -180,7 +180,7 @@ export async function performCrossfade(playlist, soundToFade) {
     });
 
   } catch (err) {
-    console.error(`[${MODULE_ID}] Crossfade error:`, err);
+    error("[Crossfade] Error:", err);
     State.clearPlaylistCrossfading(playlist);
   } finally {
     // If the crossfade didn't complete successfully, clear the flag immediately

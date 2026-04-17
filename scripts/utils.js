@@ -36,41 +36,54 @@ const LOG_LEVELS = {
     DEBUG: 3
 };
 
+const LOG_CONFIG = {
+    [LOG_LEVELS.ERROR]: {
+        label: "ERROR",
+        style: "color: #ce0707; font-weight: bold",
+        method: "error"
+    },
+    [LOG_LEVELS.WARN]: {
+        label: "WARN",
+        style: "color: #ee9b3a; font-weight: bold",
+        method: "warn"
+    },
+    [LOG_LEVELS.INFO]: {
+        label: "INFO",
+        style: "color: #3a9bee; font-weight: bold",
+        method: "info"
+    },
+    [LOG_LEVELS.DEBUG]: {
+        label: "DEBUG",
+        style: "color: orange; font-weight: normal",
+        method: "log"
+    }
+};
+
+function isDebugLoggingEnabled() {
+    if (!game?.settings) return false;
+    try {
+        return Boolean(game.settings.get(MODULE_ID, "debug"));
+    } catch (err) {
+        return false;
+    }
+}
+
 /**
  * Enhanced logging with levels and consistent formatting
  * @param {number} level Log level (use LOG_LEVELS enum)
  * @param {...any} args The data to log
  */
 export function log(level, ...args) {
-    // Guard: Check if game and settings are ready
-    if (!game?.settings) return;
+    if ((level >= LOG_LEVELS.INFO) && !isDebugLoggingEnabled()) return;
+
+    const prefix = `[${MODULE_ID}]`;
+    const config = LOG_CONFIG[level] || LOG_CONFIG[LOG_LEVELS.DEBUG];
+    const method = console[config.method] || console.log;
 
     try {
-        const debugEnabled = game.settings.get(MODULE_ID, "debug");
-        if (!debugEnabled && level > LOG_LEVELS.WARN) return;
-
-        const prefix = `[${MODULE_ID}]`;
-        const levelColors = {
-            [LOG_LEVELS.ERROR]: "color: red; font-weight: bold",
-            [LOG_LEVELS.WARN]: "color: yellow; font-weight: bold",
-            [LOG_LEVELS.INFO]: "color: blue; font-weight: bold",
-            [LOG_LEVELS.DEBUG]: "color: orange; font-weight: normal"
-        };
-
-        const levelNames = {
-            [LOG_LEVELS.ERROR]: "ERROR",
-            [LOG_LEVELS.WARN]: "WARN",
-            [LOG_LEVELS.INFO]: "INFO",
-            [LOG_LEVELS.DEBUG]: "DEBUG"
-        };
-
-        console.log(
-            `%c${prefix} ${levelNames[level]}`,
-            levelColors[level] || levelColors[LOG_LEVELS.DEBUG],
-            ...args
-        );
+        method.call(console, `%c${prefix} ${config.label}`, config.style, ...args);
     } catch (err) {
-        // Setting not registered yet - silently ignore
+        console.log(`${prefix} ${config.label}`, ...args);
     }
 }
 
@@ -82,6 +95,18 @@ export function log(level, ...args) {
 // Keep backward compatibility
 export function debug(...args) {
     log(LOG_LEVELS.DEBUG, ...args);
+}
+
+export function info(...args) {
+    log(LOG_LEVELS.INFO, ...args);
+}
+
+export function warn(...args) {
+    log(LOG_LEVELS.WARN, ...args);
+}
+
+export function error(...args) {
+    log(LOG_LEVELS.ERROR, ...args);
 }
 
 // Export log levels for use in other files
@@ -278,8 +303,9 @@ export class PlaylistActionAuthority {
     }
 }
 
-// Sequence tracking with automatic cleanup
-const ACTION_SEQUENCES = new Map(); // playlistId -> { seq, timestamp }
+// Sequence tracking with automatic cleanup.
+// Keys are prefixed with "pl:" or "snd:" to avoid collisions between playlist and sound IDs.
+const ACTION_SEQUENCES = new Map(); // "pl:<id>" | "snd:<id>" -> { seq, timestamp }
 const SEQUENCE_CLEANUP_INTERVAL = 60000; // Clean every minute
 const SEQUENCE_MAX_AGE = 300000; // Keep sequences for 5 minutes
 const SEQUENCE_MAX_SIZE = 100; // Hard limit on map size
@@ -319,32 +345,51 @@ function cleanupOldSequences() {
     }
 }
 
-// Start cleanup interval when module initializes (store ID for potential future cleanup)
+// Periodic cleanup runs via setInterval (not AudioTimeout, which requires
+// game.audio to be initialized). The interval is cleared if the page unloads.
 let _sequenceCleanupInterval = null;
 if (typeof window !== 'undefined') {
     _sequenceCleanupInterval = setInterval(cleanupOldSequences, SEQUENCE_CLEANUP_INTERVAL);
+    window.addEventListener('beforeunload', () => {
+        if (_sequenceCleanupInterval) clearInterval(_sequenceCleanupInterval);
+    }, { once: true });
 }
 
-export function getNextSequence(playlistId) {
-    const current = ACTION_SEQUENCES.get(playlistId)?.seq || 0;
+export function getNextSequence(id, prefix = "pl") {
+    const key = `${prefix}:${id}`;
+    const current = ACTION_SEQUENCES.get(key)?.seq || 0;
     const next = current + 1;
-    ACTION_SEQUENCES.set(playlistId, { seq: next, timestamp: Date.now() });
+    ACTION_SEQUENCES.set(key, { seq: next, timestamp: Date.now() });
     return next;
 }
 
-export function shouldProcessAction(playlistId, seq) {
-    const data = ACTION_SEQUENCES.get(playlistId);
+export function shouldProcessAction(id, seq, prefix = "pl") {
+    const key = `${prefix}:${id}`;
+    const data = ACTION_SEQUENCES.get(key);
     const lastSeen = data?.seq || 0;
 
     if (seq <= lastSeen) return false; // Already processed
 
-    ACTION_SEQUENCES.set(playlistId, { seq, timestamp: Date.now() });
+    ACTION_SEQUENCES.set(key, { seq, timestamp: Date.now() });
     return true;
+}
+
+/**
+ * Returns a plain-object snapshot of all tracked sequence numbers.
+ * Used by remote diagnostics to compare sequence state across clients.
+ * @returns {Object} Key-value pairs of sequence keys to {seq, timestamp}
+ */
+export function getSequenceSnapshot() {
+    const snapshot = {};
+    for (const [key, data] of ACTION_SEQUENCES.entries()) {
+        snapshot[key] = { ...data };
+    }
+    return snapshot;
 }
 
 // Clean up when playlists are deleted
 Hooks.on("deletePlaylist", (playlist) => {
-    ACTION_SEQUENCES.delete(playlist.id);
+    ACTION_SEQUENCES.delete(`pl:${playlist.id}`);
     debug(`[Sequence Cleanup] Cleared sequences for deleted playlist: ${playlist.name}`);
 });
 
@@ -396,20 +441,14 @@ export const LogSymbols = {
  * @param {any} [data] - Optional data object (will be logged separately)
  */
 export function logFeature(symbol, feature, message, data) {
-    if (!game?.settings) return;
+    if (!isDebugLoggingEnabled()) return;
 
-    try {
-        if (!game.settings.get(MODULE_ID, "debug")) return;
+    const logMsg = `${symbol} [${feature}] ${message}`;
 
-        const logMsg = `${symbol} [${feature}] ${message}`;
-
-        if (data !== undefined) {
-            console.log(`%c[${MODULE_ID}]`, "color: orange; font-weight: bold", logMsg, data);
-        } else {
-            console.log(`%c[${MODULE_ID}]`, "color: orange; font-weight: bold", logMsg);
-        }
-    } catch (err) {
-        // Setting not registered yet
+    if (data !== undefined) {
+        console.log(`%c[${MODULE_ID}]`, "color: orange; font-weight: bold", logMsg, data);
+    } else {
+        console.log(`%c[${MODULE_ID}]`, "color: orange; font-weight: bold", logMsg);
     }
 }
 
@@ -458,7 +497,7 @@ export class SoundOfSilenceDiagnostics extends FormApplication {
             id: "sos-diagnostics",
             title: "Sound of Silence - Diagnostics",
             template: `modules/${MODULE_ID}/templates/diagnostics.hbs`,
-            width: 350,
+            width: 520,
             height: "auto",
             resizable: true,
             classes: ["sos-diagnostics-window"],
