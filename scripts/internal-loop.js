@@ -172,8 +172,8 @@ export async function nextSegmentWithin(ps) {
   if (!game.user.isGM) return;
 
   const looper = State.getActiveLooper(ps);
-  if (!looper || looper.isDestroyed || !looper.activeLoopSegment) {
-    debug(`[Manager] Cannot skip to next segment for "${ps.name}" - no active segment.`);
+  if (!looper || looper.isDestroyed) {
+    debug(`[Manager] Cannot skip to next segment for "${ps.name}" - no active looper.`);
     return;
   }
   if (looper.loopingDisabled) {
@@ -185,27 +185,11 @@ export async function nextSegmentWithin(ps) {
     return;
   }
 
-  const config = Flags.getLoopConfig(ps);
-  if (config.segments.length <= 1) {
-    debug(`[Manager] Cannot skip: only one segment configured for "${ps.name}".`);
+  const nextIndex = looper.getSkippableSegmentIndex?.(1);
+  if (nextIndex == null) {
+    debug(`[Manager] Cannot skip to next segment for "${ps.name}" - no later segment available.`);
     return;
   }
-
-  const currentIndex = config.segments.findIndex(
-    seg => seg.start === looper.activeLoopSegment.start
-  );
-
-  if (currentIndex === -1) {
-    debug(`[Manager] Cannot find current segment in config for "${ps.name}".`);
-    return;
-  }
-
-  if (currentIndex >= config.segments.length - 1) {
-    debug(`[Manager] Cannot skip to next segment for "${ps.name}" - already at final segment.`);
-    return;
-  }
-
-  const nextIndex = currentIndex + 1;
 
   // 1. Execute locally on GM first
   debug(`[Manager] Executing local skip to segment ${nextIndex} for "${ps.name}".`);
@@ -230,8 +214,8 @@ export async function previousSegmentWithin(ps) {
   if (!game.user.isGM) return;
 
   const looper = State.getActiveLooper(ps);
-  if (!looper || looper.isDestroyed || !looper.activeLoopSegment) {
-    debug(`[Manager] Cannot skip to previous segment for "${ps.name}" - no active segment.`);
+  if (!looper || looper.isDestroyed) {
+    debug(`[Manager] Cannot skip to previous segment for "${ps.name}" - no active looper.`);
     return;
   }
   if (looper.loopingDisabled) {
@@ -243,27 +227,11 @@ export async function previousSegmentWithin(ps) {
     return;
   }
 
-  const config = Flags.getLoopConfig(ps);
-  if (config.segments.length <= 1) {
-    debug(`[Manager] Cannot skip: only one segment configured for "${ps.name}".`);
+  const prevIndex = looper.getSkippableSegmentIndex?.(-1);
+  if (prevIndex == null) {
+    debug(`[Manager] Cannot skip to previous segment for "${ps.name}" - no earlier segment available.`);
     return;
   }
-
-  const currentIndex = config.segments.findIndex(
-    seg => seg.start === looper.activeLoopSegment.start
-  );
-
-  if (currentIndex === -1) {
-    debug(`[Manager] Cannot find current segment in config for "${ps.name}".`);
-    return;
-  }
-
-  if (currentIndex <= 0) {
-    debug(`[Manager] Cannot skip to previous segment for "${ps.name}" - already at first segment.`);
-    return;
-  }
-
-  const prevIndex = currentIndex - 1;
 
   // 1. Execute locally on GM first
   debug(`[Manager] Executing local skip to segment ${prevIndex} for "${ps.name}".`);

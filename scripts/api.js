@@ -11,6 +11,11 @@ import { Flags } from "./flag-service.js";
 import { advancedFade, equalPowerCrossfade, fadeOutAndStop } from "./audio-fader.js";
 import { scheduleCrossfade, performCrossfade, cancelCrossfade } from "./cross-fade.js";
 import { scheduleLoopWithin, cancelLoopWithin, breakLoopWithin } from "./internal-loop.js";
+import {
+    startSoundscape,
+    stopSoundscape,
+    isSoundscapeActive,
+} from "./procedural-ambience.js";
 import { Silence } from "./silence.js";
 import { cleanupPlaylistState, toSec, formatTime, info, debug, getSequenceSnapshot, MODULE_ID } from "./utils.js";
 import { State } from "./state-manager.js";
@@ -227,6 +232,49 @@ class SoundOfSilenceAPI {
         breakLoopWithin(sound);
     }
 
+    // ============================================
+    // Soundscape Mode API
+    // ============================================
+
+    /**
+     * Start the procedural ambience engine for a playlist. Normally triggered
+     * automatically by `playlist.playAll()` when `soundscapeMode=true`, but
+     * exposed here for macros that want to start it on demand.
+     * @param {Playlist} playlist
+     * @returns {Promise<void>}
+     */
+    async startSoundscape(playlist) {
+        if (!(playlist instanceof Playlist)) {
+            throw new TypeError("Expected Playlist document");
+        }
+        await startSoundscape(playlist);
+    }
+
+    /**
+     * Stop the procedural ambience engine for a playlist.
+     * @param {Playlist} playlist
+     * @param {{stopBeds?: boolean}} [options] - When true (default), bed tracks are stopped too.
+     * @returns {void}
+     */
+    stopSoundscape(playlist, options = {}) {
+        if (!(playlist instanceof Playlist)) {
+            throw new TypeError("Expected Playlist document");
+        }
+        stopSoundscape(playlist, options);
+    }
+
+    /**
+     * Check whether a soundscape engine is currently live for a playlist.
+     * @param {Playlist} playlist
+     * @returns {boolean}
+     */
+    isSoundscapeActive(playlist) {
+        if (!(playlist instanceof Playlist)) {
+            throw new TypeError("Expected Playlist document");
+        }
+        return isSoundscapeActive(playlist);
+    }
+
     /**
      * Plays a sound and applies the playlist's configured fade-in, with an optional override.
      * @param {PlaylistSound} sound - The sound to play.
@@ -273,7 +321,7 @@ class SoundOfSilenceAPI {
 
         // Ensure the document state is updated after the fade.
         if (sound.playing) {
-            await sound.update({ playing: false, pausedTime: 0 });
+            await sound.update({ playing: false, pausedTime: null });
         }
     }
 
@@ -767,10 +815,24 @@ class SoundOfSilenceAPI {
             audioContexts[name] = ctx ? ctx.state : "unavailable";
         }
 
+        // Soundscape engine state per playlist — procedural fires are client-local
+        // so each client's snapshot will differ, which is the whole point.
+        const soundscapes = [];
+        for (const playlist of game.playlists) {
+            const engine = State.getSoundscapeEngine(playlist);
+            if (!engine) continue;
+            soundscapes.push({
+                playlistName: playlist.name,
+                playlistId: playlist.id,
+                ...engine.getDiagnostics(),
+            });
+        }
+
         return {
             ...base,
             playingSounds,
             audioContexts,
+            soundscapes,
             sequences: getSequenceSnapshot(),
             client: {
                 userId: game.user.id,

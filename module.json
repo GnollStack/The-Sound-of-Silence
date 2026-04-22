@@ -2,10 +2,10 @@
   "id": "the-sound-of-silence",
   "title": "The Sound of Silence",
   "description": "Transform Foundry's playlists into a dynamic sound design studio. Create complex tracks with intros and seamless loops using the multi-segment sequencer, blend songs perfectly with equal-power crossfading, and control the mood with configurable silence gaps.",
-  "version": "13.12.3",
+  "version": "14.13.0",
   "compatibility": {
     "minimum": "13",
-    "verified": "13"
+    "verified": "14"
   },
   "authors": [
     {
@@ -40,6 +40,7 @@
     "scripts/internal-loop.js",
     "scripts/loop-previewer.js",
     "scripts/looping-sound.js",
+    "scripts/procedural-ambience.js",
     "scripts/playlist-config.js",
     "scripts/playlist-loop.js",
     "scripts/playlist-ui.js",

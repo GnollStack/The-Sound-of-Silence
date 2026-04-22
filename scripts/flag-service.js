@@ -23,10 +23,34 @@ const FlagSchemas = {
         loopPlaylist: { type: Boolean, default: false },
         volumeNormalizationEnabled: { type: Boolean, default: false },
         normalizedVolume: { type: Number, default: 0.5, min: 0, max: 1.0 },
+        soundscapeMode: { type: Boolean, default: false },
+        soundscapeMaxPolyphony: { type: Number, default: 4, min: 1, max: 16 },
+        soundscapePlayChanceScaling: { type: String, default: "independent", enum: ["independent", "scaled", "soft"] },
+        soundscapeDefaults: {
+            type: Object,
+            default: {},
+            schema: {
+                minDelay: { type: Number, default: 15, min: 0, max: 3600 },
+                maxDelay: { type: Number, default: 60, min: 0, max: 3600 },
+                timingMode: { type: String, default: "uniform", enum: ["uniform", "fixed", "natural"] },
+                initialFireMode: { type: String, default: "normal", enum: ["normal", "staggered", "immediate"] },
+                volumeVariance: { type: Number, default: 0, min: 0, max: 1 },
+                playChance: { type: Number, default: 100, min: 0, max: 100 },
+                randomPan: { type: Boolean, default: false },
+            },
+        },
     },
     PLAYLIST_SOUND: {
         isSilenceGap: { type: Boolean, default: false },
         allowVolumeOverride: { type: Boolean, default: false },
+        isProcedural: { type: Boolean, default: false },
+        minDelay: { type: Number, default: 15, min: 0, max: 3600 },
+        maxDelay: { type: Number, default: 60, min: 0, max: 3600 },
+        timingMode: { type: String, default: "uniform", enum: ["uniform", "fixed", "natural"] },
+        initialFireMode: { type: String, default: "normal", enum: ["normal", "staggered", "immediate"] },
+        volumeVariance: { type: Number, default: 0, min: 0, max: 1 },
+        randomPan: { type: Boolean, default: false },
+        playChance: { type: Number, default: 100, min: 0, max: 100 },
         loopWithin: {
             type: Object,
             default: {},
@@ -245,18 +269,32 @@ class FlagService {
 
     /**
      * Computes the effective playback mode for a playlist.
-     * Enforces the business rule: Crossfade overrides Silence.
+     * Enforces mutual exclusivity: Soundscape > Crossfade > Silence > Sequential.
      * @param {Playlist} playlist The playlist document.
-     * @returns {{crossfade: boolean, silence: boolean, loopPlaylist: boolean}}
+     * @returns {{soundscape: boolean, crossfade: boolean, silence: boolean, loopPlaylist: boolean, effective: string}}
      */
     getPlaybackMode(playlist) {
+        const soundscapeAllowed = playlist?.mode === CONST.PLAYLIST_MODES.DISABLED;
+        const soundscape = soundscapeAllowed && this.getPlaylistFlag(playlist, "soundscapeMode");
         const crossfade = this.getPlaylistFlag(playlist, "crossfade");
         const silence = this.getPlaylistFlag(playlist, "silenceEnabled");
         const loopPlaylist = this.getPlaylistFlag(playlist, "loopPlaylist");
+
+        // Higher-priority modes suppress lower ones.
+        const effectiveCrossfade = soundscape ? false : crossfade;
+        const effectiveSilence = (soundscape || effectiveCrossfade) ? false : silence;
+
+        let effective = "sequential";
+        if (soundscape) effective = "soundscape";
+        else if (effectiveCrossfade) effective = "crossfade";
+        else if (effectiveSilence) effective = "silence";
+
         return {
-            crossfade,
-            silence: crossfade ? false : silence, // Critical business logic
+            soundscape,
+            crossfade: effectiveCrossfade,
+            silence: effectiveSilence,
             loopPlaylist,
+            effective,
         };
     }
 
@@ -413,6 +451,39 @@ class FlagService {
         delete flags.loopCount;
 
         return flags;
+    }
+
+    /**
+     * Resolve a procedural one-shot field with fallback:
+     *   per-sound flag -> playlist soundscapeDefaults -> schema default.
+     * Only defined for procedural fields (minDelay, maxDelay, timingMode,
+     * initialFireMode, volumeVariance, playChance, randomPan) on PlaylistSound documents.
+     * @param {PlaylistSound} ps
+     * @param {"minDelay"|"maxDelay"|"timingMode"|"initialFireMode"|"volumeVariance"|"playChance"|"randomPan"} key
+     * @returns {any}
+     */
+    resolveProceduralField(ps, key) {
+        const soundSchema = FlagSchemas.PLAYLIST_SOUND[key];
+        if (!soundSchema) return undefined;
+
+        // Per-sound explicit value wins (read raw; getSoundFlag returns defaults).
+        const raw = ps?.getFlag?.(MODULE_ID, key);
+        if (raw !== null && typeof raw !== "undefined") {
+            return this._validate(raw, soundSchema);
+        }
+
+        // Fall back to playlist defaults object.
+        const playlist = ps?.parent;
+        if (playlist) {
+            const defaults = this.getPlaylistFlag(playlist, "soundscapeDefaults") ?? {};
+            const override = defaults[key];
+            if (override !== null && typeof override !== "undefined") {
+                return this._validate(override, soundSchema);
+            }
+        }
+
+        // Finally, schema default.
+        return foundry.utils.deepClone(soundSchema.default);
     }
 
     /**

@@ -51,6 +51,11 @@ import { API } from "./api.js";
 import { AdvancedShuffle, SHUFFLE_PATTERNS } from "./advanced-shuffle.js";
 import { registerCurrentlyPlaying } from "./currently-playing.js";
 import { Integrations } from "./integrations.js";
+import {
+  startSoundscape,
+  stopSoundscape,
+  isSoundscapeActive,
+} from "./procedural-ambience.js";
 
 const AudioTimeout = foundry.audio.AudioTimeout;
 
@@ -70,6 +75,10 @@ export async function cancelSilentGap(playlist) {
 // =========================================================================
 // Helpers
 // =========================================================================
+
+function isFreshPlaybackStart(playlistSound) {
+  return !Number(playlistSound?.pausedTime);
+}
 
 // =========================================================================
 // Foundry Hooks
@@ -178,6 +187,16 @@ Hooks.once("ready", () => {
   registerSoundConfigWrappers();
   registerCurrentlyPlaying();
 
+  // If a client joins or reloads while a soundscape playlist is already live,
+  // bootstrap the local engine from the replicated playlist state.
+  for (const playlist of game.playlists) {
+    if (!playlist.playing) continue;
+    if (!Flags.getPlaybackMode(playlist).soundscape) continue;
+    startSoundscape(playlist).catch((err) =>
+      debug(`[Soundscape] Ready bootstrap failed for "${playlist.name}":`, err?.message)
+    );
+  }
+
   // --- Visibility Recovery (Safety Net) ---
   // When the browser tab regains focus, validate and recover module state.
   // Browser throttling can cause setTimeout-based cleanup to be delayed or missed.
@@ -271,8 +290,8 @@ Hooks.once("ready", () => {
     }
 
     // --- Handle segment skip replication ---
-    const segmentSkip = moduleFlags.segmentSkip;
-    if (segmentSkip) {
+    if (moduleFlags.segmentSkip) {
+      const segmentSkip = soundDoc.getFlag(MODULE_ID, "segmentSkip") ?? {};
       const { targetIndex, seq } = segmentSkip;
 
       // Validate the data
@@ -289,8 +308,8 @@ Hooks.once("ready", () => {
     }
 
     // --- Handle loop break replication ---
-    const loopBreak = moduleFlags.loopBreak;
-    if (loopBreak) {
+    if (moduleFlags.loopBreak) {
+      const loopBreak = soundDoc.getFlag(MODULE_ID, "loopBreak") ?? {};
       const { seq } = loopBreak;
 
       if (!Number.isFinite(seq)) return;
@@ -306,8 +325,8 @@ Hooks.once("ready", () => {
     }
 
     // --- Handle loop disable replication ---
-    const loopDisable = moduleFlags.loopDisable;
-    if (loopDisable) {
+    if (moduleFlags.loopDisable) {
+      const loopDisable = soundDoc.getFlag(MODULE_ID, "loopDisable") ?? {};
       const { seq } = loopDisable;
 
       if (!Number.isFinite(seq)) return;
@@ -321,6 +340,46 @@ Hooks.once("ready", () => {
       debug(`[LoopDisable-Sync] Executing loop disable for "${soundDoc.name}"`);
       executeLoopDisable(soundDoc);
     }
+  });
+
+  // Arm or disarm a procedural sound's timer when its `playing` state flips.
+  // Runs on every client so local RNG timers stay aligned with document state.
+  Hooks.on("updatePlaylistSound", (soundDoc, changes) => {
+    if (!Object.prototype.hasOwnProperty.call(changes, "playing")) return;
+
+    const playlist = soundDoc.parent;
+    if (!playlist || !Flags.getPlaybackMode(playlist).soundscape) return;
+
+    if (Flags.getSoundFlag(soundDoc, "isProcedural")) {
+      const engine = State.getSoundscapeEngine(playlist);
+      if (engine) {
+        if (changes.playing) engine.armProceduralSound(soundDoc);
+        else engine.disarmProceduralSound(soundDoc);
+      }
+    }
+  });
+
+  // Auto-stop a Soundscape playlist when its last playing sound goes idle.
+  // Individual stops accumulate until no sound is left, then the playlist
+  // itself flips to stopped — which tears down the engine via the existing
+  // updatePlaylist hook. GM-only so only one client writes.
+  Hooks.on("updatePlaylistSound", async (soundDoc, changes) => {
+    if (!game.user.isGM) return;
+    if (!Object.prototype.hasOwnProperty.call(changes, "playing")) return;
+    if (changes.playing) return;
+
+    const playlist = soundDoc.parent;
+    if (!playlist || !Flags.getPlaybackMode(playlist).soundscape) return;
+    if (!playlist.playing) return;
+    if (State.isPlaylistStopping(playlist)) return;
+
+    const stillPlaying = playlist.sounds.some(
+      (s) => s.playing && !Flags.getSoundFlag(s, "isSilenceGap")
+    );
+    if (stillPlaying) return;
+
+    debug(`[Soundscape] Last sound stopped in "${playlist.name}"; stopping playlist.`);
+    await playlist.update({ playing: false });
   });
 
   // 1. Create a new helper function
@@ -396,7 +455,7 @@ Hooks.once("ready", () => {
     "MIXED"
   );
 
-  // In sequential/shuffle playlists, escalate a per-track stop to a full playlist stop for consistency.
+  // In sequential and shuffle modes, escalate a per-track stop to a full playlist stop for consistency.
   libWrapper.register(
     MODULE_ID,
     "Playlist.prototype.stopSound",
@@ -411,7 +470,6 @@ Hooks.once("ready", () => {
         CONST.PLAYLIST_MODES.SEQUENTIAL,
         CONST.PLAYLIST_MODES.SHUFFLE,
       ].includes(playlist.mode);
-
       if (isSeqOrShuffle && playlist.playing) {
         logFeature(
           LogSymbols.STOP,
@@ -466,7 +524,7 @@ Hooks.once("ready", () => {
       const updates = soundIdsToStop.map((id) => ({
         _id: id,
         playing: false,
-        pausedTime: 0,
+        pausedTime: null,
       }));
       if (updates.length > 0) {
         await this.updateEmbeddedDocuments("PlaylistSound", updates, {
@@ -527,6 +585,16 @@ Hooks.once("ready", () => {
 
       // If our automatic crossfader is running, do not treat this as a manual skip.
       if (State.isPlaylistCrossfading(playlist)) {
+        return await wrapped.call(playlist, soundToPlay, ...args);
+      }
+
+      // Soundscape mode: bed tracks are routed directly to Foundry. Skip the
+      // crossfade-on-skip path entirely — procedural ambience has its own
+      // layering model and doesn't participate in track-to-track transitions.
+      // The engine itself is started by the updatePlaylist hook when the
+      // playlist's `playing` flag flips true, and individual procedural arm/
+      // disarm is handled by the updatePlaylistSound hook.
+      if (Flags.getPlaybackMode(playlist).soundscape) {
         return await wrapped.call(playlist, soundToPlay, ...args);
       }
 
@@ -751,11 +819,19 @@ Hooks.once("ready", () => {
       const playlist = this;
       debug(`[playNext WRAPPER] Advancing playlist "${playlist.name}".`);
 
+      // Soundscape mode: "next track" is meaningless for procedural ambience.
+      // Swallow the call so a misfired Next button doesn't tear the engine down.
+      if (Flags.getPlaybackMode(playlist).soundscape) {
+        debug(`[Soundscape] playNext no-op for "${playlist.name}".`);
+        return;
+      }
+
       // Use centralized cleanup for other module features.
       await cleanupPlaylistState(this, {
         cleanSilence: false,
         cleanCrossfade: true,
         cleanLoopers: true,
+        cleanSoundscape: false,
         allowFadeOut: true,
       });
 
@@ -813,6 +889,43 @@ Hooks.once("ready", () => {
     async function (wrapped, ...args) {
       // Playback is starting, so clear any lingering "stopping" state.
       State.clearStoppingFlag(this);
+      // Soundscape in Soundboard mode needs custom play-all behavior because
+      // Foundry's disabled-mode playAll is otherwise a no-op.
+      if (Flags.getPlaybackMode(this).soundscape) {
+        // Match simultaneous-mode "play all" semantics for real tracks while
+        // still letting the soundscape engine own procedural playback timing.
+        const soundUpdates = this.sounds.map((sound) => {
+          const isSilenceGap = Flags.getSoundFlag(sound, "isSilenceGap");
+          const shouldPlay = !isSilenceGap;
+          return {
+            _id: sound.id,
+            playing: shouldPlay,
+            pausedTime: null,
+          };
+        });
+
+        const hasSessionTracks = soundUpdates.some((update) => update.playing);
+        if (!hasSessionTracks) {
+          debug(
+            `[Soundscape] Play All ignored for "${this.name}" - ` +
+            `no playable soundscape tracks are configured.`
+          );
+          return this;
+        }
+
+        const result = await this.update({
+          playing: true,
+          sounds: soundUpdates,
+        });
+
+        if (game.user.isGM) {
+          startSoundscape(this).catch((err) =>
+            debug(`[Soundscape] startSoundscape failed for "${this.name}":`, err?.message)
+          );
+        }
+        return result;
+      }
+
       const result = await wrapped.call(this, ...args);
 
       // After playAll starts, find the first track and arm its features.
@@ -826,7 +939,40 @@ Hooks.once("ready", () => {
       });
       return result;
     },
-    "WRAPPER"
+    "MIXED"
+  );
+
+  // Cycle the playlist through 5 modes: Disabled → Sequential → Shuffle →
+  // Simultaneous → Soundscape → Disabled. Storage stays {mode: -1,
+  // soundscapeMode flag}; writing both keys atomically self-heals stale state.
+  libWrapper.register(
+    MODULE_ID,
+    "Playlist.prototype.cycleMode",
+    async function () {
+      const inSoundscape =
+        this.mode === CONST.PLAYLIST_MODES.DISABLED &&
+        !!this.getFlag(MODULE_ID, "soundscapeMode");
+      const key = inSoundscape ? "soundscape" : this.mode;
+      const transitions = {
+        [CONST.PLAYLIST_MODES.DISABLED]: { mode: CONST.PLAYLIST_MODES.SEQUENTIAL, soundscape: false },
+        [CONST.PLAYLIST_MODES.SEQUENTIAL]: { mode: CONST.PLAYLIST_MODES.SHUFFLE, soundscape: false },
+        [CONST.PLAYLIST_MODES.SHUFFLE]: { mode: CONST.PLAYLIST_MODES.SIMULTANEOUS, soundscape: false },
+        [CONST.PLAYLIST_MODES.SIMULTANEOUS]: { mode: CONST.PLAYLIST_MODES.DISABLED, soundscape: true },
+        soundscape: { mode: CONST.PLAYLIST_MODES.DISABLED, soundscape: false },
+      };
+      const next = transitions[key] ?? transitions[CONST.PLAYLIST_MODES.DISABLED];
+      const soundUpdates = this.sounds.map((sound) => ({
+        _id: sound.id,
+        playing: false,
+        pausedTime: null,
+      }));
+      return this.update({
+        sounds: soundUpdates,
+        mode: next.mode,
+        [`flags.${MODULE_ID}.soundscapeMode`]: next.soundscape,
+      });
+    },
+    "OVERRIDE"
   );
 
   // Global wrapper on Sound.play to manage all module features at the audio level.
@@ -838,7 +984,7 @@ Hooks.once("ready", () => {
       ensureAudioContext();
 
       // 1. Initial checks and setup
-      if (options?._fromLoop) {
+      if (options?._fromLoop || options?._sosProceduralOneShot) {
         return wrapped.call(this, options);
       }
       const ps = findPlaylistSoundForSound(this);
@@ -854,7 +1000,7 @@ Hooks.once("ready", () => {
       if (!options?._fromCrossfade) {
         const targetVolume = Flags.resolveTargetVolume(ps);
         const fadeInMs = Flags.getPlaylistFlag(ps.parent, "fadeIn");
-        const isFreshPlay = ps?.pausedTime === 0;
+        const isFreshPlay = isFreshPlaybackStart(ps);
         const preMuteVolume = (fadeInMs > 0 && isFreshPlay) ? 0 : targetVolume;
         _applyPreMute(this, ps, fadeInMs, targetVolume);
 
@@ -1021,6 +1167,15 @@ Hooks.once("ready", () => {
     MODULE_ID,
     "PlaylistSound.prototype.sync",
     function (wrapped) {
+      if (
+        Flags.getPlaybackMode(this.parent).soundscape &&
+        Flags.getSoundFlag(this, "isProcedural")
+      ) {
+        if (this.sound?.playing) {
+          safeStop(this.sound, "soundscape procedural sync guard");
+        }
+        return;
+      }
       if (this.sound && State.isSoundFading(this.sound)) {
         debug(`[Sync Guard] Blocked sync() for "${this.name}" — SoS fade curve active`);
         return;
@@ -1088,6 +1243,77 @@ Hooks.once("ready", () => {
     }
   });
 
+  // Keep every client's local soundscape engine aligned with replicated
+  // playlist state. This covers initial playback, live flag toggles, and late
+  // join/reload cases where only the document state is available locally.
+  Hooks.on("updatePlaylist", (playlist, changes) => {
+    const soundscapeChanged = foundry.utils.hasProperty(
+      changes,
+      `flags.${MODULE_ID}.soundscapeMode`
+    );
+    const playingChanged = Object.prototype.hasOwnProperty.call(changes, "playing");
+    const modeChanged = Object.prototype.hasOwnProperty.call(changes, "mode");
+    if (!soundscapeChanged && !playingChanged && !modeChanged) return;
+
+    const nowSoundscape = Flags.getPlaybackMode(playlist).soundscape;
+    const engineActive = isSoundscapeActive(playlist);
+
+    if (playlist.playing && nowSoundscape && !engineActive) {
+      debug(`[Soundscape] Activating engine for "${playlist.name}" from playlist update.`);
+      startSoundscape(playlist).catch((err) =>
+        debug(`[Soundscape] Start-from-update failed:`, err?.message)
+      );
+    } else if ((!playlist.playing || !nowSoundscape) && engineActive) {
+      debug(`[Soundscape] Deactivating engine for "${playlist.name}" from playlist update.`);
+      // Let the surrounding playlist update own bed-track replication. This hook
+      // is only responsible for the local engine lifecycle on each client.
+      stopSoundscape(playlist, { stopBeds: false });
+    }
+  });
+
+  // Soundscape is only valid in Soundboard mode. If the GM changes the
+  // playlist mode away from Soundboard Only, clear the persisted flag so the UI
+  // doesn't carry stale state.
+  Hooks.on("updatePlaylist", async (playlist, changes, options, userId) => {
+    if (!Object.prototype.hasOwnProperty.call(changes, "mode")) return;
+    if (!game.user.isGM || game.user.id !== userId) return;
+    if (playlist.mode === CONST.PLAYLIST_MODES.DISABLED) return;
+    if (!playlist.getFlag(MODULE_ID, "soundscapeMode")) return;
+
+    await playlist.update({
+      [`flags.${MODULE_ID}.soundscapeMode`]: false,
+    }, { render: false });
+  });
+
+  Hooks.on("updatePlaylist", async (playlist, changes, options, userId) => {
+    const soundscapeChanged = foundry.utils.hasProperty(
+      changes,
+      `flags.${MODULE_ID}.soundscapeMode`
+    );
+    const modeChanged = Object.prototype.hasOwnProperty.call(changes, "mode");
+    if (!soundscapeChanged && !modeChanged) return;
+    if (!game.user.isGM || game.user.id !== userId) return;
+    if (Flags.getPlaybackMode(playlist).soundscape) return;
+
+    const proceduralUpdates = playlist.sounds
+      .filter((sound) =>
+        sound.playing &&
+        !Flags.getSoundFlag(sound, "isSilenceGap") &&
+        Flags.getSoundFlag(sound, "isProcedural")
+      )
+      .map((sound) => ({
+        _id: sound.id,
+        playing: false,
+        pausedTime: null,
+      }));
+
+    if (!proceduralUpdates.length) return;
+
+    await playlist.updateEmbeddedDocuments("PlaylistSound", proceduralUpdates, {
+      render: false,
+    });
+  });
+
   Hooks.on("updatePlaylist", async (playlist, changes, options, userId) => {
     // Only the GM who initiated the change should perform the update.
     if (game.user.id !== userId || !game.user.isGM) return;
@@ -1143,7 +1369,7 @@ Hooks.once("ready", () => {
 
       // Find the playlist element in the UI
       const playlistElement = document.querySelector(
-        `.playlist[data-document-id="${playlist.id}"]`
+        `.playlist[data-entry-id="${playlist.id}"], .playlist[data-document-id="${playlist.id}"]`
       );
       if (playlistElement) {
         for (const update of updates) {
@@ -1200,7 +1426,7 @@ Hooks.once("ready", () => {
    * Mutes the sound if a fade-in is required, otherwise sets it to its target volume.
    */
   function _applyPreMute(sound, ps, fadeInMs, targetVolume) {
-    if (fadeInMs > 0 && ps?.pausedTime === 0) {
+    if (fadeInMs > 0 && isFreshPlaybackStart(ps)) {
       sound.volume = 0; // Start at 0 for fade-in
     } else {
       sound.volume = targetVolume; // Not fading in, set correct volume immediately
@@ -1261,7 +1487,7 @@ Hooks.once("ready", () => {
 
     // Post-schedule volume safety net (for background tabs).
     // Runs AFTER all scheduling so it doesn't destroy fade curves that were just set up.
-    if ((fadeInMs <= 0 || ps?.pausedTime > 0) && !State.isSoundFading(sound) && !fromCrossfade) {
+    if ((fadeInMs <= 0 || !isFreshPlaybackStart(ps)) && !State.isSoundFading(sound) && !fromCrossfade) {
       const target = Flags.resolveTargetVolume(ps);
       if (Math.abs(sound.volume - target) > 0.001) {
         debug(`[Sound.play] Post-schedule volume correction: ${sound.volume.toFixed(3)} -> ${target.toFixed(3)} for "${ps.name}"`);

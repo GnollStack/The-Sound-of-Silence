@@ -543,7 +543,27 @@ form[id^="PlaylistSoundConfig-"] > section.window-content {
 
 .sos-loop-buttons-group {
   display: flex;
+  align-items: center;
   gap: var(--sos-space-md);
+}
+
+.sos-loop-preview-volume-wrap {
+  display: flex;
+  align-items: center;
+  gap: var(--sos-space-xs);
+  min-width: 150px;
+  max-width: 220px;
+}
+
+.sos-loop-preview-volume-wrap i {
+  color: var(--sos-text-secondary);
+  font-size: var(--sos-text-sm);
+  flex: 0 0 auto;
+}
+
+.sos-loop-preview-volume-wrap range-picker {
+  flex: 1 1 auto;
+  min-width: 110px;
 }
 
 .sos-loop-timer {
@@ -1032,6 +1052,168 @@ button.sos-loop-preview-segment.sos-compact i {
   padding: var(--sos-space-xs) var(--sos-space-md);
   height: var(--sos-input-height-sm);
   border-radius: var(--sos-radius-sm);
+}
+
+/* =================================================================
+ * Soundscape panel (PlaylistConfig)
+ * Dedicated subsection for procedural ambience defaults + roster.
+ * ================================================================= */
+.sos-soundscape-panel {
+  border-left-color: var(--sos-checkbox-accent, #ee9b3a);
+  background: linear-gradient(
+    90deg,
+    rgba(238, 155, 58, 0.05),
+    transparent 30px
+  );
+  padding-top: var(--sos-space-sm);
+  padding-bottom: var(--sos-space-sm);
+}
+
+.sos-soundscape-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--sos-space-md);
+  margin-bottom: var(--sos-space-md);
+}
+
+.sos-soundscape-cell {
+  min-width: 0;
+}
+
+.sos-poly-input-row {
+  display: flex;
+  align-items: center;
+  gap: var(--sos-space-sm);
+}
+
+.sos-poly-input-row input[type="number"] {
+  width: 64px;
+}
+
+.sos-poly-hint {
+  font-size: var(--sos-text-sm);
+  color: var(--sos-text-secondary);
+  opacity: 0.75;
+  font-variant-numeric: tabular-nums;
+}
+
+.sos-radio-row {
+  display: flex !important;
+  flex-direction: row !important;
+  flex-wrap: wrap;
+  gap: var(--sos-space-md) !important;
+}
+
+.sos-soundscape-defaults,
+.sos-procedural-roster {
+  border: 1px solid var(--sos-border-light);
+  border-radius: var(--sos-radius-sm);
+  padding: var(--sos-space-sm) var(--sos-space-md) var(--sos-space-md);
+  margin: var(--sos-space-sm) 0;
+  background: rgba(0, 0, 0, 0.12);
+}
+
+.sos-soundscape-defaults legend,
+.sos-procedural-roster legend {
+  font-size: var(--sos-text-md);
+  font-weight: 600;
+  color: var(--sos-checkbox-accent, #ee9b3a);
+  padding: 0 var(--sos-space-sm);
+}
+
+.sos-soundscape-defaults .sos-two-column {
+  margin-bottom: var(--sos-space-sm);
+}
+
+.sos-soundscape-defaults label.checkbox.sos-compact-checkbox {
+  margin-top: var(--sos-space-sm);
+}
+
+/* Procedural roster table */
+.sos-roster-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--sos-text-sm);
+  color: var(--sos-text-primary);
+}
+
+.sos-roster-table thead th {
+  text-align: left;
+  font-weight: 600;
+  color: var(--sos-text-secondary);
+  padding: var(--sos-space-xs) var(--sos-space-sm);
+  border-bottom: 1px solid var(--sos-border-light);
+  font-size: var(--sos-text-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.sos-roster-table tbody td {
+  padding: var(--sos-space-xs) var(--sos-space-sm);
+  border-bottom: 1px dashed var(--sos-border-light);
+  vertical-align: middle;
+}
+
+.sos-roster-table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.sos-roster-name {
+  font-weight: 500;
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sos-roster-num {
+  font-variant-numeric: tabular-nums;
+  color: var(--sos-text-secondary);
+  white-space: nowrap;
+}
+
+.sos-roster-pan {
+  text-align: center;
+  color: var(--sos-checkbox-accent, #ee9b3a);
+  opacity: 0.85;
+}
+
+.sos-roster-empty {
+  font-style: italic;
+  text-align: center;
+  margin: var(--sos-space-md) 0 0 0 !important;
+}
+
+/* Per-sound procedural fieldsets (Timing / Variation) */
+.sos-procedural-fieldset {
+  border: 1px solid var(--sos-border-light);
+  border-radius: var(--sos-radius-sm);
+  padding: var(--sos-space-sm) var(--sos-space-md);
+  margin: var(--sos-space-sm) 0;
+  background: rgba(0, 0, 0, 0.1);
+}
+
+.sos-procedural-fieldset legend {
+  font-size: var(--sos-text-md);
+  font-weight: 600;
+  color: var(--sos-checkbox-accent, #ee9b3a);
+  padding: 0 var(--sos-space-sm);
+}
+
+.sos-proc-delay-preview,
+.sos-proc-rate-preview,
+.sos-proc-startup-preview {
+  font-style: italic;
+  color: var(--sos-text-secondary);
+  opacity: 0.85;
+}
+
+.sos-proc-min-readout,
+.sos-proc-max-readout,
+.sos-proc-avg-readout {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  color: var(--sos-checkbox-accent, #ee9b3a);
 }
 
 .sos-loop-controls-footer.sos-compact {
@@ -1535,17 +1717,56 @@ form[id^="PlaylistConfig-"]
   border: 1px solid var(--sos-border-medium);
   border-radius: var(--sos-radius-sm);
   margin-bottom: var(--sos-space-md);
-  overflow: hidden;
+  overflow-y: auto;
+  overflow-x: hidden;
   background: linear-gradient(
     to bottom,
     rgba(0, 0, 0, 0.18),
     rgba(0, 0, 0, 0.08)
   );
   box-shadow: var(--sos-shadow-md);
+  scrollbar-width: thin;
+  scrollbar-color: rgba(238, 155, 58, 0.45) transparent;
 }
 
 .currently-playing .playlist-sounds.plain:last-child {
   margin-bottom: 0;
+}
+
+/* Cap panel height so an overloaded Currently Playing list cannot push the
+   playlists directory off-screen; inner <ol> scrolls while the header and
+   pin caret stay fixed. */
+.currently-playing.global-control.location-top,
+.currently-playing.global-control.location-bottom {
+  max-height: clamp(200px, 40vh, 480px);
+  display: flex;
+  flex-direction: column;
+}
+
+.currently-playing.global-control .playlist-sounds.plain {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.currently-playing .playlist-sounds.plain::-webkit-scrollbar {
+  width: 8px;
+}
+
+.currently-playing .playlist-sounds.plain::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.currently-playing .playlist-sounds.plain::-webkit-scrollbar-thumb {
+  background: rgba(238, 155, 58, 0.35);
+  border-radius: 4px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+
+.currently-playing .playlist-sounds.plain::-webkit-scrollbar-thumb:hover {
+  background: rgba(238, 155, 58, 0.6);
+  background-clip: padding-box;
+  border: 2px solid transparent;
 }
 
 /* Row 0: Playlist name (primary header) */
@@ -1561,7 +1782,7 @@ form[id^="PlaylistConfig-"]
   color: var(--sos-checkbox-accent);
 }
 
-.sos-playlist-header span {
+.sos-playlist-header .sos-playlist-title {
   flex: 1;
   font-weight: 600;
   font-size: var(--sos-text-base);
@@ -1697,20 +1918,217 @@ form[id^="PlaylistConfig-"]
 }
 
 
+/* Row 3 alt: Procedural one-shot readout (replaces transport-row when showProceduralCard) */
+.sos-procedural-row {
+  display: flex;
+  align-items: center;
+  gap: var(--sos-space-sm);
+  padding: var(--sos-space-sm) 6px;
+  background: linear-gradient(
+    to bottom,
+    rgba(238, 155, 58, 0.06),
+    rgba(238, 155, 58, 0.02)
+  );
+  border-top: 1px solid var(--sos-border-light);
+  border-bottom: 1px solid var(--sos-border-light);
+}
+
+.sos-procedural-icon {
+  color: var(--sos-checkbox-accent);
+  font-size: var(--sos-text-md);
+  flex: 0 0 auto;
+}
+
+.sos-procedural-label {
+  font-size: var(--sos-text-xs);
+  font-weight: 600;
+  color: var(--sos-checkbox-accent);
+  white-space: nowrap;
+  flex: 0 0 auto;
+}
+
+.sos-procedural-stop {
+  margin-left: auto;
+}
+
+.sos-timestamp-proxy {
+  display: none !important;
+}
+
+.sos-procedural-eta {
+  font-size: var(--sos-text-xs);
+  color: #d0b8a3;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  margin-left: var(--sos-space-sm);
+  opacity: 0.85;
+}
+
+/* Procedural play-chance badge (rendered when chance < 100%) */
+.sos-procedural-chance-badge {
+  font-size: 0.65rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  padding: 1px 5px;
+  border-radius: 8px;
+  background: rgba(238, 155, 58, 0.18);
+  color: var(--sos-checkbox-accent, #ee9b3a);
+  border: 1px solid rgba(238, 155, 58, 0.35);
+  font-variant-numeric: tabular-nums;
+  flex: 0 0 auto;
+}
+
+/* Soundscape polyphony meter (X/Y) — rendered once per playlist group */
+.sos-polyphony-meter {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 0.65rem;
+  font-weight: 600;
+  padding: 1px 5px;
+  border-radius: 8px;
+  background: rgba(80, 75, 70, 0.35);
+  color: #d0b8a3;
+  border: 1px solid rgba(208, 184, 163, 0.18);
+  font-variant-numeric: tabular-nums;
+  flex: 0 0 auto;
+}
+
+.sos-polyphony-meter i {
+  font-size: 0.7em;
+  opacity: 0.85;
+}
+
+/* Soundscape Stop All button — sits right of the polyphony meter in the
+   playlist header, GM-only, stops every bed and procedural in the playlist. */
+.sos-soundscape-stop-all {
+  flex: 0 0 auto;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  font-size: 0.7rem;
+  line-height: 1;
+  color: var(--sos-checkbox-accent);
+  border-radius: 4px;
+}
+
+.sos-soundscape-stop-all:not(:disabled):hover {
+  color: #fff;
+  text-shadow: 0 0 6px rgba(238, 155, 58, 0.7);
+}
+
+/* Procedural "Fire Now" GM testing button */
+.sos-procedural-fire-btn {
+  color: var(--sos-checkbox-accent, #ee9b3a);
+  flex: 0 0 auto;
+}
+
+.sos-procedural-fire-btn:not(:disabled):hover {
+  color: #fff;
+  text-shadow: 0 0 6px rgba(238, 155, 58, 0.7);
+}
+
+.sos-procedural-fire-btn:disabled,
+.sos-procedural-fire-btn.disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+/* ========================================================= */
+/*   Compact procedural one-shot row (Option B hover-reveal) */
+/* ========================================================= */
+
+.sos-proc-hover {
+  display: flex;
+  align-items: center;
+  gap: var(--sos-space-md);
+  padding: var(--sos-space-xs) 6px var(--sos-space-xs) 10px;
+  border-bottom: 1px solid var(--sos-border-light);
+  min-height: var(--sos-button-height-sm);
+  background: linear-gradient(
+    to bottom,
+    rgba(238, 155, 58, 0.03),
+    rgba(0, 0, 0, 0.04)
+  );
+}
+
+.sos-proc-hover:last-child {
+  border-bottom: none;
+}
+
+.sos-proc-hover .proc-name {
+  flex: 1;
+  font-size: var(--sos-text-xs);
+  color: #9f8475;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+  transition: color 0.15s ease;
+}
+
+.sos-proc-hover:hover .proc-name {
+  color: var(--sos-text-primary);
+}
+
+.sos-proc-hover .ph-right {
+  display: flex;
+  align-items: center;
+  gap: var(--sos-space-sm);
+  flex-shrink: 0;
+}
+
+.sos-proc-hover .ph-controls {
+  display: flex;
+  align-items: center;
+  gap: var(--sos-space-xs);
+  opacity: 0;
+  transform: translateX(6px);
+  transition: opacity 0.15s ease, transform 0.15s ease;
+  pointer-events: none;
+}
+
+.sos-proc-hover:hover .ph-controls {
+  opacity: 1;
+  transform: translateX(0);
+  pointer-events: auto;
+}
+
+.sos-proc-hover .sos-procedural-eta {
+  font-size: var(--sos-text-xs);
+  color: var(--sos-text-label);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+body.theme-light .sos-proc-hover {
+  background: linear-gradient(
+    to bottom,
+    rgba(238, 155, 58, 0.04),
+    rgba(0, 0, 0, 0.02)
+  );
+}
+
+body.theme-light .sos-proc-hover .proc-name {
+  color: #666;
+}
+
+body.theme-light .sos-proc-hover:hover .proc-name {
+  color: var(--sos-text-primary);
+}
+
 /* Row 3/4: Volume rows */
 .sos-volume-row {
   display: flex;
   align-items: center;
-  gap: var(--sos-space-sm);
-  padding: var(--sos-space-xs) 0;
+  gap: var(--sos-space-xs);
+  padding: var(--sos-space-xs) 2px;
   border-top: 1px solid var(--sos-border-light);
   background: linear-gradient(
     to bottom,
     rgba(0, 0, 0, 0.04),
     rgba(0, 0, 0, 0.08)
   );
-  padding-left: 6px;
-  padding-right: 6px;
 }
 
 /* Fixed-width label wrapper — keeps sliders aligned across all volume rows */
@@ -1718,8 +2136,8 @@ form[id^="PlaylistConfig-"]
   display: flex;
   align-items: center;
   gap: 3px;
-  flex: 0 0 92px;
-  min-width: 92px;
+  flex: 0 0 78px;
+  min-width: 78px;
 }
 
 .sos-vol-label {
@@ -1931,6 +2349,73 @@ body.theme-light .sos-loop-controls-row {
     rgba(0, 0, 0, 0.02),
     rgba(0, 0, 0, 0.04)
   );
+}
+
+/* Procedural one-shot readout in light theme */
+body.theme-light .sos-procedural-eta {
+  color: #666;
+}
+
+/* Procedural badges, meter, and Fire Now in light theme */
+body.theme-light .sos-procedural-chance-badge {
+  background: rgba(238, 155, 58, 0.12);
+  color: #b06b1a;
+  border-color: rgba(238, 155, 58, 0.45);
+}
+
+body.theme-light .sos-polyphony-meter {
+  background: rgba(120, 115, 110, 0.12);
+  color: #555;
+  border-color: rgba(120, 115, 110, 0.28);
+}
+
+body.theme-light .sos-procedural-fire-btn {
+  color: #b06b1a;
+}
+
+body.theme-light .sos-procedural-fire-btn:not(:disabled):hover {
+  color: #c9593f;
+  text-shadow: 0 0 4px rgba(238, 155, 58, 0.5);
+}
+
+/* Soundscape panel + per-sound procedural fieldsets in light theme */
+body.theme-light .sos-soundscape-panel {
+  background: linear-gradient(
+    90deg,
+    rgba(238, 155, 58, 0.08),
+    transparent 30px
+  );
+}
+
+body.theme-light .sos-soundscape-defaults,
+body.theme-light .sos-procedural-roster,
+body.theme-light .sos-procedural-fieldset {
+  background: rgba(0, 0, 0, 0.04);
+  border-color: rgba(0, 0, 0, 0.12);
+}
+
+body.theme-light .sos-soundscape-defaults legend,
+body.theme-light .sos-procedural-roster legend,
+body.theme-light .sos-procedural-fieldset legend {
+  color: #b06b1a;
+}
+
+body.theme-light .sos-roster-table thead th {
+  border-bottom-color: rgba(0, 0, 0, 0.12);
+}
+
+body.theme-light .sos-roster-table tbody td {
+  border-bottom-color: rgba(0, 0, 0, 0.08);
+}
+
+body.theme-light .sos-poly-hint {
+  color: #777;
+}
+
+body.theme-light .sos-proc-min-readout,
+body.theme-light .sos-proc-max-readout,
+body.theme-light .sos-proc-avg-readout {
+  color: #b06b1a;
 }
 
 /* Checkbox accent color & Clean up - neutralize Foundry's default styling in light mode */

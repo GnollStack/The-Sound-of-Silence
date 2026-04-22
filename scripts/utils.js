@@ -132,7 +132,7 @@ export function ensureAudioContext() {
 }
 
 /**
- * A robust, non-polling utility to get the Howler.js Sound object
+ * A robust, non-polling utility to get the Foundry Sound object
  * from a PlaylistSound, which may not be immediately available.
  * @param {PlaylistSound} ps The playlist sound.
  * @returns {Promise<Sound|null>} A promise that resolves with the Sound object or null if it times out.
@@ -486,48 +486,50 @@ export function safeCancelTimer(timer, context = "unknown") {
     }
 }
 
-export class SoundOfSilenceDiagnostics extends FormApplication {
+const { ApplicationV2, HandlebarsApplicationMixin } = foundry.applications.api;
+
+export class SoundOfSilenceDiagnostics extends HandlebarsApplicationMixin(ApplicationV2) {
     constructor(options = {}) {
         super(options);
         this.hookId = null;
     }
 
-    static get defaultOptions() {
-        return mergeObject(super.defaultOptions, {
-            id: "sos-diagnostics",
+    static DEFAULT_OPTIONS = {
+        id: "sos-diagnostics",
+        classes: ["sos-diagnostics-window"],
+        window: {
             title: "Sound of Silence - Diagnostics",
-            template: `modules/${MODULE_ID}/templates/diagnostics.hbs`,
+            resizable: true,
+        },
+        position: {
             width: 520,
             height: "auto",
-            resizable: true,
-            classes: ["sos-diagnostics-window"],
-        });
-    }
+        },
+    };
 
-    getData() {
+    static PARTS = {
+        content: {
+            template: `modules/${MODULE_ID}/templates/diagnostics.hbs`,
+        },
+    };
+
+    async _prepareContext(options) {
         return game.modules.get(MODULE_ID).api.inspectAll();
     }
 
-    // OVERRIDE THE RENDER METHOD TO REGISTER THE HOOK
-    async render(force = false, options = {}) {
-        await super.render(force, options);
+    _onRender(context, options) {
+        super._onRender(context, options);
 
-        // If the hook isn't already registered for this window, register it.
         if (this.hookId === null) {
             this.hookId = Hooks.on(`${MODULE_ID}.stateChanged`, () => {
-                // When the state changes, simply re-render the window,
-                // but ONLY if it's currently rendered and not in the process
-                // of closing. This is the corrected condition.
-                if (this._state === Application.RENDER_STATES.RENDERED) {
-                    this.render(false);
+                if (this.rendered) {
+                    this.render({ force: false });
                 }
             });
             debug('[Diagnostics] Registered stateChanged hook.');
         }
-        return this;
     }
 
-    // OVERRIDE THE CLOSE METHOD TO UNREGISTER THE HOOK
     async close(options = {}) {
         if (this.hookId !== null) {
             Hooks.off(`${MODULE_ID}.stateChanged`, this.hookId);
@@ -535,9 +537,5 @@ export class SoundOfSilenceDiagnostics extends FormApplication {
             debug('[Diagnostics] Unregistered stateChanged hook.');
         }
         return super.close(options);
-    }
-
-    async _updateObject(event, formData) {
-        // This window is read-only, so this does nothing.
     }
 }

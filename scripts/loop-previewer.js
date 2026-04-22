@@ -43,6 +43,7 @@ export class LoopPreviewer {
         this.$playPauseBtn = this.$editor.find(".loop-play-pause");
         this.$playIcon = this.$playPauseBtn.find("i");
         this.$stopBtn = this.$editor.find(".loop-stop");
+        this.$volumeSlider = this.$editor.find(".sos-loop-preview-volume");
         this.$progress = this.$container.find(".sos-loop-timeline-progress");
         this.$timer = this.$editor.find(".sos-loop-timer");
         this.$warningOverlay = this.$container.find(".sos-loop-timeline-warning-overlay");
@@ -243,8 +244,23 @@ export class LoopPreviewer {
     _attachGlobalListeners() {
         this.$playPauseBtn.on("click", this._onPlayPause.bind(this));
         this.$stopBtn.on("click", () => this.stopAll());
+        this.$volumeSlider.on("input change", () => this._applyPreviewVolume());
         this.$container.on("click", this._onTimelineClick.bind(this));
         this.$container.on("mousedown", ".sos-loop-timeline-handle", this._onHandleMouseDown.bind(this));
+    }
+
+    _getPreviewVolume() {
+        const rawValue = this.$volumeSlider?.[0]?.value ?? this.$volumeSlider?.attr?.("value");
+        const value = Number(rawValue);
+        if (Number.isFinite(value)) return Math.max(0, Math.min(1, value));
+        const documentVolume = Number(this.data?.document?.volume);
+        return Number.isFinite(documentVolume) ? Math.max(0, Math.min(1, documentVolume)) : 1;
+    }
+
+    _applyPreviewVolume() {
+        const volume = this._getPreviewVolume();
+        if (this.soundA) this.soundA.volume = volume;
+        if (this.soundB) this.soundB.volume = volume;
     }
 
     // Make sure _attachSegmentListeners re-render on crossfade input change
@@ -499,7 +515,7 @@ export class LoopPreviewer {
         this.soundA = new foundry.audio.Sound(this.data.document.path);
         await this.soundA.load();
         this.soundA.addEventListener("end", this._onSoundEnd.bind(this), { once: true });
-        this.soundA.play({ offset: time });
+        this.soundA.play({ offset: time, volume: this._getPreviewVolume() });
         this.isA_Active = true;
         this.isPlaying = true;
         this.$playIcon.removeClass("fa-play").addClass("fa-pause");
@@ -547,9 +563,10 @@ export class LoopPreviewer {
             }
 
             // Use _fromLoop to bypass playlist fade effects
+            const previewVolume = this._getPreviewVolume();
             await targetSound.play({ offset: startSec, volume: 0, _fromLoop: true });
 
-            equalPowerCrossfade(sourceSound, targetSound, safeCrossfadeMs);
+            equalPowerCrossfade(sourceSound, targetSound, safeCrossfadeMs, { targetVolIn: previewVolume });
 
             this.timeoutIds.push(setTimeout(() => {
                 try { sourceSound.stop(); } catch (_) { }
@@ -569,7 +586,7 @@ export class LoopPreviewer {
         this.isA_Active = true;
 
         // Start playing
-        await this.soundA.play({ offset: startSec, _fromLoop: true });
+        await this.soundA.play({ offset: startSec, volume: this._getPreviewVolume(), _fromLoop: true });
         this.isPlaying = true;
         this._tick();
 
@@ -624,7 +641,7 @@ export class LoopPreviewer {
             await this.soundA.load();
             this.isA_Active = true;
 
-            await this.soundA.play({ offset: playFromSec, _fromLoop: true });
+            await this.soundA.play({ offset: playFromSec, volume: this._getPreviewVolume(), _fromLoop: true });
             this.isPlaying = true;
             this._tick();
 
@@ -653,10 +670,11 @@ export class LoopPreviewer {
                 }
 
                 // Start target sound at loop start point
+                const previewVolume = this._getPreviewVolume();
                 await targetSound.play({ offset: startSec, volume: 0, _fromLoop: true });
 
                 // Perform crossfade
-                equalPowerCrossfade(sourceSound, targetSound, crossfadeMs);
+                equalPowerCrossfade(sourceSound, targetSound, crossfadeMs, { targetVolIn: previewVolume });
 
                 // Stop source sound after crossfade completes
                 this.timeoutIds.push(setTimeout(() => {

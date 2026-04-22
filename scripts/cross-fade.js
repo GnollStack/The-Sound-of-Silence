@@ -73,7 +73,7 @@ export async function performCrossfade(playlist, soundToFade) {
 
   try {
     // Update the document to reflect the new playing state without triggering stopSound
-    await soundToPlay.update({ playing: true, pausedTime: 0 }, { render: false });
+    await soundToPlay.update({ playing: true, pausedTime: null }, { render: false });
 
     // Directly load and play the audio
     const soundIn = await waitForMedia(soundToPlay);
@@ -151,7 +151,7 @@ export async function performCrossfade(playlist, soundToFade) {
     // 5. Immediately update the outgoing sound's document state for UI purposes.
     //    The audio continues playing/fading, but the UI shows the new track as current.
     //    Omit render: false so Foundry re-renders the playlist UI on ALL clients.
-    await soundToFade.update({ playing: false, pausedTime: 0 });
+    await soundToFade.update({ playing: false, pausedTime: null });
 
     crossfadeSuccessful = true;
 

@@ -72,12 +72,17 @@ Hooks.on("renderPlaylistDirectory", async (app, htmlRaw) => {
         )
             continue; // Use continue instead of return in for...of loop
 
-        const { silence: silenceOn, crossfade: xfadeOn } = mode; // Already computed
+        const uiState = getPlaylistUiState(playlist, mode);
+        const {
+            silenceEnabled: silenceOn,
+            crossfade: xfadeOn,
+            disableStandardToggles,
+        } = uiState;
         const owner = playlist.isOwner;
 
-        const makeBtn = ({ cls, tip, icon }) => `
+        const makeBtn = ({ cls, tip, icon, disabled = false }) => `
       <button type="button" class="inline-control sound-control ${cls} ${!owner ? "disabled" : ""
-            }"
+            } ${disabled ? "disabled" : ""}"
               data-playlist-id="${pid}" data-tooltip="${tip}">
         <i class="fa-solid ${icon}"></i>
       </button>`;
@@ -87,6 +92,7 @@ Hooks.on("renderPlaylistDirectory", async (app, htmlRaw) => {
                 cls: `xfade-toggle ${xfadeOn ? "active" : ""}`,
                 tip: xfadeOn ? "Disable Auto-Crossfade" : "Enable Auto-Crossfade",
                 icon: "fa-right-left",
+                disabled: disableStandardToggles,
             })
         );
         $controls.prepend(
@@ -96,30 +102,72 @@ Hooks.on("renderPlaylistDirectory", async (app, htmlRaw) => {
                     ? "Disable Sound of Silence"
                     : "Enable Sound of Silence",
                 icon: "fa-hourglass-half",
+                disabled: disableStandardToggles,
             })
         );
+
+        syncNativePlaylistTransport($li, playlist, uiState);
     }
 
     // --- Playlist-level Button Click Handlers (Delegated) ---
-    async function updateFlags(pl, { silenceEnabled, crossfade }) {
+    async function updateFlags(pl, { silenceEnabled, crossfade, soundscapeMode }) {
         await pl.update(
-            { [`flags.${MODULE_ID}`]: { silenceEnabled, crossfade } },
+            { [`flags.${MODULE_ID}`]: { silenceEnabled, crossfade, soundscapeMode } },
             { render: false }
         );
     }
 
-    function refreshClasses($li, { silenceEnabled, crossfade, playlistId }) {
+    function getPlaylistUiState(playlist, mode = null) {
+        const playbackMode = mode ?? Flags.getPlaybackMode(playlist);
+        return {
+            silenceEnabled: playbackMode.silence,
+            crossfade: playbackMode.crossfade,
+            soundscapeMode: playbackMode.soundscape,
+            playlistId: playlist.id,
+            disableStandardToggles: playbackMode.soundscape || !playlist.isOwner,
+        };
+    }
+
+    function refreshClasses($li, { silenceEnabled, crossfade, playlistId, disableStandardToggles = false }) {
         // Update buttons within the clicked context (sidebar playlist <li>)
         $li.find("button.sos-toggle").toggleClass("active", !!silenceEnabled);
         $li.find("button.xfade-toggle").toggleClass("active", !!crossfade);
+        $li.find("button.sos-toggle, button.xfade-toggle").toggleClass("disabled", !!disableStandardToggles);
         // Sync ALL toggle buttons for this playlist across the entire sidebar
         // (covers both directory listing and Currently Playing section)
         if (playlistId) {
             $html.find(`button.sos-toggle[data-playlist-id="${playlistId}"]`)
-                .toggleClass("active", !!silenceEnabled);
+                .toggleClass("active", !!silenceEnabled)
+                .toggleClass("disabled", !!disableStandardToggles);
             $html.find(`button.xfade-toggle[data-playlist-id="${playlistId}"]`)
-                .toggleClass("active", !!crossfade);
+                .toggleClass("active", !!crossfade)
+                .toggleClass("disabled", !!disableStandardToggles);
         }
+    }
+
+    function syncNativePlaylistTransport($li, playlist, uiState) {
+        const soundscapeHeaderTransport =
+            playlist.isOwner &&
+            playlist.mode === CONST.PLAYLIST_MODES.DISABLED &&
+            uiState.soundscapeMode;
+        if (!soundscapeHeaderTransport) return;
+
+        const enableButton = (selector) => {
+            const $btn = $li.find(selector);
+            if (!$btn.length) return;
+            $btn.prop("disabled", false).removeAttr("disabled").removeClass("disabled");
+        };
+
+        const disableButton = (selector) => {
+            const $btn = $li.find(selector);
+            if (!$btn.length) return;
+            $btn.prop("disabled", true).attr("disabled", "disabled");
+        };
+
+        enableButton('button[data-action="playlistPlay"]');
+        enableButton('button[data-action="playlistStop"]');
+        disableButton('button[data-action="playlistBackward"]');
+        disableButton('button[data-action="playlistForward"]');
     }
 
     $html
@@ -131,10 +179,9 @@ Hooks.on("renderPlaylistDirectory", async (app, htmlRaw) => {
             const $li = $btn.closest("li.directory-item.playlist");
             const pl = game.playlists.get($btn.data("playlistId"));
             if (!pl) return;
-            const pid = $btn.data("playlistId");
             const newSilence = !pl.getFlag(MODULE_ID, "silenceEnabled");
-            await updateFlags(pl, { silenceEnabled: newSilence, crossfade: false });
-            refreshClasses($li, { silenceEnabled: newSilence, crossfade: false, playlistId: pid });
+            await updateFlags(pl, { silenceEnabled: newSilence, crossfade: false, soundscapeMode: false });
+            refreshClasses($li, getPlaylistUiState(pl));
         });
 
     $html
@@ -146,10 +193,9 @@ Hooks.on("renderPlaylistDirectory", async (app, htmlRaw) => {
             const $li = $btn.closest("li.directory-item.playlist");
             const pl = game.playlists.get($btn.data("playlistId"));
             if (!pl) return;
-            const pid = $btn.data("playlistId");
             const newXfade = !pl.getFlag(MODULE_ID, "crossfade");
-            await updateFlags(pl, { silenceEnabled: false, crossfade: newXfade });
-            refreshClasses($li, { silenceEnabled: false, crossfade: newXfade, playlistId: pid });
+            await updateFlags(pl, { silenceEnabled: false, crossfade: newXfade, soundscapeMode: false });
+            refreshClasses($li, getPlaylistUiState(pl));
         });
 
     // --- Add Per-Track Loop Icons/Buttons ---

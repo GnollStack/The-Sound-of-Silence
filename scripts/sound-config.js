@@ -26,6 +26,34 @@ const DEFAULTS = {
   loopCount: 0,
 };
 
+const PROCEDURAL_TIMING_OPTIONS = {
+  uniform: "Uniform Random",
+  fixed: "Fixed Cadence",
+  natural: "Natural (Center-Weighted)",
+};
+
+const PROCEDURAL_INITIAL_FIRE_OPTIONS = {
+  normal: "Use Cadence",
+  staggered: "Stagger First Fire",
+  immediate: "Immediate First Fire",
+};
+
+function sanitizeProceduralTimingMode(value) {
+  return Object.prototype.hasOwnProperty.call(PROCEDURAL_TIMING_OPTIONS, value) ? value : "uniform";
+}
+
+function sanitizeProceduralInitialFireMode(value) {
+  return Object.prototype.hasOwnProperty.call(PROCEDURAL_INITIAL_FIRE_OPTIONS, value) ? value : "normal";
+}
+
+function getAverageProceduralGapSeconds({ minDelay, maxDelay, timingMode }) {
+  return timingMode === "fixed" ? minDelay : (minDelay + maxDelay) / 2;
+}
+
+function formatProceduralNumber(value, digits = 1) {
+  return Number.isInteger(value) ? `${value}` : value.toFixed(digits);
+}
+
 
 
 // =========================================================================
@@ -100,13 +128,45 @@ export function registerSoundConfigWrappers() {
         debug("[SoS Debug] 2b. Other flags:", foundry.utils.deepClone(otherFlags));
 
         // 2. Build clean, validated flags
+        const isProcedural = !!otherFlags.isProcedural;
+
+        // Swap min/max if inverted; clamp to schema range.
+        let minDelay = Number(otherFlags.minDelay);
+        let maxDelay = Number(otherFlags.maxDelay);
+        if (!Number.isFinite(minDelay)) minDelay = 15;
+        if (!Number.isFinite(maxDelay)) maxDelay = 60;
+        if (maxDelay < minDelay) [minDelay, maxDelay] = [maxDelay, minDelay];
+        minDelay = Math.max(0, Math.min(3600, minDelay));
+        maxDelay = Math.max(0, Math.min(3600, maxDelay));
+
+        let volumeVariance = Number(otherFlags.volumeVariance);
+        if (!Number.isFinite(volumeVariance)) volumeVariance = 0;
+        volumeVariance = Math.max(0, Math.min(1, volumeVariance));
+
+        let playChance = Number(otherFlags.playChance);
+        if (!Number.isFinite(playChance)) playChance = 100;
+        playChance = Math.max(0, Math.min(100, playChance));
+
+        const timingMode = sanitizeProceduralTimingMode(otherFlags.timingMode);
+        const initialFireMode = sanitizeProceduralInitialFireMode(otherFlags.initialFireMode);
+
         const cleanRootFlags = {
           allowVolumeOverride: !!otherFlags.allowVolumeOverride,
+          isProcedural,
+          minDelay,
+          maxDelay,
+          timingMode,
+          initialFireMode,
+          volumeVariance,
+          randomPan: !!otherFlags.randomPan,
+          playChance,
         };
 
+        // Procedural and internal-loop are mutually exclusive per track.
+        const loopEnabled = !!loopData.enabled && !isProcedural;
         const cleanLoopFlags = {
-          enabled: !!loopData.enabled,
-          active: !!loopData.active && !!loopData.enabled,
+          enabled: loopEnabled,
+          active: !!loopData.active && loopEnabled,
           startFromBeginning: !!loopData.startFromBeginning,
         };
 
@@ -292,7 +352,22 @@ Hooks.on("renderPlaylistSoundConfig", (app, htmlRaw, data) => {
   const html = htmlRaw instanceof HTMLElement ? $(htmlRaw) : htmlRaw;
   const loop = data.loopWithin ?? Flags.getLoopConfig(app.document);
   const allowVolumeOverride = Flags.getSoundFlag(app.document, "allowVolumeOverride");
+  const documentVolume = Number(app.document.volume);
+  const previewVolume = Number.isFinite(documentVolume)
+    ? Math.max(0, Math.min(1, documentVolume))
+    : 1;
   const field = (k) => `flags.${MODULE_ID}.${LOOP_KEY}.${k}`;
+  const rootField = (k) => `flags.${MODULE_ID}.${k}`;
+
+  // Procedural / soundscape per-sound flags.
+  const isProcedural = Flags.getSoundFlag(app.document, "isProcedural");
+  const minDelay = Flags.resolveProceduralField(app.document, "minDelay");
+  const maxDelay = Flags.resolveProceduralField(app.document, "maxDelay");
+  const timingMode = Flags.resolveProceduralField(app.document, "timingMode");
+  const initialFireMode = Flags.resolveProceduralField(app.document, "initialFireMode");
+  const volumeVariance = Flags.resolveProceduralField(app.document, "volumeVariance");
+  const randomPan = Flags.resolveProceduralField(app.document, "randomPan");
+  const playChance = Flags.resolveProceduralField(app.document, "playChance");
 
   // --- 1. Create UI Blocks ---
 
@@ -304,6 +379,83 @@ Hooks.on("renderPlaylistSoundConfig", (app, htmlRaw, data) => {
         <span>Override Playlist Volume</span>
       </label>
       <p class="notes sos-compact">If checked, this sound will ignore the playlist's "Volume Normalization" setting.</p>
+    </div>
+  `);
+
+  // Procedural one-shot block (Soundscape Mode opt-in per sound).
+  const avgSec = Math.round(((Number(minDelay) || 0) + (Number(maxDelay) || 0)) / 2);
+  const $proceduralBlock = $(/* html */`
+    <div class="sos-procedural-config">
+      <div class="form-group sos-compact">
+        <label class="checkbox sos-feature-toggle">
+          <input type="checkbox" name="${rootField("isProcedural")}" ${isProcedural ? "checked" : ""}>
+          <span class="sos-feature-label">Procedural One-Shot</span>
+        </label>
+        <p class="notes sos-compact">Fires on client-local timers when this playlist is in Soundscape Mode. Delays are measured after each fire ends. Mutually exclusive with Internal Loop.</p>
+      </div>
+      <div class="sos-procedural-body sos-subsection" style="display: ${isProcedural ? "block" : "none"};">
+
+        <fieldset class="sos-procedural-fieldset">
+          <legend>Timing</legend>
+          <div class="form-group sos-compact sos-two-column">
+            <div class="sos-column">
+              <label>Cadence Mode</label>
+              <select class="sos-proc-timing-mode" name="${rootField("timingMode")}">
+                ${Object.entries(PROCEDURAL_TIMING_OPTIONS).map(([value, label]) =>
+                  `<option value="${value}" ${timingMode === value ? "selected" : ""}>${label}</option>`
+                ).join("")}
+              </select>
+              <p class="notes sos-compact">How the gap is picked after each fire ends.</p>
+            </div>
+            <div class="sos-column">
+              <label>First Fire</label>
+              <select class="sos-proc-initial-mode" name="${rootField("initialFireMode")}">
+                ${Object.entries(PROCEDURAL_INITIAL_FIRE_OPTIONS).map(([value, label]) =>
+                  `<option value="${value}" ${initialFireMode === value ? "selected" : ""}>${label}</option>`
+                ).join("")}
+              </select>
+              <p class="notes sos-compact">Only affects the first fire after activation; later fires use the cadence mode above.</p>
+            </div>
+          </div>
+          <div class="form-group sos-compact sos-two-column">
+            <div class="sos-column">
+              <label>Min Gap <span class="sos-label-units">(s)</span></label>
+              <input type="number" class="sos-proc-min" name="${rootField("minDelay")}" value="${minDelay}" step="1" min="0" max="3600">
+            </div>
+            <div class="sos-column">
+              <label>Max Gap <span class="sos-label-units">(s)</span></label>
+              <input type="number" class="sos-proc-max" name="${rootField("maxDelay")}" value="${maxDelay}" step="1" min="0" max="3600">
+            </div>
+          </div>
+          <p class="notes sos-compact sos-proc-delay-preview">~<span class="sos-proc-min-readout">${minDelay}</span>–<span class="sos-proc-max-readout">${maxDelay}</span>s between fires (avg ~<span class="sos-proc-avg-readout">${avgSec}</span>s).</p>
+          <p class="notes sos-compact sos-proc-rate-preview"></p>
+          <p class="notes sos-compact sos-proc-startup-preview"></p>
+        </fieldset>
+
+        <fieldset class="sos-procedural-fieldset">
+          <legend>Variation</legend>
+          <div class="form-group sos-compact sos-two-column">
+            <div class="sos-column">
+              <label>Volume Variance <span class="sos-label-units">(0–1)</span></label>
+              <input type="number" class="sos-proc-variance" name="${rootField("volumeVariance")}" value="${volumeVariance}" step="0.05" min="0" max="1">
+              <p class="notes sos-compact">Fraction of target volume to jitter per fire. 0 = no variation.</p>
+            </div>
+            <div class="sos-column">
+              <label>Play Chance <span class="sos-label-units">(%)</span></label>
+              <input type="number" class="sos-proc-chance" name="${rootField("playChance")}" value="${playChance}" step="1" min="0" max="100">
+              <p class="notes sos-compact">Probability each fire actually plays; skipped fires re-arm.</p>
+            </div>
+          </div>
+          <div class="form-group sos-compact">
+            <label class="checkbox sos-compact-checkbox">
+              <input type="checkbox" name="${rootField("randomPan")}" ${randomPan ? "checked" : ""}>
+              <span>Random Stereo Pan</span>
+            </label>
+            <p class="notes sos-compact">Places each fire at a random point in the stereo field.</p>
+          </div>
+        </fieldset>
+
+      </div>
     </div>
   `);
 
@@ -343,6 +495,13 @@ Hooks.on("renderPlaylistSoundConfig", (app, htmlRaw, data) => {
               <button type="button" class="loop-stop sos-compact" data-tooltip="Stop Preview">
                 <i class="fas fa-stop"></i>
               </button>
+              <div class="sos-loop-preview-volume-wrap" data-tooltip="Preview Volume">
+                <i class="fa-solid fa-volume-low" inert></i>
+                <range-picker class="sos-loop-preview-volume"
+                              value="${previewVolume}"
+                              min="0" max="1" step="0.05">
+                </range-picker>
+              </div>
             </div>
             <div class="sos-loop-timer">00:00 / 00:00</div>
           </div>
@@ -385,10 +544,13 @@ Hooks.on("renderPlaylistSoundConfig", (app, htmlRaw, data) => {
     $repeatGroup.before($overrideBlock);
   }
 
-  // Inject the main module block *after* the "Fade Duration" group.
+  // Inject the procedural block *after* the "Fade Duration" group, before the internal loop block.
   if ($fadeGroup.length) {
-    $fadeGroup.after($mainBlock);
+    $fadeGroup.after($proceduralBlock);
   }
+
+  // Inject the main module block *after* the procedural block.
+  $proceduralBlock.after($mainBlock);
 
   // --- 3. Existing Loop Logic (Unchanged) ---
   const $segmentsContainer = $mainBlock.find('.sos-loop-segments-container');
@@ -465,7 +627,113 @@ Hooks.on("renderPlaylistSoundConfig", (app, htmlRaw, data) => {
     }
   });
 
+  // Procedural <-> Internal Loop mutual exclusivity.
+  const $proceduralCheckbox = $proceduralBlock.find(`input[name="${rootField("isProcedural")}"]`);
+  const $loopEnabledCheckbox = $mainBlock.find(`input[name="${field("enabled")}"]`);
+  const $proceduralBody = $proceduralBlock.find(".sos-procedural-body");
+
+  function syncProceduralExclusivity() {
+    const procOn = $proceduralCheckbox.is(":checked");
+    $proceduralBody.toggle(procOn);
+    // Hide the whole internal-loop block when procedural is on.
+    $mainBlock.toggle(!procOn);
+    if (procOn && $loopEnabledCheckbox.is(":checked")) {
+      $loopEnabledCheckbox.prop("checked", false).trigger("change");
+    }
+  }
+  syncProceduralExclusivity();
+  $proceduralCheckbox.on("change", syncProceduralExclusivity);
+
+  // Clamp min/max delay inputs when edited, keep the preview readout live.
+  const $minDelay = $proceduralBlock.find(`input[name="${rootField("minDelay")}"]`);
+  const $maxDelay = $proceduralBlock.find(`input[name="${rootField("maxDelay")}"]`);
+  const $timingMode = $proceduralBlock.find(`select[name="${rootField("timingMode")}"]`);
+  const $initialFireMode = $proceduralBlock.find(`select[name="${rootField("initialFireMode")}"]`);
+  const $playChanceInput = $proceduralBlock.find(`input[name="${rootField("playChance")}"]`);
+  const $minReadout = $proceduralBlock.find(".sos-proc-min-readout");
+  const $maxReadout = $proceduralBlock.find(".sos-proc-max-readout");
+  const $avgReadout = $proceduralBlock.find(".sos-proc-avg-readout");
+  const $ratePreview = $proceduralBlock.find(".sos-proc-rate-preview");
+  const $startupPreview = $proceduralBlock.find(".sos-proc-startup-preview");
+  const clipDurationSec = Number(app.document.sound?.duration);
+  const hasClipDuration = Number.isFinite(clipDurationSec) && clipDurationSec > 0;
+
+  function refreshProcPreview() {
+    const min = Number($minDelay.val()) || 0;
+    const max = Number($maxDelay.val()) || 0;
+    const chance = Math.max(0, Math.min(100, Number($playChanceInput.val()) || 0));
+    const timing = sanitizeProceduralTimingMode($timingMode.val());
+    const initial = sanitizeProceduralInitialFireMode($initialFireMode.val());
+    const avgGapSec = getAverageProceduralGapSeconds({
+      minDelay: min,
+      maxDelay: max,
+      timingMode: timing,
+    });
+    const avgCycleSec = avgGapSec + ((chance / 100) * (hasClipDuration ? clipDurationSec : 0));
+    const attemptsPerMinute = avgCycleSec > 0 ? 60 / avgCycleSec : 0;
+    const playsPerMinute = attemptsPerMinute * (chance / 100);
+
+    $minReadout.text(formatProceduralNumber(min, 0));
+    $maxReadout.text(formatProceduralNumber(max, 0));
+    $avgReadout.text(formatProceduralNumber(avgGapSec));
+
+    const $delayPreview = $proceduralBlock.find(".sos-proc-delay-preview");
+    if (timing === "fixed") {
+      $delayPreview.html(
+        `Fixed cadence after each fire ends: ` +
+        `<span class="sos-proc-min-readout">${formatProceduralNumber(min, 0)}</span>s.`
+      );
+    } else {
+      const label = timing === "natural" ? "Natural gap after each fire ends" : "Uniform random gap after each fire ends";
+      $delayPreview.html(
+        `${label}: ` +
+        `<span class="sos-proc-min-readout">${formatProceduralNumber(min, 0)}</span>&ndash;` +
+        `<span class="sos-proc-max-readout">${formatProceduralNumber(max, 0)}</span>s ` +
+        `(avg ~<span class="sos-proc-avg-readout">${formatProceduralNumber(avgGapSec)}</span>s).`
+      );
+    }
+
+    const rateLine = chance <= 0
+      ? `Approx. 0 plays/minute at 0% chance.`
+      : `Approx. ${formatProceduralNumber(playsPerMinute)} plays/minute ` +
+        `at ${formatProceduralNumber(chance, 0)}% chance ` +
+        `(about ${formatProceduralNumber(attemptsPerMinute)} fire attempts/minute).`;
+    const durationNote = hasClipDuration
+      ? ` Includes the loaded ~${formatProceduralNumber(clipDurationSec)}s clip duration in the estimate.`
+      : ` Gap-only estimate until the clip duration is loaded.`;
+    $ratePreview.text(`${rateLine}${durationNote} Ignores polyphony limits and dynamic chance scaling.`);
+
+    const startupLine = initial === "staggered"
+      ? `First fire is staggered across active procedurals to reduce startup clustering.`
+      : initial === "immediate"
+        ? `First fire can happen immediately on activation.`
+        : `First fire uses the same cadence rules as later fires.`;
+    $startupPreview.text(startupLine);
+  }
+
+  $minDelay.on("input", refreshProcPreview);
+  $maxDelay.on("input", refreshProcPreview);
+  $timingMode.on("change", refreshProcPreview);
+  $initialFireMode.on("change", refreshProcPreview);
+  $playChanceInput.on("input", refreshProcPreview);
+
+  $minDelay.on("change", () => {
+    if (Number($minDelay.val()) > Number($maxDelay.val())) {
+      $maxDelay.val($minDelay.val());
+      ui.notifications?.info("Min delay exceeded max — max raised to match.");
+    }
+    refreshProcPreview();
+  });
+  $maxDelay.on("change", () => {
+    if (Number($maxDelay.val()) < Number($minDelay.val())) {
+      $minDelay.val($maxDelay.val());
+      ui.notifications?.info("Max delay below min — min lowered to match.");
+    }
+    refreshProcPreview();
+  });
+
   refreshUI();
+  refreshProcPreview();
 
   // --- 4. FINAL Volume Normalization UI Logic ---
   const $volumeGroup = html.find('label:contains("Sound Volume")').parent();

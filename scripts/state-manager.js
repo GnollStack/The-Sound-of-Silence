@@ -76,6 +76,15 @@ class StateManager {
         this._activeLoopers = new WeakMap();
 
         // ============================================
+        // Soundscape Feature State
+        // ============================================
+        /**
+         * Tracks active SoundscapeEngine instances (one per playing soundscape playlist).
+         * @type {WeakMap<Playlist, SoundscapeEngine>}
+         */
+        this._soundscapeEngines = new WeakMap();
+
+        // ============================================
         // Performance Metrics
         // ============================================
         /**
@@ -482,6 +491,52 @@ class StateManager {
     }
 
     // ============================================
+    // Soundscape State Methods
+    // ============================================
+
+    /**
+     * Get the active SoundscapeEngine for a playlist.
+     * @param {Playlist} playlist
+     * @returns {SoundscapeEngine|undefined}
+     */
+    getSoundscapeEngine(playlist) {
+        return this._soundscapeEngines.get(playlist);
+    }
+
+    /**
+     * Store a SoundscapeEngine for a playlist.
+     * @param {Playlist} playlist
+     * @param {SoundscapeEngine} engine
+     */
+    setSoundscapeEngine(playlist, engine) {
+        this._soundscapeEngines.set(playlist, engine);
+        debug(`[State] Set soundscape engine for "${playlist.name}"`);
+        this._emitStateChange();
+    }
+
+    /**
+     * Clear the SoundscapeEngine for a playlist.
+     * @param {Playlist} playlist
+     */
+    clearSoundscapeEngine(playlist) {
+        const had = this._soundscapeEngines.has(playlist);
+        this._soundscapeEngines.delete(playlist);
+        if (had) {
+            debug(`[State] Cleared soundscape engine for "${playlist.name}"`);
+            this._emitStateChange();
+        }
+    }
+
+    /**
+     * Check whether a playlist has an active soundscape engine.
+     * @param {Playlist} playlist
+     * @returns {boolean}
+     */
+    hasSoundscapeEngine(playlist) {
+        return this._soundscapeEngines.has(playlist);
+    }
+
+    // ============================================
     // Coordinated Cleanup
     // ============================================
 
@@ -494,6 +549,7 @@ class StateManager {
      * @param {boolean} [options.cleanSilence=true] - Cancel silent gaps
      * @param {boolean} [options.cleanCrossfade=true] - Cancel pending crossfades
      * @param {boolean} [options.cleanLoopers=true] - Destroy loop instances
+     * @param {boolean} [options.cleanSoundscape=true] - Destroy soundscape engine
      * @param {PlaylistSound} [options.onlySound=null] - If provided, only clean this sound's looper
      * @param {boolean} [options.allowFadeOut=false] - Allow sounds to fade out naturally instead of stopping immediately
      * @returns {Promise<void>}
@@ -503,6 +559,7 @@ class StateManager {
             cleanSilence = true,
             cleanCrossfade = true,
             cleanLoopers = true,
+            cleanSoundscape = true,
             onlySound = null,
             allowFadeOut = false
         } = options;
@@ -587,6 +644,19 @@ class StateManager {
                 }
             } catch (err) {
                 warn(`[State] Error during looper cleanup for "${playlist?.name}":`, err);
+            }
+        }
+
+        // 4. Clean Soundscape engine
+        if (cleanSoundscape) {
+            try {
+                const engine = this.getSoundscapeEngine(playlist);
+                if (engine) {
+                    engine.destroy({ stopBeds: !allowFadeOut });
+                    this.clearSoundscapeEngine(playlist);
+                }
+            } catch (err) {
+                warn(`[State] Error during soundscape cleanup for "${playlist?.name}":`, err);
             }
         }
 
@@ -746,9 +816,17 @@ class StateManager {
     }
 
     /**
- * Emits a generic hook to notify listeners that the module's state has changed.
- * @private
- */
+     * Public bridge for notifying UI listeners about runtime state updates.
+     * @param {boolean} [silent=false]
+     */
+    notifyStateChanged(silent = false) {
+        this._emitStateChange(silent);
+    }
+
+    /**
+     * Emits a generic hook to notify listeners that the module's state has changed.
+     * @private
+     */
     _emitStateChange(silent = false) {
         // Silent emissions are for internal audio-engine bookkeeping (crossfade timers,
         // play waiters) that have no visual representation in the UI.
@@ -757,9 +835,18 @@ class StateManager {
         // Uses AudioTimeout instead of setTimeout for consistency with background-tab behavior.
         if (this._emitPending) return;
         this._emitPending = true;
-        foundry.audio.AudioTimeout.wait(150).then(() => {
+        const flush = () => {
             this._emitPending = false;
             Hooks.callAll(`${MODULE_ID}.stateChanged`);
+        };
+
+        if (game.audio?.locked || !game.audio?.music) {
+            setTimeout(flush, 150);
+            return;
+        }
+
+        foundry.audio.AudioTimeout.wait(150).then(flush).catch(() => {
+            this._emitPending = false;
         });
     }
 

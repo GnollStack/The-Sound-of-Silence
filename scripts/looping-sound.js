@@ -41,6 +41,18 @@ export class LoopingSound {
     this.wasRestarted = false; // track if we used stop/play
   }
 
+  _setActiveLoopSegment(segment) {
+    if (this.activeLoopSegment === segment) return;
+    this.activeLoopSegment = segment;
+    State.notifyStateChanged();
+  }
+
+  _setCrossfading(isCrossfading) {
+    if (this.isCrossfading === isCrossfading) return;
+    this.isCrossfading = isCrossfading;
+    State.notifyStateChanged();
+  }
+
   get activeSound() {
     return this.isA_Active ? this.soundA : this.soundB;
   }
@@ -314,7 +326,9 @@ export class LoopingSound {
       this._scheduleFinalFadeOut();
 
       // Mark as destroyed so no further operations occur
+      this._setActiveLoopSegment(null);
       this.isDestroyed = true;
+      State.notifyStateChanged();
 
       // Clear all sound references - the active sound will continue playing via ps.sound
       this.soundA = null;
@@ -332,7 +346,7 @@ export class LoopingSound {
     if (this.isDestroyed || !this.ps?.playing) return;
 
     debug(`[LoopingSound] Triggered loop for segment starting at ${segment.start}.`);
-    this.activeLoopSegment = segment;
+    this._setActiveLoopSegment(segment);
     this.loopsCompleted = 0;
 
     this.loopingDisabled = false;
@@ -519,7 +533,7 @@ export class LoopingSound {
       return false;
     }
 
-    this.isCrossfading = true;
+    this._setCrossfading(true);
     targetSound._manager = this.ps;
 
     try {
@@ -530,7 +544,7 @@ export class LoopingSound {
       } else {
         error("[LoopingSound] Failed to start target sound for crossfade:", err);
       }
-      this.isCrossfading = false;
+      this._setCrossfading(false);
       return false;
     }
 
@@ -538,7 +552,7 @@ export class LoopingSound {
     if (this.isDestroyed) {
       debug(`[LoopingSound] Destroyed before crossfade could start`);
       safeStop(targetSound, "abort cleanup");
-      this.isCrossfading = false;
+      this._setCrossfading(false);
       return false;
     }
 
@@ -553,7 +567,7 @@ export class LoopingSound {
     } catch (err) {
       debug(`[LoopingSound] Handoff timer cancelled for "${this.ps.name}".`);
       this.handoffTimer = null;
-      this.isCrossfading = false;
+      this._setCrossfading(false);
       safeStop(targetSound, "handoff timer cancelled");
       return false;
     }
@@ -561,6 +575,7 @@ export class LoopingSound {
     if (this.isDestroyed) {
       // If destroyed during handoff, ensure target sound is stopped.
       safeStop(targetSound, "abort cleanup");
+      this._setCrossfading(false);
       return false;
     }
 
@@ -569,7 +584,7 @@ export class LoopingSound {
     this.isA_Active = !this.isA_Active;
     this.ps.sound = this.activeSound;
     this.activeSound._manager = this.ps;
-    this.isCrossfading = false;
+    this._setCrossfading(false);
 
     debug(`[LoopingSound] Handoff complete. Active sound is now: ${this.activeSound.id}, playing: ${this.activeSound.playing}`);
     return true;
@@ -582,7 +597,10 @@ export class LoopingSound {
   async _skipToSegment(nextSegment) {
     if (this.isDestroyed) return;
 
+    safeCancelTimer(this.mainSchedule, `skipToSegment main schedule for "${this.ps?.name}"`);
     safeCancelTimer(this.loopCrossfadeTimer, `skipToSegment crossfade timer for "${this.ps?.name}"`);
+    this.mainSchedule = null;
+    this.loopCrossfadeTimer = null;
     this.handoffTimer?.cancel();
 
     const sourceSound = this.activeSound;
@@ -609,7 +627,7 @@ export class LoopingSound {
     if (wasSuccessful) {
       // Handoff was successful, now update the internal state to track the NEW segment.
       debug(`[LoopingSound] Handoff to new segment complete. Now tracking segment at ${nextSegment.start}`);
-      this.activeLoopSegment = nextSegment;
+      this._setActiveLoopSegment(nextSegment);
       this.loopsCompleted = 0; // Reset the loop counter for the new segment
 
       this._armCrossfadeLoop(); // Arm the timer for the *next* iteration of the *new* loop
@@ -631,7 +649,9 @@ export class LoopingSound {
     if (!playlist) return;
 
     // Mark as destroyed immediately to prevent any further loop scheduling
+    this._setActiveLoopSegment(null);
     this.isDestroyed = true;
+    State.notifyStateChanged();
 
     const isCrossfadeEnabled = Flags.getPlaybackMode(playlist).crossfade;
 
@@ -741,8 +761,8 @@ export class LoopingSound {
   }
 
   _endCurrentLoopSegment() {
-    this.activeLoopSegment = null;
-    this.isCrossfading = false;
+    this._setActiveLoopSegment(null);
+    this._setCrossfading(false);
     this.loopsCompleted = 0;
     // Arm the timer for the *next segment* in the sequence
     this._armNextTimer();
@@ -779,6 +799,7 @@ export class LoopingSound {
 
     // Mark as disabled so no more timers are armed
     this.loopingDisabled = true;
+    State.notifyStateChanged();
 
     // Cancel all active timers
     safeCancelTimer(this.mainSchedule, `disableLooping main schedule for "${this.ps?.name}"`);
@@ -795,8 +816,8 @@ export class LoopingSound {
     }
 
     // Clear the active segment
-    this.activeLoopSegment = null;
-    this.isCrossfading = false;
+    this._setActiveLoopSegment(null);
+    this._setCrossfading(false);
     this.loopsCompleted = 0;
 
     // Schedule a final fade out for the end of the track
@@ -804,91 +825,69 @@ export class LoopingSound {
   }
 
   /**
-   * Skips to the next segment in the sequence.
-   * Wraps around to the first segment if at the end.
+   * Finds the next/previous segment index available from the current loop or playback position.
    */
+  getSkippableSegmentIndex(direction = 1) {
+    if (this.loopingDisabled || this.isCrossfading) return null;
+    if (!Array.isArray(this.config.segments) || !this.config.segments.length) return null;
+
+    const step = direction < 0 ? -1 : 1;
+    if (this.activeLoopSegment) {
+      const currentIndex = this.config.segments.findIndex(
+        seg => seg.start === this.activeLoopSegment.start
+      );
+      if (currentIndex === -1) return null;
+
+      const targetIndex = currentIndex + step;
+      return targetIndex >= 0 && targetIndex < this.config.segments.length ? targetIndex : null;
+    }
+
+    const currentTime = Number(this.activeSound?.currentTime ?? this.ps?.sound?.currentTime);
+    if (!Number.isFinite(currentTime)) return null;
+
+    const EPSILON = 0.01;
+    if (step > 0) {
+      const index = this.config.segments.findIndex(seg => seg.startSec > currentTime + EPSILON);
+      return index >= 0 ? index : null;
+    }
+
+    for (let index = this.config.segments.length - 1; index >= 0; index--) {
+      if (this.config.segments[index].startSec < currentTime - EPSILON) return index;
+    }
+    return null;
+  }
+
   skipToNextSegment() {
-    if (this.isDestroyed || !this.activeLoopSegment) {
-      debug(`[LoopingSound] Cannot skip to next segment: no active segment.`);
+    if (this.isDestroyed) {
+      debug(`[LoopingSound] Cannot skip to next segment: looper is destroyed.`);
       return;
     }
-    if (this.loopingDisabled) {
-      debug(`[LoopingSound] Cannot skip to next segment: looping is disabled.`);
-      return;
-    }
-    if (this.isCrossfading) {
-      debug(`[LoopingSound] Cannot skip to next segment: transition already in progress.`);
+    const nextIndex = this.getSkippableSegmentIndex(1);
+    if (nextIndex == null) {
+      debug(`[LoopingSound] Cannot skip to next segment: no later segment available.`);
       return;
     }
 
-    if (this.config.segments.length <= 1) {
-      debug(`[LoopingSound] Cannot skip: only one segment configured.`);
-      return;
-    }
-
-    const currentIndex = this.config.segments.findIndex(
-      seg => seg.start === this.activeLoopSegment.start
-    );
-
-    if (currentIndex === -1) {
-      debug(`[LoopingSound] Cannot find current segment in config.`);
-      return;
-    }
-
-    if (currentIndex >= this.config.segments.length - 1) {
-      debug(`[LoopingSound] Cannot skip to next segment: already at final segment.`);
-      return;
-    }
-
-    const nextIndex = currentIndex + 1;
     const nextSegment = this.config.segments[nextIndex];
-
-
-
     debug(`[LoopingSound] Skipping to next segment: "${nextSegment.label}" at ${nextSegment.start}`);
     this._skipToSegment(nextSegment);
   }
 
   /**
    * Skips to the previous segment in the sequence.
-   * Wraps around to the last segment if at the beginning.
    */
   skipToPreviousSegment() {
-    if (this.isDestroyed || !this.activeLoopSegment) {
-      debug(`[LoopingSound] Cannot skip to previous segment: no active segment.`);
+    if (this.isDestroyed) {
+      debug(`[LoopingSound] Cannot skip to previous segment: looper is destroyed.`);
       return;
     }
-    if (this.loopingDisabled) {
-      debug(`[LoopingSound] Cannot skip to previous segment: looping is disabled.`);
-      return;
-    }
-    if (this.isCrossfading) {
-      debug(`[LoopingSound] Cannot skip to previous segment: transition already in progress.`);
+    const prevIndex = this.getSkippableSegmentIndex(-1);
+    if (prevIndex == null) {
+      debug(`[LoopingSound] Cannot skip to previous segment: no earlier segment available.`);
       return;
     }
 
-    if (this.config.segments.length <= 1) {
-      debug(`[LoopingSound] Cannot skip: only one segment configured.`);
-      return;
-    }
-
-    const currentIndex = this.config.segments.findIndex(
-      seg => seg.start === this.activeLoopSegment.start
-    );
-
-    if (currentIndex === -1) {
-      debug(`[LoopingSound] Cannot find current segment in config.`);
-      return;
-    }
-
-    if (currentIndex <= 0) {
-      debug(`[LoopingSound] Cannot skip to previous segment: already at first segment.`);
-      return;
-    }
-
-    const prevIndex = currentIndex - 1;
     const prevSegment = this.config.segments[prevIndex];
-
     debug(`[LoopingSound] Skipping to previous segment: "${prevSegment.label}" at ${prevSegment.start}`);
     this._skipToSegment(prevSegment);
   }
@@ -950,8 +949,8 @@ export class LoopingSound {
     if (this.soundA && this.soundA !== activeSound) this.soundA._manager = null;
     if (this.soundB && this.soundB !== activeSound) this.soundB._manager = null;
 
-    this.activeLoopSegment = null;
-    this.isCrossfading = false;
+    this._setActiveLoopSegment(null);
+    this._setCrossfading(false);
     this.loopsCompleted = 0;
     this.loopingDisabled = true;
     this.wasRestarted = false;
@@ -989,6 +988,7 @@ export class LoopingSound {
     // --- Explicitly break references ---
     if (this.soundA) this.soundA._manager = null;
     if (this.soundB) this.soundB._manager = null;
+    this._setActiveLoopSegment(null);
     this.finalTransitionTimer = null;
     this.soundA = null;
     this.soundB = null;
