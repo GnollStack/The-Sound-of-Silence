@@ -342,6 +342,24 @@ Hooks.once("ready", () => {
     }
   });
 
+  // Foundry pauses playlist sounds by storing pausedTime and stopping the
+  // underlying Sound, which cancels Sound.schedule() callbacks. Clear our
+  // matching handle so resume can arm a fresh crossfade timer.
+  Hooks.on("updatePlaylistSound", (soundDoc, changes) => {
+    if (!Object.prototype.hasOwnProperty.call(changes, "playing")) return;
+    if (changes.playing !== false) return;
+    if (!Number.isFinite(soundDoc.pausedTime)) return;
+
+    const playlist = soundDoc.parent;
+    if (!playlist || !Flags.getPlaybackMode(playlist).crossfade) return;
+
+    const timer = State.getCrossfadeTimer(playlist);
+    if (!timer) return;
+
+    debug(`[CF] Cancelling crossfade timer for paused sound "${soundDoc.name}".`);
+    cancelCrossfade(playlist);
+  });
+
   // Arm or disarm a procedural sound's timer when its `playing` state flips.
   // Runs on every client so local RNG timers stay aligned with document state.
   Hooks.on("updatePlaylistSound", (soundDoc, changes) => {
@@ -1439,9 +1457,10 @@ Hooks.once("ready", () => {
    */
   function _schedulePostPlayActions(ps, sound, { fromCrossfade = false } = {}) {
     const playlist = ps.parent;
+    const isResume = Number.isFinite(ps.pausedTime);
 
     // Resume or schedule new loop
-    if (ps.pausedTime > 0) {
+    if (isResume) {
       debug(`[Sound.play WRAPPER] Resuming loop for "${ps.name}".`);
       resumeLoopWithin(ps);
     } else {
@@ -1462,7 +1481,7 @@ Hooks.once("ready", () => {
 
     // Re-arm automatic crossfade timer
     if (Flags.getPlaylistFlag(playlist, "crossfade")) {
-      scheduleCrossfade(playlist, ps);
+      scheduleCrossfade(playlist, ps, { force: isResume });
 
       // Cancel Foundry's built-in _scheduleFadeOut. When third-party modules
       // (e.g. Playlist Enchantment) force a non-zero playlist.fade, Foundry's

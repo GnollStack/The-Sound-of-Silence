@@ -24,6 +24,12 @@ export async function performCrossfade(playlist, soundToFade) {
     return;
   }
 
+  if (!soundToFade.playing || !soundOut.playing) {
+    debug(`[CF] Skipping crossfade for "${soundToFade.name}" because it is no longer actively playing.`);
+    cancelCrossfade(playlist);
+    return;
+  }
+
   const fadeMs = Flags.getCrossfadeDuration(playlist);
   if (fadeMs <= 0) return;
 
@@ -222,8 +228,10 @@ export function cancelCrossfade(playlist) {
  * This is scheduled so the fade-out of the current track finishes as the track itself ends.
  * @param {Playlist} playlist The parent playlist document.
  * @param {PlaylistSound} ps The PlaylistSound that was just started and needs a crossfade scheduled.
+ * @param {object} [options]
+ * @param {boolean} [options.force=false] Cancel and replace an existing timer for the same sound.
  */
-export async function scheduleCrossfade(playlist, ps) {
+export async function scheduleCrossfade(playlist, ps, { force = false } = {}) {
   if (!playlist?.isOwner || !ps) return;
   if (![PM.SEQUENTIAL, PM.SHUFFLE].includes(playlist.mode)) return;
   if (!Flags.getPlaybackMode(playlist).crossfade) return;
@@ -231,8 +239,12 @@ export async function scheduleCrossfade(playlist, ps) {
   // Guard: Skip if we already have a timer scheduled for this exact sound
   const existingTimer = State.getCrossfadeTimer(playlist);
   if (existingTimer?.soundId === ps.id) {
-    debug(`[CF] Timer already scheduled for "${ps.name}", skipping duplicate.`);
-    return;
+    const isCancelled = !!existingTimer.timeout?.cancelled;
+    if (!force && !isCancelled) {
+      debug(`[CF] Timer already scheduled for "${ps.name}", skipping duplicate.`);
+      return;
+    }
+    debug(`[CF] Re-arming ${isCancelled ? "cancelled " : ""}timer for "${ps.name}".`);
   }
 
   // Use the same logic as performCrossfade to get the fade duration
@@ -249,6 +261,11 @@ export async function scheduleCrossfade(playlist, ps) {
   function armTimer() {
     State.clearPlayWaiter(playlist);  //  Use State manager
 
+    if (!ps.playing || !sound.playing) {
+      debug(`[CF] Skipping auto crossfade - "${ps.name}" is not actively playing.`);
+      return;
+    }
+
     const dur = Number(sound.duration);
 
     if (!Number.isFinite(dur) || dur <= 0) {
@@ -257,8 +274,14 @@ export async function scheduleCrossfade(playlist, ps) {
     }
 
     const fireAt = Math.max(0, dur - (fadeMs / 1000)); // Now uses correct fadeMs
+    const currentTime = Number(sound.currentTime);
 
-    if ((sound.currentTime ?? 0) >= fireAt) {
+    if (!Number.isFinite(currentTime)) {
+      debug(`[CF] Skipping auto crossfade - invalid currentTime for "${ps.name}".`);
+      return;
+    }
+
+    if (currentTime >= fireAt) {
       debug(`[CF] Skipping auto crossfade - track already past fade point for "${ps.name}"`);
       return;
     }
