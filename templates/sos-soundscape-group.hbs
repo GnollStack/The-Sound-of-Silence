@@ -1,0 +1,66 @@
+<li class="sos-now-playing sos-soundscape-strip {{#if collapsed}}sos-group-collapsed{{/if}}"
+    data-playlist-id="{{ playlistId }}">
+    <header class="sos-playlist-header sos-soundscape-toggle"
+            data-sos-action="toggleSoundscapeGroup"
+            data-playlist-id="{{ playlistId }}"
+            role="button"
+            tabindex="0"
+            aria-expanded="{{ ariaExpanded }}"
+            data-tooltip="{{ toggleTooltip }}">
+        <i class="sos-group-caret fa-solid {{ caretIcon }}" inert></i>
+        <i class="fa-solid fa-list-music" inert></i>
+        <span class="ellipsis sos-playlist-title">{{ playlistName }}</span>
+        {{#if polyphony}}
+        <span class="sos-polyphony-meter" data-tooltip="Active one-shots / max polyphony">
+            <i class="fa-solid fa-layer-group" inert></i>
+            <span class="sos-polyphony-value">{{ polyphony.active }}/{{ polyphony.max }}</span>
+        </span>
+        {{/if}}
+        {{#if stopAllAvailable}}
+        <button type="button" class="sos-transport-btn sos-stop-btn sos-soundscape-stop-all icon fa-solid fa-stop"
+                data-sos-action="soundscapeStopAll" data-playlist-id="{{ playlistId }}"
+                data-tooltip="Stop Soundscape" aria-label="Stop Soundscape"></button>
+        {{/if}}
+    </header>
+
+    {{#if collapsed}}
+    <div class="sos-group-summary">
+        <div class="sos-summary-row bed">
+            <i class="fa-solid fa-music" inert></i>
+            <span class="label">{{ summary.bedsLabel }}</span>
+        </div>
+        <div class="sos-summary-row proc">
+            <i class="fa-solid fa-dice-d20" inert></i>
+            <span class="label">{{ summary.procsLabel }}</span>
+            <span class="meta" {{#unless summary.nextMeta}}hidden{{/unless}}>{{ summary.nextMeta }}</span>
+        </div>
+    </div>
+    {{else}}
+    <div class="sos-soundscape-body">
+        {{#each beds}}
+        <div class="sound sos-now-playing {{ css }} {{#if sos.isPlaylistGroupStart}}sos-playlist-group-start{{/if}} {{#if sos.showProgressCard}}sos-progress-card{{/if}} {{#if sos.showGroupBedCard}}sos-soundscape-bed-card{{/if}}"
+             data-playlist-id="{{ playlistId }}" data-sound-uuid="{{ uuid }}" data-sound-id="{{ id }}">
+            {{> "modules/the-sound-of-silence/templates/sos-sound-content.hbs" }}
+        </div>
+        {{/each}}
+
+        {{#if procs.length}}
+        <div class="sos-proc-section">
+            <div class="sos-proc-section-header">
+                <i class="fa-solid fa-dice-d20" inert></i>
+                <span>Procedural</span>
+                <span class="count">{{ procCountLabel }}</span>
+                <span class="line"></span>
+                <span class="next" {{#unless summary.nextMeta}}hidden{{/unless}}>{{ summary.nextMeta }}</span>
+            </div>
+            {{#each procs}}
+            <div class="sound sos-now-playing {{ css }}"
+                 data-playlist-id="{{ playlistId }}" data-sound-uuid="{{ uuid }}" data-sound-id="{{ id }}">
+                {{> "modules/the-sound-of-silence/templates/sos-sound-content.hbs" }}
+            </div>
+            {{/each}}
+        </div>
+        {{/if}}
+    </div>
+    {{/if}}
+</li>

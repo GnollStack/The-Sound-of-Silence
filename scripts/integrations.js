@@ -33,6 +33,8 @@ const _detected = {
 
 let _audioGuardsRegistered = false;
 let _playingPartsPatched = false;
+let _playlistEnchantmentHotbarPatched = false;
+let _playlistEnchantmentHotbarPatchedClass = null;
 
 // =========================================================================
 // Public API
@@ -95,8 +97,10 @@ export const Integrations = {
         const className = ActualClass?.name || "PlaylistDirectory";
 
         // 1. Patch the actual running class
+        const playingPart = { template, templates, scrollable: [".playlist-sounds.plain"] };
+
         if (ActualClass?.PARTS) {
-            ActualClass.PARTS.playing = { template, templates };
+            ActualClass.PARTS.playing = playingPart;
             _playingPartsPatched = true;
             debug(`[Integrations] Patched PARTS.playing on ${className}`);
         }
@@ -105,7 +109,7 @@ export const Integrations = {
         //    reads from the base prototype directly)
         const BaseClass = foundry.applications.sidebar.tabs.PlaylistDirectory;
         if (BaseClass?.PARTS && BaseClass !== ActualClass) {
-            BaseClass.PARTS.playing = { template, templates };
+            BaseClass.PARTS.playing = playingPart;
         }
     },
 
@@ -120,6 +124,8 @@ export const Integrations = {
      * Only registered when conflicting modules are detected.
      */
     registerAudioGuards() {
+        this.patchPlaylistEnchantmentHotbar();
+
         if (!this.hasConflictingModules) {
             debug("[Integrations] No conflicting modules — audio guards skipped.");
             return;
@@ -149,6 +155,57 @@ export const Integrations = {
         debug("[Integrations] Audio fade guard registered on Sound.prototype.fade");
     },
 
+    /**
+     * Playlist Enchantment's hotbar macro path stops every currently playing
+     * playlist before starting the requested one. SoS supports layered playback,
+     * especially Soundscape plus normal music, so delegate those starts to the
+     * normal SoS/Foundry play methods without stopping unrelated playlists.
+     */
+    patchPlaylistEnchantmentHotbar() {
+        const ActualClass = CONFIG.ui.playlists;
+        if (!ActualClass) return;
+        if (_playlistEnchantmentHotbarPatchedClass === ActualClass) return;
+
+        const hasPlaylistEnchantmentShape =
+            _detected.enchantment ||
+            typeof ActualClass.hotbarPlaylist === "function" ||
+            typeof ActualClass.crossFade === "function";
+        if (!hasPlaylistEnchantmentShape) return;
+
+        const playFromUuid = async (uuid) => {
+            const doc = await fromUuid(uuid);
+            let playlist = null;
+            let sound = null;
+
+            if (doc instanceof Playlist) {
+                playlist = doc;
+            } else if (doc instanceof PlaylistSound) {
+                sound = doc;
+                playlist = sound.parent;
+            } else if (doc instanceof Folder && doc.type === "Playlist") {
+                const playlists = doc.contents;
+                playlist = playlists[Math.floor(Math.random() * playlists.length)] ?? null;
+            }
+
+            if (!playlist) {
+                ui.notifications?.error?.("Can't start Playlist - not found");
+                return null;
+            }
+            if (!sound && playlist.playing) return playlist;
+
+            debug(
+                `[Integrations] Playlist Enchantment hotbar start delegated to SoS for "${playlist.name}".`
+            );
+            return sound ? playlist.playSound(sound) : playlist.playAll();
+        };
+
+        ActualClass.hotbarPlaylist = playFromUuid;
+        ActualClass.crossFade = playFromUuid;
+        _playlistEnchantmentHotbarPatched = true;
+        _playlistEnchantmentHotbarPatchedClass = ActualClass;
+        debug("[Integrations] Patched Playlist Enchantment hotbar playback to allow layered playlists.");
+    },
+
     // =====================================================================
     // Diagnostics
     // =====================================================================
@@ -170,6 +227,7 @@ export const Integrations = {
             partsPlayingTemplate: ActualClass?.PARTS?.playing?.template || "unknown",
             playingPartsPatched: _playingPartsPatched,
             audioGuardsActive: _audioGuardsRegistered,
+            playlistEnchantmentHotbarPatched: _playlistEnchantmentHotbarPatched,
         };
     },
 };

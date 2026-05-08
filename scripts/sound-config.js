@@ -1,6 +1,7 @@
 // sound-config.js
 
 import { LoopPreviewer } from "./loop-previewer.js";
+import { ProceduralAuditioner } from "./procedural-auditioner.js";
 import { debug, MODULE_ID, toSec, SEGMENT_COLORS, warn, error } from "./utils.js";
 import { Flags } from "./flag-service.js";
 
@@ -36,6 +37,16 @@ const PROCEDURAL_INITIAL_FIRE_OPTIONS = {
   normal: "Use Cadence",
   staggered: "Stagger First Fire",
   immediate: "Immediate First Fire",
+};
+
+const PROCEDURAL_FIELD_DEFAULTS = {
+  minDelay: 15,
+  maxDelay: 60,
+  timingMode: "uniform",
+  initialFireMode: "normal",
+  volumeVariance: 0,
+  randomPan: false,
+  playChance: 100,
 };
 
 function sanitizeProceduralTimingMode(value) {
@@ -123,6 +134,29 @@ export function registerSoundConfigWrappers() {
         }
 
         const loopData = otherFlags[LOOP_KEY] || {};
+        const existingModuleFlags = existingFlags ?? {};
+        const playlistDefaults = this.document.parent
+          ? Flags.getPlaylistFlag(this.document.parent, "soundscapeDefaults") ?? {}
+          : {};
+        const hasExplicitProceduralFlag = (key) => {
+          const value = existingModuleFlags[key];
+          return value !== null && typeof value !== "undefined";
+        };
+        const inheritedProceduralValue = (key) => {
+          const value = playlistDefaults[key];
+          return value !== null && typeof value !== "undefined"
+            ? value
+            : PROCEDURAL_FIELD_DEFAULTS[key];
+        };
+        const valuesEqual = (a, b) => {
+          if (typeof a === "number" || typeof b === "number") return Number(a) === Number(b);
+          return a === b;
+        };
+        const setOptionalProceduralFlag = (target, key, value) => {
+          if (hasExplicitProceduralFlag(key) || !valuesEqual(value, inheritedProceduralValue(key))) {
+            target[key] = value;
+          }
+        };
 
         debug("[SoS Debug] 2. Reconstructed segments (Map):", Array.from(segments.entries()));
         debug("[SoS Debug] 2b. Other flags:", foundry.utils.deepClone(otherFlags));
@@ -153,14 +187,14 @@ export function registerSoundConfigWrappers() {
         const cleanRootFlags = {
           allowVolumeOverride: !!otherFlags.allowVolumeOverride,
           isProcedural,
-          minDelay,
-          maxDelay,
-          timingMode,
-          initialFireMode,
-          volumeVariance,
-          randomPan: !!otherFlags.randomPan,
-          playChance,
         };
+        setOptionalProceduralFlag(cleanRootFlags, "minDelay", minDelay);
+        setOptionalProceduralFlag(cleanRootFlags, "maxDelay", maxDelay);
+        setOptionalProceduralFlag(cleanRootFlags, "timingMode", timingMode);
+        setOptionalProceduralFlag(cleanRootFlags, "initialFireMode", initialFireMode);
+        setOptionalProceduralFlag(cleanRootFlags, "volumeVariance", volumeVariance);
+        setOptionalProceduralFlag(cleanRootFlags, "randomPan", !!otherFlags.randomPan);
+        setOptionalProceduralFlag(cleanRootFlags, "playChance", playChance);
 
         // Procedural and internal-loop are mutually exclusive per track.
         const loopEnabled = !!loopData.enabled && !isProcedural;
@@ -356,6 +390,10 @@ Hooks.on("renderPlaylistSoundConfig", (app, htmlRaw, data) => {
   const previewVolume = Number.isFinite(documentVolume)
     ? Math.max(0, Math.min(1, documentVolume))
     : 1;
+  const resolvedTargetVolume = Number(Flags.resolveTargetVolume(app.document));
+  const auditionVolume = Number.isFinite(resolvedTargetVolume)
+    ? Math.max(0, Math.min(1, resolvedTargetVolume))
+    : previewVolume;
   const field = (k) => `flags.${MODULE_ID}.${LOOP_KEY}.${k}`;
   const rootField = (k) => `flags.${MODULE_ID}.${k}`;
 
@@ -454,6 +492,29 @@ Hooks.on("renderPlaylistSoundConfig", (app, htmlRaw, data) => {
             <p class="notes sos-compact">Places each fire at a random point in the stereo field.</p>
           </div>
         </fieldset>
+
+        ${game.user.isGM ? `
+        <fieldset class="sos-procedural-fieldset sos-proc-audition">
+          <legend>Audition</legend>
+          <div class="sos-proc-audition-row">
+            <button type="button" class="sos-proc-audition-fire sos-compact" data-tooltip="Fire Local Preview">
+              <i class="fa-solid fa-bolt"></i>
+            </button>
+            <button type="button" class="sos-proc-audition-stop sos-compact" data-tooltip="Stop Preview" disabled>
+              <i class="fas fa-stop"></i>
+            </button>
+            <div class="sos-proc-audition-volume-wrap" data-tooltip="Preview Volume">
+              <i class="fa-solid fa-volume-low" inert></i>
+              <range-picker class="sos-proc-audition-volume"
+                            value="${auditionVolume}"
+                            min="0" max="1" step="0.05">
+              </range-picker>
+            </div>
+            <span class="sos-proc-audition-status">Ready</span>
+          </div>
+          <p class="notes sos-compact">Local GM preview only. Uses unsaved variation and pan fields, bypasses play chance, and does not start the playlist.</p>
+        </fieldset>
+        ` : ""}
 
       </div>
     </div>
@@ -616,6 +677,13 @@ Hooks.on("renderPlaylistSoundConfig", (app, htmlRaw, data) => {
   previewer.init();
   app._soundOfSilencePreviewer = previewer;
 
+  app._soundOfSilenceProceduralAuditioner?.destroy?.();
+  app._soundOfSilenceProceduralAuditioner = null;
+  const auditioner = new ProceduralAuditioner(app, html, data);
+  if (auditioner.init()) {
+    app._soundOfSilenceProceduralAuditioner = auditioner;
+  }
+
   const initialEnabled = loop.enabled ?? false;
   previewer.updateLoopEnabledState(initialEnabled);
 
@@ -637,6 +705,10 @@ Hooks.on("renderPlaylistSoundConfig", (app, htmlRaw, data) => {
     $proceduralBody.toggle(procOn);
     // Hide the whole internal-loop block when procedural is on.
     $mainBlock.toggle(!procOn);
+    const proceduralAuditioner = app._soundOfSilenceProceduralAuditioner;
+    if (!procOn && (proceduralAuditioner?.sound || proceduralAuditioner?.isLoading)) {
+      proceduralAuditioner.stopAll();
+    }
     if (procOn && $loopEnabledCheckbox.is(":checked")) {
       $loopEnabledCheckbox.prop("checked", false).trigger("change");
     }
@@ -778,5 +850,12 @@ Hooks.on("closePlaylistSoundConfig", (app) => {
   if (previewer?.stopAll) {
     debug("[Previewer] Config window closed. Calling stopAll.");
     previewer.stopAll();
+  }
+
+  const auditioner = app._soundOfSilenceProceduralAuditioner;
+  if (auditioner?.destroy) {
+    debug("[Auditioner] Config window closed. Destroying procedural auditioner.");
+    auditioner.destroy();
+    app._soundOfSilenceProceduralAuditioner = null;
   }
 });

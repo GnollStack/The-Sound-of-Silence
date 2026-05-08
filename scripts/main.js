@@ -80,6 +80,51 @@ function isFreshPlaybackStart(playlistSound) {
   return !Number(playlistSound?.pausedTime);
 }
 
+function _describeActivePlaylists() {
+  try {
+    return game.playlists
+      .filter((playlist) => playlist.playing)
+      .map((playlist) => {
+        const mode = Flags.getPlaybackMode(playlist).effective;
+        const sounds = playlist.sounds
+          .filter((sound) => sound.playing && !Flags.getSoundFlag(sound, "isSilenceGap"))
+          .map((sound) => {
+            const media = sound.sound;
+            const audioState = media
+              ? `audio=${media.playing ? "on" : "off"} vol=${Number(media.volume ?? 0).toFixed(3)} gain=${Number(media.gain?.value ?? 0).toFixed(3)}`
+              : "audio=none";
+            return `${sound.name} (${audioState})`;
+          });
+        return `${playlist.name} [${mode}: ${sounds.join(", ") || "no sounds"}]`;
+      })
+      .join(" | ") || "none";
+  } catch (err) {
+    return `unavailable (${err?.message ?? err})`;
+  }
+}
+
+function _describeSoundAudio(soundDoc) {
+  const media = soundDoc?.sound;
+  if (!media) return { audio: "none" };
+  return {
+    audio: media.playing ? "on" : "off",
+    loaded: !!media.loaded,
+    volume: Number(media.volume ?? 0),
+    gain: Number(media.gain?.value ?? 0),
+    currentTime: Number(media.currentTime ?? 0),
+    duration: Number(media.duration ?? 0),
+    fading: State.isSoundFading(media),
+  };
+}
+
+function _debugPlaybackTrace(message, playlist = null, extra = {}) {
+  const playlistPart = playlist ? ` playlist="${playlist.name}"` : "";
+  debug(`[PlaybackTrace] ${message}${playlistPart}`, {
+    active: _describeActivePlaylists(),
+    ...extra,
+  });
+}
+
 // =========================================================================
 // Foundry Hooks
 // =========================================================================
@@ -186,6 +231,43 @@ Hooks.once("ready", () => {
   registerPlaylistSheetWrappers();
   registerSoundConfigWrappers();
   registerCurrentlyPlaying();
+
+  Hooks.on("updatePlaylist", (playlist, changes, options, userId) => {
+    const soundUpdates = Array.isArray(changes?.sounds)
+      ? changes.sounds.map((sound) => ({
+          id: sound._id,
+          playing: sound.playing,
+          pausedTime: sound.pausedTime,
+        }))
+      : undefined;
+    const relevant =
+      Object.prototype.hasOwnProperty.call(changes ?? {}, "playing") ||
+      Object.prototype.hasOwnProperty.call(changes ?? {}, "mode") ||
+      Object.prototype.hasOwnProperty.call(changes ?? {}, "sounds") ||
+      foundry.utils.hasProperty(changes ?? {}, `flags.${MODULE_ID}.soundscapeMode`);
+    if (!relevant) return;
+
+    _debugPlaybackTrace("updatePlaylist", playlist, {
+      user: game.users.get(userId)?.name ?? userId,
+      playing: changes.playing,
+      mode: changes.mode,
+      soundscapeFlag: foundry.utils.getProperty(changes, `flags.${MODULE_ID}.soundscapeMode`),
+      sounds: soundUpdates,
+      options,
+    });
+  });
+
+  Hooks.on("updatePlaylistSound", (soundDoc, changes, options, userId) => {
+    if (!Object.prototype.hasOwnProperty.call(changes ?? {}, "playing")) return;
+    _debugPlaybackTrace("updatePlaylistSound", soundDoc.parent, {
+      sound: soundDoc.name,
+      user: game.users.get(userId)?.name ?? userId,
+      playing: changes.playing,
+      pausedTime: changes.pausedTime,
+      audio: _describeSoundAudio(soundDoc),
+      options,
+    });
+  });
 
   // If a client joins or reloads while a soundscape playlist is already live,
   // bootstrap the local engine from the replicated playlist state.
@@ -479,6 +561,11 @@ Hooks.once("ready", () => {
     "Playlist.prototype.stopSound",
     function (wrapped, sound, ...args) {
       const playlist = this;
+      _debugPlaybackTrace("stopSound called", playlist, {
+        sound: sound?.name,
+        mode: Flags.getPlaybackMode(playlist).effective,
+        args,
+      });
 
       if (!sound) {
         return wrapped.call(this, sound, ...args);
@@ -508,6 +595,9 @@ Hooks.once("ready", () => {
     MODULE_ID,
     "Playlist.prototype.stopAll",
     async function () {
+      _debugPlaybackTrace("stopAll called", this, {
+        mode: Flags.getPlaybackMode(this).effective,
+      });
       logFeature(LogSymbols.STOP, "Stop", `Playlist: ${this.name}`);
       State.markPlaylistAsStopping(this);
       const fadeDuration = Number(this.fade) || 0;
@@ -600,6 +690,11 @@ Hooks.once("ready", () => {
     "Playlist.prototype.playSound",
     async function (wrapped, soundToPlay, ...args) {
       const playlist = this;
+      _debugPlaybackTrace("playSound called", playlist, {
+        sound: soundToPlay?.name,
+        mode: Flags.getPlaybackMode(playlist).effective,
+        args,
+      });
 
       // If our automatic crossfader is running, do not treat this as a manual skip.
       if (State.isPlaylistCrossfading(playlist)) {
@@ -905,6 +1000,10 @@ Hooks.once("ready", () => {
     MODULE_ID,
     "Playlist.prototype.playAll",
     async function (wrapped, ...args) {
+      _debugPlaybackTrace("playAll called", this, {
+        mode: Flags.getPlaybackMode(this).effective,
+        args,
+      });
       // Playback is starting, so clear any lingering "stopping" state.
       State.clearStoppingFlag(this);
       // Soundscape in Soundboard mode needs custom play-all behavior because
@@ -1086,9 +1185,13 @@ Hooks.once("ready", () => {
               `[Volume] Blocking manual volume change on "${this.name}" - normalization active`
             );
 
-            // Apply the volume change to the audio element ONLY (temporary)
-            if (this.sound) {
+            // Apply the volume change to the audio element only while no fade owns it.
+            if (this.sound && !State.isSoundFading(this.sound)) {
               this.sound.volume = data.volume;
+            } else if (this.sound) {
+              debug(
+                `[Volume] Skipping temporary volume preview for "${this.name}" - fade active`
+              );
             }
 
             // Remove volume from the update data

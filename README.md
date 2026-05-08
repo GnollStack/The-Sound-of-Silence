@@ -113,9 +113,12 @@ Turn a playlist into a procedural ambience engine without giving up manual contr
 - **Polyphony limits** - cap how many one-shots can overlap at once, with Independent, Linear by Polyphony, and Soft by Polyphony chance-scaling modes.
 - **Playlist-level defaults** - the Soundscape panel sets fallback gap, cadence, first-fire, variance, play-chance, and pan values so new procedural sounds inherit playlist-wide preferences.
 - **Effective per-sound editing** - the sound config sheet shows the resolved procedural values from playlist defaults and includes live cadence, startup, and approximate plays-per-minute previews.
+- **Per-sound audition** - GMs can audition a procedural one-shot directly from the sound config sheet using unsaved variance, pan, fade, and preview-volume values. It is local-only and does not arm the live soundscape.
 - **Procedural Roster** - the playlist config sheet shows an at-a-glance table of every procedural sound with its cadence, first-fire mode, play chance, and pan setting.
+- **Full soundscape preview** - the playlist config sheet includes a GM-only Preview control above the Procedural Roster, so you can test the whole bed + procedural mix with current unsaved settings before committing changes.
 - **GM Fire Now testing** - GMs see a bolt button on each armed procedural card to fire it immediately (client-local), making it easy to audition the sound mix without waiting for the timer.
-- **Per-card play-chance badge + polyphony meter** - the Currently Playing panel shows each procedural sound's effective play chance (when below 100%) and a shared `active/max` polyphony meter on the playlist header row.
+- **Collapsible Currently Playing group** - active soundscapes render as one playlist strip with a caret, polyphony meter, Stop Soundscape button, group-aware bed cards, and a compact procedural section. Collapse state is saved per Foundry user.
+- **Per-card play-chance badge + live ETA** - procedural rows show each sound's effective play chance (when below 100%) plus `Playing` / `Armed` / `Next in ~Ns` status, and collapsed soundscape summaries keep the next ETA visible.
 
 ### Advanced Shuffle
 
@@ -130,19 +133,21 @@ Four shuffle algorithms (configured in module settings):
 
 The "Currently Playing" panel in the sidebar has been completely overhauled with a proper transport control layout:
 
-- **Playlist-first layout** - each track card shows the playlist name as the primary header, with the track name secondary below it.
-- **Grouped by playlist** - soundscape rows share one playlist header and playlist-volume row, so large ambience playlists stay compact.
+- **Playlist-first layout** - normal track cards show the playlist name as the primary header, with the track name secondary below it.
+- **Grouped soundscape strips** - each active soundscape playlist renders as one collapsible strip with a shared playlist header, polyphony meter, Stop Soundscape control, bed cards, and procedural section, so large ambience playlists stay compact.
 - **Full transport row** - repeat, silence toggle, crossfade toggle, internal loop toggle, playlist mode cycle, previous track, next track, pause/resume, stop.
 - **Inline playlist controls** - toggle silence gaps, auto-crossfade, and cycle playback mode (disabled/sequential/shuffle/simultaneous/soundscape) directly from the Currently Playing panel, even when the playlist is hidden in a folder.
 - **Bidirectional sync** - all toggles stay in sync with the sidebar playlist header buttons.
 - **Pause/Resume toggle** - when a track is paused, the button switches to a play icon so you can resume without stopping.
-- **Dual volume sliders** - separate Track Volume and Playlist Volume sliders, aligned for easy comparison.
+- **Dual volume sliders** - separate Track Volume and Playlist Volume controls render side by side on normal cards, with the labels above the slider/value rows for easy comparison.
+- **Fade-aware progress bars** - normal tracks and soundscape beds show subtle gray fade-in/fade-out zones over the amber progress bar when those fade windows apply. The left zone follows the playlist `fadeIn` setting; the right zone follows the playlist's native fade-out duration and hides for repeating tracks.
 - **Loop controls row** - appears whenever a track has live loop segments and stays visible across the gap between segments (and after pressing Break) so you can react to whatever loops next. Prev/next segment buttons grey out automatically at the first/last segment, plus break loop and disable loops.
 - **Live state** - crossfade status and loop segment changes update the panel automatically.
 - **Loop button state** - Break greys out by itself when no loop is currently active, while previous/next remain available whenever there is a segment to jump to in that direction.
-- **Compact procedural rows** - soundscape one-shots render as a single ~22px row with the dice icon, track name, optional play-chance badge, and `Playing` / `Armed` / `Next in ~Ns` ETA. Fire Now and Stop buttons stay hidden at rest and slide in on hover, so dense ambience playlists (9+ one-shots) no longer flood the panel.
-- **Soundscape Stop All** - each active soundscape playlist gets a small stop button next to its polyphony meter so the GM can halt every bed and procedural in one click without scrolling for the sidebar Stop All.
-- **Capped height with scroll** - the panel is height-clamped (`200px` / `40vh` / `480px` floor / preferred / ceiling) and the inner sound list gets a thin amber custom scrollbar. With many tracks playing the playlists directory below stays reachable instead of being pushed off-screen.
+- **Compact procedural rows** - soundscape one-shots render inside the group's procedural section as a single ~22px row with the dice icon, track name, optional play-chance badge, and `Playing` / `Armed` / `Next in ~Ns` ETA. Fire Now and Stop buttons stay hidden at rest and slide in on hover, so dense ambience playlists (9+ one-shots) no longer flood the panel.
+- **Soundscape Stop All** - each active soundscape playlist gets a small stop button in the group header so the GM can halt every bed and procedural in one click without scrolling for the sidebar Stop All.
+- **Capped height with scroll** - the panel is height-clamped (`200px` / `40vh` / `480px` floor / preferred / ceiling) and the inner sound list gets a thin amber custom scrollbar. With many tracks playing the playlists directory below stays reachable instead of being pushed off-screen, while mouse wheel over track or playlist volume controls still changes volume normally.
+- **Scroll-safe playback updates** - playback, shuffle, crossfade, and soundscape status updates preserve the playlist directory scroll position so browsing the sidebar is not interrupted when another playlist advances.
 
 ### Diagnostics
 
@@ -225,9 +230,10 @@ Visual indicators highlight problems automatically: red for stuck gains or suspe
 **How it works:**
 1. Set the playlist's Playback Mode to **Soundscape** (the dice-d20 option in the mode picker).
 2. Optionally set Soundscape defaults in the playlist config so new procedural sounds inherit your preferred gap, cadence, and startup behavior.
-3. Use **Play All** to start the full ambience session, or trigger individual sounds manually from the playlist when needed.
-4. Let the bed track run continuously while one-shots fire on independent local timers using their own cadence rules.
-5. Watch the Currently Playing panel show each procedural sound as a grouped ambient card with `Playing`, `Armed`, or `Next in ~Ns` status plus chance/polyphony indicators.
+3. Use the playlist config **Preview** control to test the full mix locally before saving, and use the sound config **Audition** controls to test individual procedural one-shots.
+4. Use **Play All** to start the full ambience session, or trigger individual sounds manually from the playlist when needed.
+5. Let the bed track run continuously while one-shots fire on independent local timers using their own cadence rules.
+6. Watch the Currently Playing panel show one collapsible soundscape group with bed cards, procedural rows, chance/polyphony indicators, and live `Playing`, `Armed`, or `Next in ~Ns` status.
 
 ### Multi-Segment Loop Example
 
@@ -259,6 +265,7 @@ Segment 4: 04:45 - 06:00 (Victory, loop 1x, play through)
 - **Soundscape disables silence and crossfade** - procedural ambience owns the playlist flow, so those toggles are locked while it is active.
 - **Cadence and startup are separate controls** - cadence determines every recurring gap, while First Fire only affects the initial fire after activation.
 - **Procedural defaults flow into sound sheets** - when a per-sound procedural value is unset, the sound config displays the resolved playlist default so the live behavior is visible before you save an override.
+- **Preview and Audition are local-only** - the playlist preview and per-sound audition controls never update document playback state, never start the live Soundscape engine, and stop when their config sheet closes.
 - **Polyphony scaling offers three behaviors** - Independent never adjusts chance, Linear by Polyphony attenuates evenly as the cap fills, and Soft by Polyphony tapers more gently.
 - **Procedural fires honor fade curves** - the module's configured fade-in/out curves, the per-playlist `fadeIn` flag, and the playlist's native `fade` ms are all respected; short stingers have their fade-in capped at half the clip length so they still reach full volume.
 - **Procedural gaps start after playback ends** - the next countdown begins when the current one-shot finishes, preventing duplicate fires on long clips and avoiding zero-delay lockups.
@@ -389,9 +396,10 @@ SoS includes a built-in integration layer that automatically detects and coopera
 SoS owns the Currently Playing panel DOM. Any other module that tries to restyle or rewrite the same sidebar elements will either lose (if it goes through Foundry's PARTS template system) or visually fight with SoS (if it injects DOM after render). Specifically, SoS:
 
 - **Replaces the `PARTS.playing` template** on the actual running `CONFIG.ui.playlists` class via `Integrations.patchPlayingParts()`. Any other module that also overrides `PARTS.playing` will be overridden by whichever loads last — SoS patches at the `ready` hook, which is late, so SoS normally wins.
-- **Replaces each sound row** with its own `sos-sound-partial.hbs` partial. Modules that rely on Foundry's native `sound-partial.hbs` DOM (`.sound-controls.flexrow`, the native volume slider markup, etc.) will not see their expected selectors on rows rendered by SoS. The critical selectors Foundry itself reads (`.sound[data-sound-uuid]`, `.current`, `.duration`, `.pause`) are preserved.
-- **Caps the panel height and styles the scrollbar** on `.currently-playing.global-control.location-top/bottom` and `.playlist-sounds.plain`. Any module that injects additional rows into the Currently Playing widget will be constrained by the same max-height (`clamp(200px, 40vh, 480px)`) and scrolled by the same amber scrollbar. That is usually fine but may surprise modules expecting the panel to grow unbounded.
-- **Defines new click targets via `data-sos-action`** (e.g. `soundscapeFireNow`, `soundscapeStopAll`, `cyclePlaylistMode`, `toggleLoop`). A global click listener on the playlist directory handles these; modules that add their own delegated `click` listeners should scope them so they do not intercept SoS's attributes.
+- **Replaces each sound row** with SoS partials. Normal rows use `sos-sound-partial.hbs`; grouped soundscapes use `sos-soundscape-group.hbs` with shared `sos-sound-content.hbs` children. Modules that rely on Foundry's native `sound-partial.hbs` DOM (`.sound-controls.flexrow`, the native volume slider markup, etc.) will not see their expected selectors on rows rendered by SoS. The critical selectors Foundry itself reads (`.sound[data-sound-uuid]`, `.current`, `.duration`, `.pause`) are preserved on real sound rows.
+- **Caps the panel height and styles the scrollbar** on `.currently-playing.global-control` and `.playlist-sounds.plain`. Any module that injects additional rows into the Currently Playing widget will be constrained by the same max-height (`clamp(200px, 40vh, 480px)`) and scrolled by the same amber scrollbar. Wheel events over SoS track and playlist volume controls are exempt so Foundry's normal mouse-wheel volume behavior still works.
+- **Preserves sidebar scroll during playback renders** by wrapping PlaylistDirectory part sync and containing wheel scrolling on the playlist directory list. Modules that replace the same sidebar scroll containers should preserve `.directory-list` and `.playlist-sounds.plain` semantics.
+- **Defines new click targets via `data-sos-action`** (e.g. `toggleSoundscapeGroup`, `soundscapeFireNow`, `soundscapeStopAll`, `cyclePlaylistMode`, `toggleLoop`). A global click listener on the playlist directory handles these; modules that add their own delegated `click` listeners should scope them so they do not intercept SoS's attributes.
 - **Uses the `--sos-*` CSS custom property prefix.** No collision risk with other modules' variables unless they also use `--sos-*`.
 
 If you need another module's Currently Playing UI instead of SoS's, disable SoS's Currently Playing — currently that means disabling SoS itself; a future release may expose a "leave Currently Playing alone" setting if there is demand.

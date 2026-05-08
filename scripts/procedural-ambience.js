@@ -29,6 +29,15 @@ const AudioTimeout = foundry.audio.AudioTimeout;
 const RETRY_BACKOFF_MS = 250;
 const DEFAULT_FADE_MS = 500;
 
+function _notifySoundscapeUi(playlist, reason, soundId = null) {
+    State.notifyStateChanged({
+        soundscapeOnly: true,
+        reason,
+        playlistId: playlist?.id ?? null,
+        soundId,
+    });
+}
+
 function _resolveFadeOutMs(playlist) {
     const fade = Number(playlist?.fade);
     return Number.isFinite(fade) && fade >= 0 ? fade : DEFAULT_FADE_MS;
@@ -62,6 +71,12 @@ export class SoundscapeEngine {
 
         /** @type {Set<foundry.audio.Sound>} currently audible one-shot Sound instances */
         this.activeOneShots = new Set();
+
+        /** @type {number} one-shot fires that passed the cap check but are still loading */
+        this.pendingOneShotTotal = 0;
+
+        /** @type {Map<string, number>} soundId -> pending load/play reservation count */
+        this.pendingOneShotCounts = new Map();
 
         /** @type {Map<string, number>} soundId -> active instance count */
         this.activeOneShotCounts = new Map();
@@ -157,18 +172,18 @@ export class SoundscapeEngine {
 
         const timer = new AudioTimeout(delayMs);
         this.oneShotTimers.set(ps.id, { timer, eta });
-        State.notifyStateChanged();
+        _notifySoundscapeUi(this.playlist, "soundscape-one-shot-armed", ps.id);
 
         debug(
             `[Soundscape] Armed "${ps.name}" for ${(delayMs / 1000).toFixed(1)}s ` +
-            `(active ${this.activeOneShots.size}/${this.maxPolyphony})`
+            `(occupied ${this._getOccupiedPolyphony()}/${this.maxPolyphony})`
         );
 
         timer.complete.then(() => {
             if (this.isDestroyed) return;
             this._fireOneShot(ps).catch((err) => {
                 warn(`[Soundscape] Fire failed for "${ps.name}":`, err?.message);
-                if (!this.isDestroyed) this._armOneShot(ps, { minimumDelayMs: RETRY_BACKOFF_MS });
+                if (!this.isDestroyed && ps.playing) this._armOneShot(ps, { minimumDelayMs: RETRY_BACKOFF_MS });
             });
         }).catch(() => {
             // Timer cancelled — intentional, nothing to do.
@@ -271,28 +286,43 @@ export class SoundscapeEngine {
      * Fire a single procedural one-shot. Checks polyphony cap and playChance first.
      * The next randomized timer begins only after this playback attempt fully settles.
      * @param {PlaylistSound} ps
+     * @param {{bypassChance?: boolean}} [options]
+     * @returns {Promise<boolean>} true when playback was started
      */
-    async _fireOneShot(ps) {
-        if (this.isDestroyed) return;
+    async _fireOneShot(ps, { bypassChance = false } = {}) {
+        if (this.isDestroyed) return false;
         this.oneShotTimers.delete(ps.id);
-        State.notifyStateChanged();
+        _notifySoundscapeUi(this.playlist, "soundscape-one-shot-timer", ps.id);
+
+        if (!ps.playing) {
+            debug(`[Soundscape] Skipping "${ps.name}" because it is no longer active`);
+            return false;
+        }
 
         // Polyphony cap — if saturated, skip this fire and re-arm.
-        if (this.activeOneShots.size >= this.maxPolyphony) {
-            debug(`[Soundscape] Polyphony cap reached (${this.activeOneShots.size}), skipping "${ps.name}"`);
+        if (this._getOccupiedPolyphony() >= this.maxPolyphony) {
+            debug(`[Soundscape] Polyphony cap reached (${this._getOccupiedPolyphony()}), skipping "${ps.name}"`);
             if (!this.isDestroyed) this._armOneShot(ps, { minimumDelayMs: RETRY_BACKOFF_MS });
-            return;
+            return false;
         }
 
         // Play chance — probabilistic skip (optionally scaled by active polyphony).
         const effectiveChance = this._resolveEffectivePlayChance(ps);
-        if (effectiveChance < 100 && (Math.random() * 100) >= effectiveChance) {
+        if (!bypassChance && effectiveChance < 100 && (Math.random() * 100) >= effectiveChance) {
             debug(`[Soundscape] playChance skip for "${ps.name}" (${effectiveChance.toFixed(0)}%)`);
             if (!this.isDestroyed) this._armOneShot(ps, { minimumDelayMs: RETRY_BACKOFF_MS });
-            return;
+            return false;
         }
 
         ensureAudioContext();
+
+        let reservationActive = true;
+        this._reserveOneShot(ps.id);
+        const releaseReservation = () => {
+            if (!reservationActive) return;
+            reservationActive = false;
+            this._releaseOneShotReservation(ps.id);
+        };
 
         // Compute target volume with random variance.
         const baseVol = Flags.resolveTargetVolume(ps);
@@ -310,14 +340,16 @@ export class SoundscapeEngine {
             });
             await sound.load();
         } catch (err) {
+            releaseReservation();
             error(`[Soundscape] Failed to load "${ps.name}":`, err);
-            if (!this.isDestroyed) this._armOneShot(ps, { minimumDelayMs: RETRY_BACKOFF_MS });
-            return;
+            if (!this.isDestroyed && ps.playing) this._armOneShot(ps, { minimumDelayMs: RETRY_BACKOFF_MS });
+            return false;
         }
 
-        if (this.isDestroyed) {
+        if (this.isDestroyed || !ps.playing) {
+            releaseReservation();
             safeStop(sound, "soundscape fire aborted");
-            return;
+            return false;
         }
 
         // Attach panner BEFORE play so the audio graph is complete at first sample.
@@ -329,7 +361,8 @@ export class SoundscapeEngine {
         sound._sosProceduralId = ps.id;
         this.activeOneShots.add(sound);
         this._incrementActiveCount(ps.id);
-        State.notifyStateChanged();
+        releaseReservation();
+        _notifySoundscapeUi(this.playlist, "soundscape-one-shot-active", ps.id);
 
         const fadeInMs = _resolveFadeInMs(this.playlist);
         const useFadeIn = fadeInMs > 0;
@@ -355,18 +388,18 @@ export class SoundscapeEngine {
             this.activeOneShots.delete(sound);
             this._decrementActiveCount(ps.id);
             this._detachPanner(sound);
-            State.notifyStateChanged();
-            if (!this.isDestroyed) this._armOneShot(ps, { minimumDelayMs: RETRY_BACKOFF_MS });
-            return;
+            _notifySoundscapeUi(this.playlist, "soundscape-one-shot-play-failed", ps.id);
+            if (!this.isDestroyed && ps.playing) this._armOneShot(ps, { minimumDelayMs: RETRY_BACKOFF_MS });
+            return false;
         }
 
-        if (this.isDestroyed) {
+        if (this.isDestroyed || !ps.playing) {
             safeStop(sound, "soundscape fire aborted post-play");
             this.activeOneShots.delete(sound);
             this._decrementActiveCount(ps.id);
             this._detachPanner(sound);
-            State.notifyStateChanged();
-            return;
+            _notifySoundscapeUi(this.playlist, "soundscape-one-shot-aborted", ps.id);
+            return false;
         }
 
         // Cleanup when the sound ends naturally (or just past its duration).
@@ -378,7 +411,7 @@ export class SoundscapeEngine {
             this._decrementActiveCount(ps.id);
             this._detachPanner(sound);
             if (sound.playing) safeStop(sound, "soundscape fire cleanup");
-            State.notifyStateChanged();
+            _notifySoundscapeUi(this.playlist, "soundscape-one-shot-cleanup", ps.id);
             // Only re-arm if the procedural is still active on the document.
             // User-initiated stop (playing: false) must not resurrect its timer.
             if (!this.isDestroyed && ps.playing) {
@@ -401,16 +434,22 @@ export class SoundscapeEngine {
             AudioTimeout.wait(waitMs).then(cleanup);
         }
 
-        debug(
-            `[Soundscape] Fired "${ps.name}" — vol ${(targetVol * 100).toFixed(0)}%` +
-            ""
-        );
+        debug(`[Soundscape] Fired "${ps.name}"`, {
+            targetVolume: Number(targetVol.toFixed(3)),
+            playing: !!sound.playing,
+            loaded: !!sound.loaded,
+            volume: Number((sound.volume ?? 0).toFixed(3)),
+            gain: Number((sound.gain?.value ?? 0).toFixed(3)),
+            currentTime: Number((sound.currentTime ?? 0).toFixed(3)),
+            duration: Number((sound.duration ?? 0).toFixed(3)),
+        });
 
         Hooks.callAll(`${MODULE_ID}.oneShotFire`, {
             playlist: this.playlist,
             sound: ps,
             volume: targetVol,
         });
+        return true;
     }
 
     /**
@@ -424,12 +463,35 @@ export class SoundscapeEngine {
         const scaling = Flags.getPlaylistFlag(this.playlist, "soundscapePlayChanceScaling");
         if (!["scaled", "soft"].includes(scaling)) return base;
         const max = this.maxPolyphony || 1;
-        const headroomFrac = Math.max(0, 1 - this.activeOneShots.size / max);
+        const headroomFrac = Math.max(0, 1 - this._getOccupiedPolyphony() / max);
         const attenuation =
             scaling === "soft"
                 ? Math.sqrt(headroomFrac)
                 : headroomFrac;
         return Math.max(0, Math.min(100, base * attenuation));
+    }
+
+    _getOccupiedPolyphony() {
+        return this.activeOneShots.size + this.pendingOneShotTotal;
+    }
+
+    _reserveOneShot(soundId) {
+        this.pendingOneShotTotal += 1;
+        const next = (this.pendingOneShotCounts.get(soundId) ?? 0) + 1;
+        this.pendingOneShotCounts.set(soundId, next);
+        _notifySoundscapeUi(this.playlist, "soundscape-one-shot-pending", soundId);
+    }
+
+    _releaseOneShotReservation(soundId) {
+        this.pendingOneShotTotal = Math.max(0, this.pendingOneShotTotal - 1);
+        const current = this.pendingOneShotCounts.get(soundId) ?? 0;
+        if (current <= 1) {
+            this.pendingOneShotCounts.delete(soundId);
+            _notifySoundscapeUi(this.playlist, "soundscape-one-shot-pending", soundId);
+            return;
+        }
+        this.pendingOneShotCounts.set(soundId, current - 1);
+        _notifySoundscapeUi(this.playlist, "soundscape-one-shot-pending", soundId);
     }
 
     _incrementActiveCount(soundId) {
@@ -452,6 +514,14 @@ export class SoundscapeEngine {
 
     isOneShotActive(soundId) {
         return this.getActiveOneShotCount(soundId) > 0;
+    }
+
+    getPendingOneShotCount(soundId) {
+        return this.pendingOneShotCounts.get(soundId) ?? 0;
+    }
+
+    isOneShotPending(soundId) {
+        return this.getPendingOneShotCount(soundId) > 0;
     }
 
     /**
@@ -518,10 +588,15 @@ export class SoundscapeEngine {
 
     /**
      * Current polyphony snapshot for UI meters.
-     * @returns {{active: number, max: number}}
+     * @returns {{active: number, audible: number, pending: number, max: number}}
      */
     getPolyphony() {
-        return { active: this.activeOneShots.size, max: this.maxPolyphony };
+        return {
+            active: this._getOccupiedPolyphony(),
+            audible: this.activeOneShots.size,
+            pending: this.pendingOneShotTotal,
+            max: this.maxPolyphony,
+        };
     }
 
     /**
@@ -542,11 +617,10 @@ export class SoundscapeEngine {
         this.oneShotTimers.delete(soundId);
 
         try {
-            await this._fireOneShot(ps);
-            return true;
+            return await this._fireOneShot(ps, { bypassChance: true });
         } catch (err) {
             warn(`[Soundscape] fireOneShotNow failed for "${ps.name}":`, err?.message);
-            if (!this.isDestroyed) this._armOneShot(ps, { minimumDelayMs: RETRY_BACKOFF_MS });
+            if (!this.isDestroyed && ps.playing) this._armOneShot(ps, { minimumDelayMs: RETRY_BACKOFF_MS });
             return false;
         }
     }
@@ -592,12 +666,12 @@ export class SoundscapeEngine {
                 this._detachPanner(sound);
             }
         }
-        State.notifyStateChanged();
+        _notifySoundscapeUi(this.playlist, "soundscape-one-shot-disarmed", ps.id);
     }
 
     /**
      * Diagnostics snapshot.
-     * @returns {{active: boolean, bedCount: number, armedOneShots: number, activeOneShots: number}}
+     * @returns {{active: boolean, bedCount: number, armedOneShots: number, activeOneShots: number, pendingOneShots: number}}
      */
     getDiagnostics() {
         return {
@@ -605,6 +679,7 @@ export class SoundscapeEngine {
             bedCount: this.bedSoundIds.size,
             armedOneShots: this.oneShotTimers.size,
             activeOneShots: this.activeOneShots.size,
+            pendingOneShots: this.pendingOneShotTotal,
         };
     }
 
@@ -619,7 +694,7 @@ export class SoundscapeEngine {
 
         debug(
             `[Soundscape] Destroying engine for "${this.playlist.name}" ` +
-            `(${this.oneShotTimers.size} armed, ${this.activeOneShots.size} active)`
+            `(${this.oneShotTimers.size} armed, ${this.activeOneShots.size} active, ${this.pendingOneShotTotal} pending)`
         );
 
         // Cancel all armed timers.
@@ -644,6 +719,8 @@ export class SoundscapeEngine {
         }
         this.activeOneShots.clear();
         this.activeOneShotCounts.clear();
+        this.pendingOneShotTotal = 0;
+        this.pendingOneShotCounts.clear();
 
         // GM stops beds via normal Foundry mechanism (replicates to clients).
         if (stopBeds && game.user.isGM) {
@@ -662,7 +739,7 @@ export class SoundscapeEngine {
             }
         }
         this.bedSoundIds.clear();
-        State.notifyStateChanged();
+        _notifySoundscapeUi(this.playlist, "soundscape-engine-destroyed");
 
         Hooks.callAll(`${MODULE_ID}.soundscapeEnd`, { playlist: this.playlist });
     }

@@ -817,27 +817,75 @@ class StateManager {
 
     /**
      * Public bridge for notifying UI listeners about runtime state updates.
-     * @param {boolean} [silent=false]
+     * @param {boolean|Object} [options=false]
+     * @param {boolean} [options.silent=false]
+     * @param {boolean} [options.soundscapeOnly=false] True when existing soundscape UI can update in place.
      */
-    notifyStateChanged(silent = false) {
-        this._emitStateChange(silent);
+    notifyStateChanged(options = false) {
+        const { silent, context } = this._normalizeStateChangeOptions(options);
+        this._emitStateChange(silent, context);
+    }
+
+    _normalizeStateChangeOptions(options = false) {
+        if (typeof options === "boolean") return { silent: options, context: {} };
+        if (!options || typeof options !== "object") return { silent: false, context: {} };
+
+        const { silent = false, context = null, ...rest } = options;
+        return {
+            silent: !!silent,
+            context: context && typeof context === "object" ? context : rest,
+        };
+    }
+
+    _mergeStateChangeContexts(current, next = {}) {
+        const normalizedNext = {
+            ...next,
+            soundscapeOnly: next.soundscapeOnly === true,
+        };
+        if (!current) return normalizedNext;
+
+        const reasons = new Set([
+            ...(Array.isArray(current.reasons) ? current.reasons : []),
+            current.reason,
+            ...(Array.isArray(normalizedNext.reasons) ? normalizedNext.reasons : []),
+            normalizedNext.reason,
+        ].filter(Boolean));
+
+        const samePlaylist = current.playlistId && current.playlistId === normalizedNext.playlistId;
+        const sameSound = current.soundId && current.soundId === normalizedNext.soundId;
+
+        return {
+            ...current,
+            ...normalizedNext,
+            soundscapeOnly: current.soundscapeOnly === true && normalizedNext.soundscapeOnly === true,
+            reason: Array.from(reasons).join(",") || undefined,
+            reasons: Array.from(reasons),
+            playlistId: samePlaylist ? current.playlistId : null,
+            soundId: sameSound ? current.soundId : null,
+        };
     }
 
     /**
      * Emits a generic hook to notify listeners that the module's state has changed.
      * @private
      */
-    _emitStateChange(silent = false) {
+    _emitStateChange(silent = false, context = {}) {
         // Silent emissions are for internal audio-engine bookkeeping (crossfade timers,
         // play waiters) that have no visual representation in the UI.
         if (silent) return;
+        this._pendingStateChangeContext = this._mergeStateChangeContexts(
+            this._pendingStateChangeContext,
+            context
+        );
         // Use a debounce to prevent spamming renders during rapid changes (like a crossfade).
         // Uses AudioTimeout instead of setTimeout for consistency with background-tab behavior.
         if (this._emitPending) return;
         this._emitPending = true;
         const flush = () => {
+            const pendingContext = this._pendingStateChangeContext ?? {};
+            this._pendingStateChangeContext = null;
             this._emitPending = false;
-            Hooks.callAll(`${MODULE_ID}.stateChanged`);
+            Hooks.callAll(`${MODULE_ID}.stateChanged`, pendingContext);
         };
 
         if (game.audio?.locked || !game.audio?.music) {
@@ -846,6 +894,7 @@ class StateManager {
         }
 
         foundry.audio.AudioTimeout.wait(150).then(flush).catch(() => {
+            this._pendingStateChangeContext = null;
             this._emitPending = false;
         });
     }

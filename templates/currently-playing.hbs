@@ -6,8 +6,14 @@
                 data-tooltip aria-label="{{ localize pin.label }}" data-action="pinCurrentlyPlaying"></button>
     </header>
     <ol class="playlist-sounds plain">
-        {{#each sounds}}
-            {{> "modules/the-sound-of-silence/templates/sos-sound-partial.hbs" }}
+        {{#each groups}}
+            {{#if isSoundscape}}
+                {{> "modules/the-sound-of-silence/templates/sos-soundscape-group.hbs" }}
+            {{else}}
+                {{#each sounds}}
+                    {{> "modules/the-sound-of-silence/templates/sos-sound-partial.hbs" }}
+                {{/each}}
+            {{/if}}
         {{/each}}
     </ol>
 </div>

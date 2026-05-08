@@ -7,6 +7,7 @@
 import { MODULE_ID } from "./utils.js";
 import { debug } from "./utils.js";
 import { Flags } from "./flag-service.js";
+import { SoundscapePreviewer } from "./soundscape-previewer.js";
 
 /**
  * Defines the flag keys and default values for all playlist-level settings.
@@ -260,6 +261,10 @@ function _buildSoundscapePanel(playlist, sos, fieldName, visible) {
   const maxPoly = sos.soundscapeMaxPolyphony ?? 4;
   const defaultTimingMode = sanitizeProceduralTimingMode(defaults.timingMode);
   const defaultInitialFireMode = sanitizeProceduralInitialFireMode(defaults.initialFireMode);
+  const hasPreviewableContent = Array.from(playlist?.sounds ?? [])
+    .some((ps) => !Flags.getSoundFlag(ps, "isSilenceGap"));
+  const previewDisabled = hasPreviewableContent ? "" : "disabled";
+  const previewStatus = hasPreviewableContent ? "Ready" : "No Sounds";
 
   const proceduralRows = (playlist?.sounds ?? [])
     .filter((ps) => !Flags.getSoundFlag(ps, "isSilenceGap") && Flags.getSoundFlag(ps, "isProcedural"))
@@ -380,6 +385,21 @@ function _buildSoundscapePanel(playlist, sos, fieldName, visible) {
         </label>
       </fieldset>
 
+      ${game.user.isGM ? `
+        <fieldset class="sos-soundscape-preview">
+          <legend>Preview</legend>
+          <div class="sos-soundscape-preview-row">
+            <button type="button" class="sos-soundscape-preview-start sos-proc-audition-fire" data-tooltip="Preview Soundscape" ${previewDisabled}>
+              <i class="fa-solid fa-play"></i>
+            </button>
+            <button type="button" class="sos-soundscape-preview-stop sos-proc-audition-stop" data-tooltip="Stop Preview" disabled>
+              <i class="fa-solid fa-stop"></i>
+            </button>
+            <span class="sos-soundscape-preview-status">${previewStatus}</span>
+          </div>
+        </fieldset>
+      ` : ""}
+
       <fieldset class="sos-procedural-roster">
         <legend>Procedural Roster</legend>
         ${rosterTable}
@@ -417,6 +437,8 @@ if (fadeRangePicker.length) {
     sos.maxDelay = sos.silenceDuration;
   }
   const fieldName = (key) => `flags.${MODULE_ID}.${key}`;
+  const $modeSelect = html.find('select[name="mode"], select[name="playbackMode"]');
+  const $sortModeRow = html.find('select[name="sorting"]').closest(".form-group");
 
   // Pre-calculate whether looping is allowed for the current playlist mode
   const ALLOWED_LOOP_MODES = [
@@ -428,6 +450,7 @@ if (fadeRangePicker.length) {
   const canLoop = ALLOWED_LOOP_MODES.includes(playlistMode);
   const soundscapeActive =
     playlistMode === CONST.PLAYLIST_MODES.DISABLED && !!sos.soundscapeMode;
+  const nonSoundscapeDisplay = soundscapeActive ? "none" : "block";
 
   // Define a localizable label for "Fade-In"
   const fadeInLabel = game.i18n.localize("Fade-In");
@@ -446,14 +469,15 @@ if (fadeRangePicker.length) {
 
       <!-- Compact Toggle Group -->
       <div class="sos-toggle-cluster">
-          <div class="form-group sos-compact">
+        <div class="form-group sos-compact sos-non-soundscape-setting" style="display: ${nonSoundscapeDisplay};">
           <label class="checkbox sos-feature-toggle">
             <input type="checkbox" name="${fieldName(KEYS.LOOP_PLAYLIST)}" ${sos.loopPlaylist ? "checked" : ""} ${canLoop ? "" : "disabled"}>
             <span class="sos-feature-label">Loop Entire Playlist</span>
           </label>
           ${canLoop ? "" : `<p class="notes sos-compact disabled-note">Only works in Sequential, Shuffle, or Simultaneous mode</p>`}
         </div>
-        <div class="form-group sos-compact">
+
+        <div class="form-group sos-compact sos-non-soundscape-setting" style="display: ${nonSoundscapeDisplay};">
           <label class="checkbox sos-feature-toggle">
             <input type="checkbox" name="${fieldName(KEYS.CROSSFADE_ENABLED)}" ${sos.crossfade ? "checked" : ""} ${soundscapeActive ? "disabled" : ""}>
             <span class="sos-feature-label">Enable Crossfade</span>
@@ -481,7 +505,7 @@ if (fadeRangePicker.length) {
         
         ${_buildSoundscapePanel(app.document, sos, fieldName, soundscapeActive)}
 
-        <div class="form-group sos-compact">
+        <div class="form-group sos-compact sos-non-soundscape-setting" style="display: ${nonSoundscapeDisplay};">
           <label class="checkbox sos-feature-toggle">
             <input type="checkbox" name="${fieldName(KEYS.ENABLED)}" ${sos.silenceEnabled ? "checked" : ""} ${soundscapeActive ? "disabled" : ""}>
             <span class="sos-feature-label">Enable Silence</span>
@@ -544,10 +568,19 @@ if (fadeRangePicker.length) {
   const silenceMaster = $mainBlock.find(`input[name="${fieldName(KEYS.ENABLED)}"]`);
   const silenceOptions = $mainBlock.find('.sos-silence-block');
   const soundscapeOptions = $mainBlock.find('.sos-soundscape-options');
+  const nonSoundscapeSettings = $mainBlock.find('.sos-non-soundscape-setting');
   const isSoundscapeChoice = () => String($modeSelect.val()) === "soundscape";
+  const soundscapePreviewPanel = $mainBlock.find('.sos-soundscape-preview');
+  const soundscapePreviewStart = soundscapePreviewPanel.find('.sos-soundscape-preview-start');
+  const soundscapePreviewStop = soundscapePreviewPanel.find('.sos-soundscape-preview-stop');
+  const soundscapePreviewStatus = soundscapePreviewPanel.find('.sos-soundscape-preview-status');
+  const hasPreviewableSoundscapeContent = Array.from(app.document?.sounds ?? [])
+    .some((ps) => !Flags.getSoundFlag(ps, "isSilenceGap"));
 
   function refreshSoundscapeState() {
     const soundscapeOn = isSoundscapeChoice();
+    nonSoundscapeSettings.toggle(!soundscapeOn);
+    $sortModeRow.toggle(!soundscapeOn);
     crossfadeMaster.prop('disabled', soundscapeOn);
     silenceMaster.prop('disabled', soundscapeOn);
 
@@ -559,7 +592,87 @@ if (fadeRangePicker.length) {
     crossfadeOptions.toggle(crossfadeMaster.is(':checked') && !soundscapeOn);
     silenceOptions.toggle(silenceMaster.is(':checked') && !soundscapeOn);
     soundscapeOptions.toggle(soundscapeOn);
+    refreshSoundscapePreviewControls();
   }
+
+  function readNamedValue(name, fallback) {
+    const field = $mainBlock.find(`[name="${name}"]`)[0] ?? html.find(`[name="${name}"]`)[0];
+    return field?.value ?? field?.getAttribute?.("value") ?? fallback;
+  }
+
+  function readNumber(name, fallback, min = -Infinity, max = Infinity) {
+    const value = Number(readNamedValue(name, fallback));
+    const n = Number.isFinite(value) ? value : fallback;
+    return Math.max(min, Math.min(max, n));
+  }
+
+  function collectSoundscapePreviewOverrides() {
+    let defMin = readNumber(fieldName(KEYS.SOUNDSCAPE_DEFAULT_MIN_DELAY), 15, 0, 3600);
+    let defMax = readNumber(fieldName(KEYS.SOUNDSCAPE_DEFAULT_MAX_DELAY), 60, 0, 3600);
+    if (defMax < defMin) [defMin, defMax] = [defMax, defMin];
+
+    return {
+      fade: readNumber("fade", app.document?.fade ?? 0, 0),
+      flags: {
+        fadeIn: readNumber(fieldName(KEYS.FADE_IN), 0, 0),
+        soundscapeMaxPolyphony: readNumber(fieldName(KEYS.SOUNDSCAPE_MAX_POLYPHONY), 4, 1, 16),
+        soundscapePlayChanceScaling: sanitizePlayChanceScaling(
+          $mainBlock.find(`input[name="${fieldName(KEYS.SOUNDSCAPE_PLAY_CHANCE_SCALING)}"]:checked`).val()
+        ),
+        volumeNormalizationEnabled: normalizationMaster.is(':checked'),
+        normalizedVolume: readNumber(fieldName(KEYS.NORMALIZED_VOLUME), 0.5, 0, 1),
+        soundscapeDefaults: {
+          minDelay: defMin,
+          maxDelay: defMax,
+          timingMode: sanitizeProceduralTimingMode(readNamedValue(fieldName(KEYS.SOUNDSCAPE_DEFAULT_TIMING_MODE), "uniform")),
+          initialFireMode: sanitizeProceduralInitialFireMode(readNamedValue(fieldName(KEYS.SOUNDSCAPE_DEFAULT_INITIAL_FIRE_MODE), "normal")),
+          volumeVariance: readNumber(fieldName(KEYS.SOUNDSCAPE_DEFAULT_VARIANCE), 0, 0, 1),
+          playChance: readNumber(fieldName(KEYS.SOUNDSCAPE_DEFAULT_PLAY_CHANCE), 100, 0, 100),
+          randomPan: !!$mainBlock.find(`input[name="${fieldName(KEYS.SOUNDSCAPE_DEFAULT_RANDOM_PAN)}"]`).is(':checked')
+        }
+      }
+    };
+  }
+
+  function setSoundscapePreviewStatus(text, state = "ready") {
+    soundscapePreviewPanel
+      .removeClass("is-loading is-playing is-failed")
+      .toggleClass("is-loading", state === "loading")
+      .toggleClass("is-playing", state === "playing")
+      .toggleClass("is-failed", state === "failed");
+    soundscapePreviewStatus.text(text);
+  }
+
+  function refreshSoundscapePreviewControls() {
+    if (!soundscapePreviewPanel.length) return;
+    const previewing = SoundscapePreviewer.isPreviewing(app.document);
+    const canPreview = hasPreviewableSoundscapeContent && isSoundscapeChoice() && !previewing;
+    soundscapePreviewStart.prop('disabled', !canPreview);
+    soundscapePreviewStop.prop('disabled', !previewing);
+    if (previewing) setSoundscapePreviewStatus("Playing", "playing");
+    else if (!hasPreviewableSoundscapeContent) setSoundscapePreviewStatus("No Sounds", "failed");
+    else setSoundscapePreviewStatus("Ready", "ready");
+  }
+
+  soundscapePreviewStart.on('click', async (event) => {
+    event.preventDefault();
+    if (soundscapePreviewStart.prop('disabled')) return;
+    setSoundscapePreviewStatus("Loading", "loading");
+    soundscapePreviewStart.prop('disabled', true);
+    const started = await SoundscapePreviewer.start(app.document, {
+      forceSoundscapeMode: true,
+      configOverrides: collectSoundscapePreviewOverrides()
+    });
+    app._soundOfSilenceSoundscapePreview = started;
+    refreshSoundscapePreviewControls();
+  });
+
+  soundscapePreviewStop.on('click', (event) => {
+    event.preventDefault();
+    SoundscapePreviewer.stop(app.document);
+    app._soundOfSilenceSoundscapePreview = false;
+    refreshSoundscapePreviewControls();
+  });
 
   crossfadeMaster.on('change', () => {
     crossfadeOptions.toggle(crossfadeMaster.is(':checked'));
@@ -619,7 +732,6 @@ if (fadeRangePicker.length) {
   $mainBlock.find(`input[name="${fieldName(KEYS.MAX_DELAY)}"]`).on('input', () => clampSliders("max"));
   clampSliders();
 
-  const $modeSelect = html.find('select[name="mode"], select[name="playbackMode"]');
   const loopChk = $mainBlock.find(`input[name="${fieldName(KEYS.LOOP_PLAYLIST)}"]`);
   const loopNote = loopChk.closest('.form-group').find('p.notes');
 
@@ -633,4 +745,12 @@ if (fadeRangePicker.length) {
   $modeSelect.on('change', refreshSoundscapeState);
   refreshSoundscapeState();
   refreshLoopToggle();
+});
+
+Hooks.on("closePlaylistConfig", (app) => {
+  if (!app?._soundOfSilenceSoundscapePreview) return;
+  if (SoundscapePreviewer.isPreviewing(app.document)) {
+    SoundscapePreviewer.stop(app.document, { notify: false });
+  }
+  app._soundOfSilenceSoundscapePreview = false;
 });
