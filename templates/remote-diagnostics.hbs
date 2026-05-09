@@ -20,6 +20,23 @@
             </div>
         </div>
 
+        <div class="context-states">
+            <span class="context-chip {{#if personalAudioMix.enabled}}warn{{else}}ok{{/if}}">
+                Personal Mix: {{#if personalAudioMix.enabled}}On{{else}}Off{{/if}}
+            </span>
+            {{#if _personalTrackVolumeCount}}
+                <span class="context-chip warn">Track Overrides: {{_personalTrackVolumeCount}}</span>
+            {{/if}}
+            {{#if _personalPlaylistVolumeEntries.length}}
+                {{#each _personalPlaylistVolumeEntries}}
+                <span class="context-chip warn">{{playlistName}}: {{value}}%</span>
+                {{/each}}
+            {{/if}}
+            {{#each _coreAudioVolumeEntries}}
+                <span class="context-chip {{#if muted}}warn{{else}}ok{{/if}}">{{name}}: {{value}}%</span>
+            {{/each}}
+        </div>
+
         {{!-- Playing Sounds --}}
         {{#if playingSounds.length}}
         <table class="sound-table">
@@ -52,13 +69,45 @@
                         {{/if}}
                     </td>
                     <td class="{{#if _contextSuspended}}error-text{{/if}}">{{contextState}}</td>
-                    <td class="mono">{{currentTime}} / {{duration}}</td>
+                    <td class="mono {{#if _invalidMediaTime}}error-text{{/if}}">{{currentTime}} / {{duration}}</td>
                 </tr>
                 {{/each}}
             </tbody>
         </table>
         {{else}}
         <p class="notes">No sounds currently playing on this client.</p>
+        {{/if}}
+
+        {{#if _playbackClockEntries.length}}
+        <details class="sequence-details">
+            <summary>Playback Clock ({{_playbackClockEntries.length}})</summary>
+            <table class="sequence-table">
+                <thead>
+                    <tr>
+                        <th>Playlist</th>
+                        <th>Sound</th>
+                        <th>Seq</th>
+                        <th>Clock Time</th>
+                        <th>Media Time</th>
+                        <th>Drift</th>
+                        <th>Overdue</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {{#each _playbackClockEntries}}
+                    <tr>
+                        <td>{{playlistName}}</td>
+                        <td>{{soundName}}</td>
+                        <td class="mono">{{clockSeq}}</td>
+                        <td class="mono">{{currentTime}} / {{durationSec}}</td>
+                        <td class="mono">{{mediaCurrentTime}} / {{mediaDuration}}</td>
+                        <td class="mono">{{driftSec}}</td>
+                        <td>{{overdueSec}}s</td>
+                    </tr>
+                    {{/each}}
+                </tbody>
+            </table>
+        </details>
         {{/if}}
 
         {{!-- Module Features --}}

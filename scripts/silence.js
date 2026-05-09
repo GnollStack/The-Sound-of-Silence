@@ -164,6 +164,48 @@ async function teardownGap(playlist, state) {
   State.clearSilenceState(playlist);
 }
 
+export async function completeSilenceGap(playlist, state = State.getSilenceState(playlist), { reason = "timer" } = {}) {
+  if (!playlist || !state || !State.hasSilenceState(playlist)) return false;
+  if (state.cancelled || state.completed) return false;
+
+  state.completed = true;
+  if (reason !== "timer") {
+    try {
+      state.timer?.cancel?.();
+    } catch (_) { }
+  }
+
+  const gapMs = Number(state.gapMs ?? state.gap?.getFlag?.(MODULE_ID, "gapDuration")) || 0;
+  debug(`[${MODULE_ID}] Silent gap of ${gapMs} ms completed for "${playlist.name}" (${reason})`);
+
+  Hooks.callAll('the-sound-of-silence.silenceEnd', {
+    playlist,
+    duration: gapMs,
+    completed: true
+  });
+  State.recordSilence(gapMs, false);
+
+  const sourceSound = state.sourceSound;
+  const wasPlaying = playlist.playing;
+
+  await teardownGap(playlist, state);
+
+  if (game.user.isGM && wasPlaying && sourceSound) {
+    const order = playlist.playbackOrder;
+    const idx = order.indexOf(sourceSound.id) + 1;
+    const next = playlist.sounds.get(order[idx]);
+
+    if (next) {
+      playlist.playSound(next);
+    } else if (!maybeLoopPlaylist(playlist)) {
+      playlist.stopAll();
+    }
+  }
+
+  state.resolve?.(false);
+  return true;
+}
+
 
 // ============================================
 // Public API
@@ -171,6 +213,7 @@ async function teardownGap(playlist, state) {
 
 export const Silence = {
   FLAG_KEY,
+  completeGap: completeSilenceGap,
 
   /**
    * Injects a silent track into the given playlist. This is the main entry point for the feature.
@@ -222,55 +265,19 @@ export const Silence = {
         cancelled: false,
         timer: timer,
         resolve,
-        sourceSound // Add the source sound to the state
+        sourceSound, // Add the source sound to the state
+        gapMs,
+        startedAt: Date.now(),
+        expectedEndAt: Date.now() + gapMs
       };
       State.setSilenceState(playlist, state);
 
       // Await the completion of the precise timer.
       timer.complete.then(async () => {
-
-        // If the state was cleared by an external cleanup (like stopAll),
-        // this entire operation is void. Do nothing.
-        if (!State.hasSilenceState(playlist)) {
-          debug(`[Silence] Timer expired, but state was already cleaned up. Aborting.`);
-          return;
-        }
-        // Check if we were cancelled while waiting. The 'cancelled' flag is
-        // set by the cancelSilentGap function in main.js.
-        if (state.cancelled) return;
+        return completeSilenceGap(playlist, state, { reason: "timer" });
 
         debug(`[${MODULE_ID}] ⏱ Silent gap of ${gapMs} ms expired for "${playlist.name}"`);
 
-        // Emit silence end event
-        Hooks.callAll('the-sound-of-silence.silenceEnd', {
-          playlist,
-          duration: gapMs,
-          completed: true
-        });
-        State.recordSilence(gapMs, false);
-
-        const sourceSound = state.sourceSound;
-        const wasPlaying = playlist.playing;
-
-        // We must clean up the gap BEFORE advancing to avoid race conditions.
-        await teardownGap(playlist, state);
-
-        // Now, advance the playlist if it was playing before the gap.
-        if (game.user.isGM && wasPlaying && sourceSound) {
-          const order = playlist.playbackOrder;
-          const idx = order.indexOf(sourceSound.id) + 1;
-          const next = playlist.sounds.get(order[idx]);
-
-          if (next) {
-            playlist.playSound(next);
-          } else {
-            // If there's no next track, check if we should loop the whole playlist.
-            if (!maybeLoopPlaylist(playlist)) {
-              playlist.stopAll();
-            }
-          }
-        }
-        resolve(false); // Resolve normally
       });
     });
   }

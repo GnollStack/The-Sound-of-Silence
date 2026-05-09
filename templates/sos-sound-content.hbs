@@ -140,6 +140,17 @@
     </div>
 </div>
 
+{{#if sos.showPersonalTrackVolume}}
+<div class="sos-personal-mix-badge"
+     data-tooltip="Personal Mix: these volume controls are local to you and do not affect the GM or other players.">
+    <span class="sos-personal-mix-icons">
+        <i class="fa-solid fa-user" inert></i>
+        <i class="fa-solid fa-headphones" inert></i>
+    </span>
+    <span>Personal Mix</span>
+</div>
+{{/if}}
+
 {{#if sos.showPlaylistVolumeRow}}
 <div class="sos-volume-columns">
     <div class="sos-volume-col sos-track-volume-col">
@@ -148,9 +159,20 @@
             <span class="sos-vol-sublabel">Volume</span>
         </span>
         <i class="volume-icon fa-solid fa-volume-low" inert></i>
+        {{#if sos.showPersonalTrackVolume}}
+        <range-picker class="sos-personal-track-volume-slider"
+                      name="personalTrackVolume-{{ id }}"
+                      value="{{ sos.personalTrackVolume }}"
+                      min="0" max="1" step="0.05"
+                      data-playlist-id="{{ playlistId }}"
+                      data-sound-id="{{ id }}"
+                      data-sound-uuid="{{ uuid }}">
+        </range-picker>
+        {{else}}
         {{#with volume}}
         {{ formInput field classes="sound-volume" value=modifier dataset=dataset aria=aria disabled=disabled }}
         {{/with}}
+        {{/if}}
     </div>
     <div class="sos-volume-col sos-playlist-volume-col" data-playlist-id="{{ playlistId }}">
         <span class="sos-vol-label-wrap sos-volume-compact-label">
@@ -166,19 +188,60 @@
                       {{#unless sos.isGM}}disabled{{/unless}}>
         </range-picker>
     </div>
+    {{#if sos.showPersonalVolumeRow}}
+    <div class="sos-volume-col sos-personal-volume-col" data-playlist-id="{{ playlistId }}">
+        <span class="sos-vol-label-wrap sos-volume-compact-label">
+            <span class="sos-vol-label">Playlist</span>
+            <span class="sos-vol-sublabel">Volume</span>
+        </span>
+        <i class="volume-icon fa-solid fa-volume-low" inert></i>
+        <range-picker class="sos-personal-volume-slider"
+                      name="personalVolume-{{ playlistId }}"
+                      value="{{ sos.personalVolume }}"
+                      min="0" max="1" step="0.05"
+                      data-playlist-id="{{ playlistId }}">
+        </range-picker>
+    </div>
+    {{/if}}
 </div>
 {{else}}
-<div class="sos-volume-columns sos-volume-single">
+<div class="sos-volume-columns {{#unless sos.showPersonalVolumeRow}}sos-volume-single{{/unless}}">
     <div class="sos-volume-col sos-track-volume-col">
         <span class="sos-vol-label-wrap sos-volume-compact-label">
             <span class="sos-vol-label">Track</span>
             <span class="sos-vol-sublabel">Volume</span>
         </span>
         <i class="volume-icon fa-solid fa-volume-low" inert></i>
+        {{#if sos.showPersonalTrackVolume}}
+        <range-picker class="sos-personal-track-volume-slider"
+                      name="personalTrackVolume-{{ id }}"
+                      value="{{ sos.personalTrackVolume }}"
+                      min="0" max="1" step="0.05"
+                      data-playlist-id="{{ playlistId }}"
+                      data-sound-id="{{ id }}"
+                      data-sound-uuid="{{ uuid }}">
+        </range-picker>
+        {{else}}
         {{#with volume}}
         {{ formInput field classes="sound-volume" value=modifier dataset=dataset aria=aria disabled=disabled }}
         {{/with}}
+        {{/if}}
     </div>
+    {{#if sos.showPersonalVolumeRow}}
+    <div class="sos-volume-col sos-personal-volume-col" data-playlist-id="{{ playlistId }}">
+        <span class="sos-vol-label-wrap sos-volume-compact-label">
+            <span class="sos-vol-label">Playlist</span>
+            <span class="sos-vol-sublabel">Volume</span>
+        </span>
+        <i class="volume-icon fa-solid fa-volume-low" inert></i>
+        <range-picker class="sos-personal-volume-slider"
+                      name="personalVolume-{{ playlistId }}"
+                      value="{{ sos.personalVolume }}"
+                      min="0" max="1" step="0.05"
+                      data-playlist-id="{{ playlistId }}">
+        </range-picker>
+    </div>
+    {{/if}}
 </div>
 {{/if}}
 

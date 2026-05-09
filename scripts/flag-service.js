@@ -487,13 +487,12 @@ class FlagService {
     }
 
     /**
-     * Resolves the effective target volume for a PlaylistSound, accounting for
-     * playlist-level volume normalization. This is the single source of truth for
-     * "what volume should this sound be playing at?"
+     * Resolves the shared GM mix target volume for a PlaylistSound, accounting
+     * for playlist-level volume normalization but not client-local attenuation.
      * @param {PlaylistSound} ps The playlist sound document.
      * @returns {number} The target volume (0-1, logarithmic/converted scale).
      */
-    resolveTargetVolume(ps) {
+    resolveSharedTargetVolume(ps) {
         const playlist = ps?.parent;
         if (!playlist) return ps?.volume ?? 1;
 
@@ -505,6 +504,272 @@ class FlagService {
             return foundry.audio.AudioHelper.inputToVolume(normalizedVolume);
         }
         return ps.volume;
+    }
+
+    /**
+     * Clamp a numeric value into the 0-1 volume range.
+     * @private
+     */
+    _clampVolume(value, fallback = 0) {
+        const num = Number(value);
+        if (!Number.isFinite(num)) return fallback;
+        return Math.max(0, Math.min(1, num));
+    }
+
+    /**
+     * Whether this non-GM client is using the opt-in personal audio mix.
+     * GMs always remain on the shared authoritative mix.
+     * @returns {boolean}
+     */
+    isPersonalAudioMixEnabled() {
+        try {
+            return !game.user?.isGM && !!game.settings?.get(MODULE_ID, "personalPlaylistVolumeEnabled");
+        } catch (err) {
+            return false;
+        }
+    }
+
+    /**
+     * Backwards-compatible alias for the original setting helper name.
+     * @returns {boolean}
+     */
+    isPersonalPlaylistVolumeEnabled() {
+        return this.isPersonalAudioMixEnabled();
+    }
+
+    /**
+     * Get all stored personal playlist volume values for this client.
+     * @returns {Object<string, number>}
+     */
+    getPersonalPlaylistVolumes() {
+        try {
+            const values = game.settings?.get(MODULE_ID, "personalPlaylistVolumes");
+            return values && typeof values === "object" && !Array.isArray(values) ? values : {};
+        } catch (err) {
+            return {};
+        }
+    }
+
+    /**
+     * Whether this client has an explicit personal playlist value saved.
+     * @param {Playlist|string} playlist Playlist document or id.
+     * @returns {boolean}
+     */
+    hasPersonalPlaylistVolume(playlist) {
+        const playlistId = typeof playlist === "string" ? playlist : playlist?.id;
+        if (!playlistId) return false;
+        return Object.prototype.hasOwnProperty.call(this.getPersonalPlaylistVolumes(), playlistId);
+    }
+
+    /**
+     * Get this client's local playlist volume slider value.
+     * @param {Playlist|string} playlist Playlist document or id.
+     * @param {object} [options]
+     * @param {number} [options.override] Transient slider value to apply before persistence.
+     * @param {PlaylistSound} [options.fallbackSound] Sound used to derive the shared fallback slider value.
+     * @param {boolean} [options.fallbackToShared=false] Return the shared slider value if no playlist value exists.
+     * @returns {number} 0-1 slider/input value.
+     */
+    getPersonalPlaylistVolume(playlist, { override, fallbackSound, fallbackToShared = false } = {}) {
+        if (!this.isPersonalAudioMixEnabled()) return 1;
+        if (Number.isFinite(Number(override))) return this._clampVolume(override, 1);
+
+        const playlistId = typeof playlist === "string" ? playlist : playlist?.id;
+        if (!playlistId) return 1;
+
+        const values = this.getPersonalPlaylistVolumes();
+        const value = Number(values[playlistId]);
+        if (Number.isFinite(value)) return this._clampVolume(value, 1);
+        if (fallbackToShared && fallbackSound) {
+            const shared = this.resolveSharedTargetVolume(fallbackSound);
+            const input = foundry.audio.AudioHelper.volumeToInput(shared);
+            return this._clampVolume(Number.isFinite(input) ? input : shared, 1);
+        }
+        return 1;
+    }
+
+    /**
+     * Persist this client's local playlist volume slider value.
+     * @param {Playlist|string} playlist Playlist document or id.
+     * @param {number} value 0-1 slider/input value.
+     * @returns {Promise<Object<string, number>>}
+     */
+    async setPersonalPlaylistVolume(playlist, value) {
+        const playlistId = typeof playlist === "string" ? playlist : playlist?.id;
+        if (!playlistId) return this.getPersonalPlaylistVolumes();
+
+        const volumes = { ...this.getPersonalPlaylistVolumes() };
+        if (!Number.isFinite(Number(value))) {
+            delete volumes[playlistId];
+        } else {
+            volumes[playlistId] = this._clampVolume(value, 1);
+        }
+
+        await game.settings.set(MODULE_ID, "personalPlaylistVolumes", volumes);
+        return volumes;
+    }
+
+    /**
+     * Get all stored personal track slider values for this client.
+     * @returns {Object<string, number>}
+     */
+    getPersonalTrackVolumes() {
+        try {
+            const values = game.settings?.get(MODULE_ID, "personalTrackVolumes");
+            return values && typeof values === "object" && !Array.isArray(values) ? values : {};
+        } catch (err) {
+            return {};
+        }
+    }
+
+    /**
+     * Resolve the storage key for a personal track override.
+     * @param {PlaylistSound|string} sound PlaylistSound document or UUID.
+     * @returns {string|null}
+     */
+    getPersonalTrackVolumeKey(sound) {
+        if (typeof sound === "string") return sound || null;
+        return sound?.uuid ?? null;
+    }
+
+    /**
+     * Whether this client has an explicit personal value saved for this track.
+     * @param {PlaylistSound|string} sound PlaylistSound document or UUID.
+     * @returns {boolean}
+     */
+    hasPersonalTrackVolume(sound) {
+        const key = this.getPersonalTrackVolumeKey(sound);
+        if (!key) return false;
+        return Object.prototype.hasOwnProperty.call(this.getPersonalTrackVolumes(), key);
+    }
+
+    /**
+     * Get the local track slider value. Missing entries fall back to the current
+     * shared GM mix value so enabling personal audio does not jump volume.
+     * @param {PlaylistSound} ps The playlist sound document.
+     * @param {object} [options]
+     * @param {number} [options.override] Transient slider value to apply before persistence.
+     * @param {boolean} [options.fallbackToShared=true] Return the shared slider value if no override exists.
+     * @returns {number|null} 0-1 slider/input value.
+     */
+    getPersonalTrackVolumeInput(ps, { override, fallbackToShared = true } = {}) {
+        if (Number.isFinite(Number(override))) return this._clampVolume(override, 1);
+
+        const key = this.getPersonalTrackVolumeKey(ps);
+        const values = this.getPersonalTrackVolumes();
+        const value = key ? Number(values[key]) : NaN;
+        if (Number.isFinite(value)) return this._clampVolume(value, 1);
+        if (!fallbackToShared) return null;
+
+        if (ps?.parent && this.hasPersonalPlaylistVolume(ps.parent)) {
+            return this.getPersonalPlaylistVolume(ps.parent);
+        }
+
+        const shared = this.resolveSharedTargetVolume(ps);
+        const input = foundry.audio.AudioHelper.volumeToInput(shared);
+        return this._clampVolume(Number.isFinite(input) ? input : shared, 1);
+    }
+
+    /**
+     * Persist this client's local track slider value.
+     * @param {PlaylistSound|string} sound PlaylistSound document or UUID.
+     * @param {number} value 0-1 slider/input value.
+     * @returns {Promise<Object<string, number>>}
+     */
+    async setPersonalTrackVolume(sound, value) {
+        const key = this.getPersonalTrackVolumeKey(sound);
+        if (!key) return this.getPersonalTrackVolumes();
+
+        const num = Number(value);
+        if (!Number.isFinite(num)) return this.getPersonalTrackVolumes();
+
+        const volumes = { ...this.getPersonalTrackVolumes(), [key]: this._clampVolume(num, 1) };
+        await game.settings.set(MODULE_ID, "personalTrackVolumes", volumes);
+        return volumes;
+    }
+
+    /**
+     * Persist one local track slider value for every sound in a playlist.
+     * @param {Playlist} playlist Playlist document.
+     * @param {number} value 0-1 slider/input value.
+     * @returns {Promise<Object<string, number>>}
+     */
+    async setPersonalTrackVolumesForPlaylist(playlist, value) {
+        if (!playlist?.sounds) return this.getPersonalTrackVolumes();
+
+        const num = Number(value);
+        if (!Number.isFinite(num)) return this.getPersonalTrackVolumes();
+
+        const nextValue = this._clampVolume(num, 1);
+        const volumes = { ...this.getPersonalTrackVolumes() };
+        for (const sound of playlist.sounds) {
+            const key = this.getPersonalTrackVolumeKey(sound);
+            if (key) volumes[key] = nextValue;
+        }
+
+        await game.settings.set(MODULE_ID, "personalTrackVolumes", volumes);
+        return volumes;
+    }
+
+    /**
+     * Apply this client's local playlist volume to a volume. This helper is
+     * retained for callers that only have a Playlist, not a PlaylistSound.
+     * @param {Playlist} playlist
+     * @param {number} volume
+     * @param {object} [options]
+     * @param {number} [options.playlistVolume] Transient playlist slider value.
+     * @returns {number}
+     */
+    applyPersonalPlaylistVolume(playlist, volume, { playlistVolume } = {}) {
+        const clamped = this._clampVolume(volume, 0);
+        if (!this.isPersonalAudioMixEnabled()) return clamped;
+        if (!Number.isFinite(Number(playlistVolume)) && !this.hasPersonalPlaylistVolume(playlist)) return clamped;
+
+        const input = this.getPersonalPlaylistVolume(playlist, { override: playlistVolume });
+        const localVolume = foundry.audio.AudioHelper.inputToVolume(input);
+        return this._clampVolume(Number.isFinite(localVolume) ? localVolume : clamped, 0);
+    }
+
+    /**
+     * Resolves the effective target volume for live playback on this client.
+     * @param {PlaylistSound} ps The playlist sound document.
+     * @param {object} [options]
+     * @param {number} [options.sharedVolume] Shared GM target to use instead of recomputing.
+     * @param {number} [options.trackInput] Transient local track slider value.
+     * @param {number} [options.playlistVolume] Transient local playlist slider value.
+     * @returns {number} The target volume (0-1, logarithmic/converted scale).
+     */
+    resolveTargetVolume(ps, { sharedVolume, trackInput, playlistVolume } = {}) {
+        const shared = Number.isFinite(Number(sharedVolume))
+            ? this._clampVolume(sharedVolume, 0)
+            : this._clampVolume(this.resolveSharedTargetVolume(ps), 0);
+
+        if (!this.isPersonalAudioMixEnabled()) return shared;
+
+        const hasPlaylistInput = Number.isFinite(Number(playlistVolume));
+        const hasPlaylistOverride = hasPlaylistInput || this.hasPersonalPlaylistVolume(ps?.parent);
+        const hasTrackInput = Number.isFinite(Number(trackInput));
+        const hasTrackOverride = hasTrackInput || this.hasPersonalTrackVolume(ps);
+        if (!hasPlaylistOverride && !hasTrackOverride) return shared;
+
+        const input = hasPlaylistInput
+            ? this.getPersonalPlaylistVolume(ps?.parent, { override: playlistVolume })
+            : (hasTrackOverride
+                ? this.getPersonalTrackVolumeInput(ps, {
+                    override: trackInput,
+                    fallbackToShared: true,
+                })
+                : this.getPersonalPlaylistVolume(ps?.parent));
+        let localTrackVolume = foundry.audio.AudioHelper.inputToVolume(input);
+        if (!Number.isFinite(localTrackVolume)) localTrackVolume = shared;
+
+        if (Number.isFinite(Number(sharedVolume))) {
+            const sharedBase = this._clampVolume(this.resolveSharedTargetVolume(ps), 0);
+            const varianceFactor = sharedBase > 0 ? shared / sharedBase : 1;
+            if (Number.isFinite(varianceFactor)) localTrackVolume *= varianceFactor;
+        }
+
+        return this._clampVolume(localTrackVolume, 0);
     }
 }
 

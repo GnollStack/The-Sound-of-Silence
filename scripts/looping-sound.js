@@ -782,7 +782,7 @@ export class LoopingSound {
       const sourceSound = this.activeSound;
       const targetSound = this.targetSound;
       safeStop(targetSound, "abort cleanup");
-      advancedFade(sourceSound, { targetVol: this.ps.volume, duration: 250 });
+      advancedFade(sourceSound, { targetVol: Flags.resolveTargetVolume(this.ps), duration: 250 });
     }
 
     // Disengage from the current loop and immediately look for the next one
@@ -812,7 +812,7 @@ export class LoopingSound {
       const sourceSound = this.activeSound;
       const targetSound = this.targetSound;
       safeStop(targetSound, "disableLooping abort crossfade");
-      advancedFade(sourceSound, { targetVol: this.ps.volume, duration: 250 });
+      advancedFade(sourceSound, { targetVol: Flags.resolveTargetVolume(this.ps), duration: 250 });
     }
 
     // Clear the active segment

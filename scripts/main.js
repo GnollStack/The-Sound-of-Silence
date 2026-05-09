@@ -6,7 +6,7 @@
  */
 import { registerPlaylistSheetWrappers } from "./playlist-config.js";
 import { Silence } from "./silence.js";
-import { scheduleCrossfade, cancelCrossfade } from "./cross-fade.js";
+import { scheduleCrossfade, cancelCrossfade, performCrossfade } from "./cross-fade.js";
 import { applyFadeIn } from "./fade-in.js";
 import { registerSoundConfigWrappers } from "./sound-config.js";
 import {
@@ -46,6 +46,7 @@ import {
   ensureAudioContext,
 } from "./utils.js";
 import { Flags } from "./flag-service.js";
+import { PlaybackClock } from "./playback-clock.js";
 import { State } from "./state-manager.js";
 import { API } from "./api.js";
 import { AdvancedShuffle, SHUFFLE_PATTERNS } from "./advanced-shuffle.js";
@@ -54,10 +55,12 @@ import { Integrations } from "./integrations.js";
 import {
   startSoundscape,
   stopSoundscape,
-  isSoundscapeActive,
 } from "./procedural-ambience.js";
 
 const AudioTimeout = foundry.audio.AudioTimeout;
+const PLAYBACK_RECOVERY_IN_FLIGHT = new Set();
+const PLAYBACK_RECOVERY_SEEN = new Map();
+let playbackRecoveryWatchdog = null;
 
 // =========================================================================
 // Constants & State
@@ -117,12 +120,423 @@ function _describeSoundAudio(soundDoc) {
   };
 }
 
+function _isSequentialOrShuffle(playlist) {
+  return [
+    CONST.PLAYLIST_MODES.SEQUENTIAL,
+    CONST.PLAYLIST_MODES.SHUFFLE,
+  ].includes(playlist?.mode);
+}
+
+function _getRecoverablePlayingSound(playlist) {
+  if (!playlist?.playing || !_isSequentialOrShuffle(playlist)) return null;
+  if (Flags.getPlaybackMode(playlist).soundscape) return null;
+  return playlist.sounds.find((sound) =>
+    sound.playing &&
+    !sound.repeat &&
+    !Flags.getSoundFlag(sound, "isSilenceGap")
+  ) ?? null;
+}
+
+function _getNextSoundInPlaybackOrder(playlist, sourceSound) {
+  const order = playlist?.playbackOrder ?? [];
+  const idx = order.indexOf(sourceSound?.id);
+  if (idx < 0) return null;
+  return playlist.sounds.get(order[idx + 1]) ?? null;
+}
+
+function _markClockRecovered(playlist, clock) {
+  if (!playlist?.id || !Number.isFinite(Number(clock?.clockSeq))) return;
+  PLAYBACK_RECOVERY_SEEN.set(playlist.id, Number(clock.clockSeq));
+}
+
+function _wasClockRecovered(playlist, clock) {
+  if (!playlist?.id || !Number.isFinite(Number(clock?.clockSeq))) return false;
+  return PLAYBACK_RECOVERY_SEEN.get(playlist.id) === Number(clock.clockSeq);
+}
+
+async function _advanceAfterTrack(playlist, sourceSound, reason = "clock recovery") {
+  const pendingFade = State.getEndOfTrackFade(sourceSound);
+  if (pendingFade) {
+    pendingFade.cancel?.();
+    State.clearEndOfTrackFade(sourceSound);
+  }
+
+  const next = _getNextSoundInPlaybackOrder(playlist, sourceSound);
+  debug(`[ClockRecovery] Advancing "${playlist.name}" after "${sourceSound.name}" (${reason}).`);
+  if (next) {
+    await playlist.playSound(next);
+  } else if (!maybeLoopPlaylist(playlist)) {
+    await playlist.stopAll();
+  }
+}
+
+async function _bootstrapPlaybackClock(playlist, activeSound, reason) {
+  if (!activeSound) {
+    debug(`[ClockRecovery] No active sound available to bootstrap "${playlist.name}".`);
+    return false;
+  }
+
+  const clock = await PlaybackClock.record(playlist, activeSound, activeSound.sound, {
+    reason,
+    force: true,
+  });
+  return !!clock;
+}
+
+function _queuePlaybackClockRecord(soundDoc, reason = "document playing", { force = false } = {}) {
+  const playlist = soundDoc?.parent;
+  if (!PlaylistActionAuthority.isAuthorizedGM()) return;
+  if (!playlist?.isOwner || !soundDoc?.playing) return;
+  if (!_isSequentialOrShuffle(playlist)) return;
+  if (Flags.getPlaybackMode(playlist).soundscape) return;
+  if (Flags.getSoundFlag(soundDoc, "isSilenceGap")) return;
+  if (soundDoc.repeat) return;
+
+  const attempt = async (label) => {
+    if (!soundDoc.playing || PlaybackClock.get(playlist)?.soundId === soundDoc.id) return;
+
+    const recorded = await PlaybackClock.record(playlist, soundDoc, soundDoc.sound, {
+      reason: `${reason}:${label}`,
+      force,
+    });
+    if (recorded) return;
+
+    const media = await waitForMedia(soundDoc);
+    await PlaybackClock.record(playlist, soundDoc, media, {
+      reason: `${reason}:${label}:media`,
+      force,
+    });
+  };
+
+  globalThis.setTimeout?.(() => {
+    attempt("settled").catch((err) =>
+      debug(`[Clock] Failed document clock record for "${soundDoc.name}":`, err?.message ?? err)
+    );
+  }, 0);
+
+  globalThis.setTimeout?.(() => {
+    attempt("late").catch((err) =>
+      debug(`[Clock] Failed late document clock record for "${soundDoc.name}":`, err?.message ?? err)
+    );
+  }, 300);
+}
+
+async function _recoverOverdueSilenceGap(playlist, reason) {
+  const state = State.getSilenceState(playlist);
+  if (!state || state.cancelled || state.completed) return false;
+
+  const expectedEndAt = Number(state.expectedEndAt);
+  if (!Number.isFinite(expectedEndAt) || Date.now() <= expectedEndAt + PlaybackClock.RECOVERY_GRACE_MS) {
+    return false;
+  }
+
+  debug(`[ClockRecovery] Completing overdue silent gap in "${playlist.name}" (${reason}).`);
+  return Silence.completeGap(playlist, state, { reason: `clock:${reason}` });
+}
+
+async function _recoverOverduePlaylist(playlist, reason = "watchdog") {
+  if (!PlaylistActionAuthority.isAuthorizedGM()) return false;
+  if (!playlist?.isOwner || !playlist.playing) return false;
+  if (!_isSequentialOrShuffle(playlist)) return false;
+  if (Flags.getPlaybackMode(playlist).soundscape) return false;
+
+  const key = playlist.id;
+  if (PLAYBACK_RECOVERY_IN_FLIGHT.has(key)) return false;
+
+  PLAYBACK_RECOVERY_IN_FLIGHT.add(key);
+  try {
+    if (await _recoverOverdueSilenceGap(playlist, reason)) return true;
+
+    const activeSound = _getRecoverablePlayingSound(playlist);
+    if (!activeSound) return false;
+
+    if (State.hasActiveLooper(activeSound)) {
+      debug(`[ClockRecovery] Skipping "${activeSound.name}" - internal loop is active.`);
+      return false;
+    }
+
+    let clock = PlaybackClock.get(playlist);
+    if (!clock || clock.soundId !== activeSound.id) {
+      await _bootstrapPlaybackClock(playlist, activeSound, `bootstrap:${reason}`);
+      return false;
+    }
+
+    if (_wasClockRecovered(playlist, clock)) return false;
+    if (!PlaybackClock.isOverdue(playlist, clock)) return false;
+
+    const mode = Flags.getPlaybackMode(playlist);
+    _markClockRecovered(playlist, clock);
+
+    if (mode.crossfade) {
+      if (State.isPlaylistCrossfading(playlist)) {
+        debug(`[ClockRecovery] "${playlist.name}" is already crossfading; skipping overdue recovery.`);
+        return false;
+      }
+      debug(`[ClockRecovery] Triggering overdue crossfade for "${activeSound.name}" in "${playlist.name}".`);
+      await performCrossfade(playlist, activeSound, { recovery: true, reason });
+      return true;
+    }
+
+    if (mode.silence) {
+      debug(`[ClockRecovery] Starting overdue silent gap after "${activeSound.name}" in "${playlist.name}".`);
+      const pendingFade = State.getEndOfTrackFade(activeSound);
+      if (pendingFade) {
+        pendingFade.cancel?.();
+        State.clearEndOfTrackFade(activeSound);
+      }
+      Silence.playSilence(playlist, activeSound);
+      return true;
+    }
+
+    await _advanceAfterTrack(playlist, activeSound, reason);
+    return true;
+  } catch (err) {
+    debug(`[ClockRecovery] Failed recovery for "${playlist?.name}":`, err?.message ?? err);
+    return false;
+  } finally {
+    PLAYBACK_RECOVERY_IN_FLIGHT.delete(key);
+  }
+}
+
+function _runPlaybackRecoveryWatchdog(reason = "watchdog") {
+  if (!PlaylistActionAuthority.isAuthorizedGM()) return;
+  for (const playlist of game.playlists ?? []) {
+    _recoverOverduePlaylist(playlist, reason);
+  }
+}
+
+function _startPlaybackRecoveryWatchdog() {
+  if (playbackRecoveryWatchdog || !globalThis.setInterval) return;
+  playbackRecoveryWatchdog = globalThis.setInterval(
+    () => _runPlaybackRecoveryWatchdog("interval"),
+    PlaybackClock.WATCHDOG_INTERVAL_MS
+  );
+  globalThis.addEventListener?.("beforeunload", () => {
+    if (playbackRecoveryWatchdog) globalThis.clearInterval(playbackRecoveryWatchdog);
+    playbackRecoveryWatchdog = null;
+  }, { once: true });
+}
+
 function _debugPlaybackTrace(message, playlist = null, extra = {}) {
   const playlistPart = playlist ? ` playlist="${playlist.name}"` : "";
   debug(`[PlaybackTrace] ${message}${playlistPart}`, {
     active: _describeActivePlaylists(),
     ...extra,
   });
+}
+
+function _cssAttrSelector(attribute, value) {
+  const text = String(value ?? "");
+  const escaped = globalThis.CSS?.escape
+    ? CSS.escape(text)
+    : text.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+  return `[${attribute}="${escaped}"]`;
+}
+
+function _soundVolumeInputValue(soundDoc) {
+  const volume = Number(soundDoc?.volume);
+  if (!Number.isFinite(volume)) return null;
+  const converted = foundry.audio.AudioHelper.volumeToInput(volume);
+  return Number.isFinite(converted) ? converted : volume;
+}
+
+function _personalTrackVolumeInputValue(soundDoc) {
+  const value = Number(Flags.getPersonalTrackVolumeInput(soundDoc));
+  return Number.isFinite(value) ? value : null;
+}
+
+function _setRangePickerValue(rangePicker, value) {
+  if (!rangePicker || !Number.isFinite(value)) return false;
+
+  let changed = false;
+  if (Number(rangePicker.value) !== value) {
+    rangePicker.value = value;
+    changed = true;
+  }
+  if (rangePicker.getAttribute?.("value") !== String(value)) {
+    rangePicker.setAttribute?.("value", String(value));
+    changed = true;
+  }
+
+  for (const input of rangePicker.querySelectorAll?.('input[type="range"], input[type="number"]') ?? []) {
+    if (Number(input.value) === value) continue;
+    input.value = String(value);
+    changed = true;
+  }
+
+  return changed;
+}
+
+function _syncSoundVolumeControls(soundDoc, reason = "volume update") {
+  const value = _soundVolumeInputValue(soundDoc);
+  if (!Number.isFinite(value)) return;
+
+  const selectors = [
+    `.sound${_cssAttrSelector("data-sound-id", soundDoc.id)}`,
+    `.sound${_cssAttrSelector("data-document-id", soundDoc.id)}`,
+    `.sound${_cssAttrSelector("data-entry-id", soundDoc.id)}`,
+  ];
+
+  let updated = 0;
+  const rows = document.querySelectorAll(selectors.join(","));
+  for (const row of rows) {
+    for (const control of row.querySelectorAll("range-picker.sound-volume, input.sound-volume")) {
+      if (_setRangePickerValue(control, value)) updated += 1;
+    }
+  }
+
+  if (updated) {
+    debug(`[Volume] Synced ${updated} visible volume control(s) for "${soundDoc.name}" (${reason}).`);
+  }
+}
+
+function _syncPersonalTrackVolumeControls(soundDoc, reason = "volume update", { force = false } = {}) {
+  if (!Flags.isPersonalAudioMixEnabled()) return;
+  if (!force && Flags.hasPersonalTrackVolume(soundDoc)) return;
+
+  const value = _personalTrackVolumeInputValue(soundDoc);
+  if (!Number.isFinite(value)) return;
+
+  const selectors = [
+    `.sound${_cssAttrSelector("data-sound-id", soundDoc.id)}`,
+    `.sound${_cssAttrSelector("data-document-id", soundDoc.id)}`,
+    `.sound${_cssAttrSelector("data-entry-id", soundDoc.id)}`,
+  ];
+
+  let updated = 0;
+  const rows = document.querySelectorAll(selectors.join(","));
+  for (const row of rows) {
+    for (const control of row.querySelectorAll(".sos-personal-track-volume-slider")) {
+      if (_setRangePickerValue(control, value)) updated += 1;
+    }
+  }
+
+  if (updated) {
+    debug(`[Volume] Synced ${updated} personal track control(s) for "${soundDoc.name}" (${reason}).`);
+  }
+}
+
+function _syncPersonalTrackVolumeControlsForPlaylist(playlist, reason = "playlist volume update") {
+  if (!playlist?.sounds) return;
+  for (const soundDoc of playlist.sounds) {
+    _syncPersonalTrackVolumeControls(soundDoc, reason);
+  }
+}
+
+function _syncEmbeddedSoundVolumeControls(playlist, changes, reason = "embedded volume update") {
+  if (!Array.isArray(changes?.sounds)) return;
+
+  for (const soundChange of changes.sounds) {
+    if (!Object.prototype.hasOwnProperty.call(soundChange ?? {}, "volume")) continue;
+    const soundDoc = playlist?.sounds?.get(soundChange._id);
+    if (soundDoc) {
+      _syncSoundVolumeControls(soundDoc, reason);
+      _syncPersonalTrackVolumeControls(soundDoc, reason);
+    }
+  }
+
+  _applyPersonalAudioMixToActiveSounds(playlist);
+}
+
+function _syncPlaylistVolumeControls(playlist, reason = "playlist volume update") {
+  const value = Number(Flags.getPlaylistFlag(playlist, "normalizedVolume"));
+  if (!Number.isFinite(value)) return;
+
+  const playlistSelector = _cssAttrSelector("data-playlist-id", playlist.id);
+  const selectors = [
+    `.sos-playlist-volume-slider${playlistSelector}`,
+    `.sos-playlist-volume-col${playlistSelector} .sos-playlist-volume-slider`,
+  ];
+
+  let updated = 0;
+  for (const control of document.querySelectorAll(selectors.join(","))) {
+    if (_setRangePickerValue(control, value)) updated += 1;
+  }
+
+  if (updated) {
+    debug(`[Volume] Synced ${updated} visible playlist volume control(s) for "${playlist.name}" (${reason}).`);
+  }
+}
+
+function _applyPersonalAudioMixToActiveSound(ps, options = {}) {
+  const sound = ps?.sound;
+  if (!sound?.playing) return;
+  if (State.isSoundFading(sound)) return;
+  sound.volume = Flags.resolveTargetVolume(ps, options);
+}
+
+function _applyPersonalAudioMixToActiveSounds(playlist, options = {}) {
+  if (!playlist) return;
+
+  for (const ps of playlist.sounds ?? []) {
+    _applyPersonalAudioMixToActiveSound(ps, options);
+  }
+
+  const engine = State.getSoundscapeEngine(playlist);
+  if (engine?.applyPersonalAudioMix) engine.applyPersonalAudioMix(options);
+  else engine?.applyPersonalPlaylistVolume?.(options);
+}
+
+function _applyPersonalPlaylistVolumeToActiveSounds(playlist) {
+  _applyPersonalAudioMixToActiveSounds(playlist);
+}
+
+function _applyPersonalPlaylistVolumesToActiveSounds() {
+  for (const playlist of game.playlists ?? []) {
+    _applyPersonalAudioMixToActiveSounds(playlist);
+  }
+}
+
+function _getActiveSoundscapeSounds(playlist) {
+  if (!playlist?.sounds) return [];
+  return playlist.sounds.filter(
+    (sound) => sound.playing && !Flags.getSoundFlag(sound, "isSilenceGap")
+  );
+}
+
+function _shouldRunSoundscapeEngine(playlist) {
+  if (!playlist || !Flags.getPlaybackMode(playlist).soundscape) return false;
+  return !!playlist.playing || _getActiveSoundscapeSounds(playlist).length > 0;
+}
+
+async function _reconcileSoundscapeEngine(playlist, reason = "unknown") {
+  if (!playlist) return;
+
+  const engine = State.getSoundscapeEngine(playlist);
+  const shouldRun = _shouldRunSoundscapeEngine(playlist);
+
+  if (shouldRun) {
+    if (!engine || engine.isDestroyed) {
+      debug(`[Soundscape] Reconcile starting engine for "${playlist.name}" (${reason}).`);
+      const startedEngine = await startSoundscape(playlist);
+      startedEngine?.syncProceduralSounds?.();
+      return;
+    }
+
+    engine.syncProceduralSounds?.();
+    return;
+  }
+
+  if (engine && !engine.isDestroyed) {
+    debug(`[Soundscape] Reconcile stopping engine for "${playlist.name}" (${reason}).`);
+    stopSoundscape(playlist, { stopBeds: false });
+  }
+}
+
+function _scheduleSoundscapeReconcile(playlist, reason = "unknown") {
+  const run = () => {
+    _reconcileSoundscapeEngine(playlist, reason).catch((err) =>
+      debug(`[Soundscape] Reconcile failed for "${playlist?.name ?? "unknown"}":`, err?.message)
+    );
+  };
+
+  // Embedded PlaylistSound updates can settle just after updatePlaylist fires.
+  // Deferring one task gives every client the same repaired local engine state.
+  if (globalThis.setTimeout) {
+    setTimeout(run, 0);
+  } else {
+    globalThis.queueMicrotask?.(run);
+  }
 }
 
 // =========================================================================
@@ -142,6 +556,39 @@ Hooks.once("init", () => {
     config: true,
     type: Boolean,
     default: false,
+  });
+
+  game.settings.register(MODULE_ID, "personalPlaylistVolumeEnabled", {
+    name: "Use Personal Audio Mix",
+    hint: "For players, replace shared volume controls with client-local Track and Playlist Volume controls.",
+    scope: "client",
+    config: true,
+    type: Boolean,
+    default: false,
+    onChange: () => {
+      _applyPersonalPlaylistVolumesToActiveSounds();
+      ui.playlists?.render({ parts: ["playing"] });
+    },
+  });
+
+  game.settings.register(MODULE_ID, "personalPlaylistVolumes", {
+    name: "Personal Playlist Volumes",
+    hint: "Client-local per-playlist Sound of Silence volume slider values.",
+    scope: "client",
+    config: false,
+    type: Object,
+    default: {},
+    onChange: () => _applyPersonalPlaylistVolumesToActiveSounds(),
+  });
+
+  game.settings.register(MODULE_ID, "personalTrackVolumes", {
+    name: "Personal Track Volumes",
+    hint: "Client-local per-track Sound of Silence volume slider values.",
+    scope: "client",
+    config: false,
+    type: Object,
+    default: {},
+    onChange: () => _applyPersonalPlaylistVolumesToActiveSounds(),
   });
 
   game.settings.register(MODULE_ID, "shufflePattern", {
@@ -231,6 +678,7 @@ Hooks.once("ready", () => {
   registerPlaylistSheetWrappers();
   registerSoundConfigWrappers();
   registerCurrentlyPlaying();
+  _startPlaybackRecoveryWatchdog();
 
   Hooks.on("updatePlaylist", (playlist, changes, options, userId) => {
     const soundUpdates = Array.isArray(changes?.sounds)
@@ -244,7 +692,9 @@ Hooks.once("ready", () => {
       Object.prototype.hasOwnProperty.call(changes ?? {}, "playing") ||
       Object.prototype.hasOwnProperty.call(changes ?? {}, "mode") ||
       Object.prototype.hasOwnProperty.call(changes ?? {}, "sounds") ||
-      foundry.utils.hasProperty(changes ?? {}, `flags.${MODULE_ID}.soundscapeMode`);
+      foundry.utils.hasProperty(changes ?? {}, `flags.${MODULE_ID}.normalizedVolume`) ||
+      foundry.utils.hasProperty(changes ?? {}, `flags.${MODULE_ID}.soundscapeMode`) ||
+      foundry.utils.hasProperty(changes ?? {}, `flags.${MODULE_ID}.${PlaybackClock.FLAG_KEY}`);
     if (!relevant) return;
 
     _debugPlaybackTrace("updatePlaylist", playlist, {
@@ -255,6 +705,27 @@ Hooks.once("ready", () => {
       sounds: soundUpdates,
       options,
     });
+    _syncEmbeddedSoundVolumeControls(playlist, changes, "playlist embedded volume update");
+    if (foundry.utils.hasProperty(changes ?? {}, `flags.${MODULE_ID}.normalizedVolume`)) {
+      _syncPlaylistVolumeControls(playlist, "playlist document volume update");
+      _syncPersonalTrackVolumeControlsForPlaylist(playlist, "playlist document volume update");
+      _applyPersonalAudioMixToActiveSounds(playlist);
+    }
+    if (foundry.utils.hasProperty(changes ?? {}, `flags.${MODULE_ID}.${PlaybackClock.FLAG_KEY}`)) {
+      ui.playlists?.render({ parts: ["playing"] });
+    }
+    if (Array.isArray(changes?.sounds) && game.user?.isGM && playlist.isOwner) {
+      for (const soundChange of changes.sounds) {
+        if (soundChange?.playing !== true) continue;
+        const soundDoc = playlist.sounds.get(soundChange._id);
+        _queuePlaybackClockRecord(soundDoc, "playlist update");
+      }
+    }
+    if (changes.playing === false && game.user?.isGM && playlist.isOwner) {
+      PlaybackClock.clear(playlist, "playlist stopped").catch((err) =>
+        debug(`[Clock] Failed to clear stopped playlist clock:`, err?.message ?? err)
+      );
+    }
   });
 
   Hooks.on("updatePlaylistSound", (soundDoc, changes, options, userId) => {
@@ -267,16 +738,33 @@ Hooks.once("ready", () => {
       audio: _describeSoundAudio(soundDoc),
       options,
     });
+    if (
+      game.user?.isGM &&
+      soundDoc.parent?.isOwner &&
+      changes.playing === false &&
+      PlaybackClock.get(soundDoc.parent)?.soundId === soundDoc.id
+    ) {
+      PlaybackClock.clear(soundDoc.parent, "sound stopped").catch((err) =>
+        debug(`[Clock] Failed to clear stopped sound clock:`, err?.message ?? err)
+      );
+    }
+    if (changes.playing === true) {
+      _queuePlaybackClockRecord(soundDoc, "sound update");
+    }
+  });
+
+  Hooks.on("updatePlaylistSound", (soundDoc, changes) => {
+    if (!Object.prototype.hasOwnProperty.call(changes ?? {}, "volume")) return;
+    _syncSoundVolumeControls(soundDoc, "document volume update");
+    _syncPersonalTrackVolumeControls(soundDoc, "document volume update");
+    _applyPersonalAudioMixToActiveSounds(soundDoc.parent);
   });
 
   // If a client joins or reloads while a soundscape playlist is already live,
   // bootstrap the local engine from the replicated playlist state.
   for (const playlist of game.playlists) {
-    if (!playlist.playing) continue;
-    if (!Flags.getPlaybackMode(playlist).soundscape) continue;
-    startSoundscape(playlist).catch((err) =>
-      debug(`[Soundscape] Ready bootstrap failed for "${playlist.name}":`, err?.message)
-    );
+    if (!_shouldRunSoundscapeEngine(playlist)) continue;
+    _scheduleSoundscapeReconcile(playlist, "ready bootstrap");
   }
 
   // --- Visibility Recovery (Safety Net) ---
@@ -290,6 +778,7 @@ Hooks.once("ready", () => {
 
     // Resume any AudioContexts that the browser suspended while backgrounded
     ensureAudioContext();
+    _runPlaybackRecoveryWatchdog("visibility");
 
     for (const playlist of game.playlists) {
       if (!playlist.playing) continue;
@@ -326,14 +815,12 @@ Hooks.once("ready", () => {
       //    been set correctly due to browser throttling or async race conditions.
       const normEnabled = Flags.getPlaylistFlag(playlist, "volumeNormalizationEnabled");
       if (normEnabled) {
-        const normalizedVolume = Flags.getPlaylistFlag(playlist, "normalizedVolume");
-        const expectedVolume = foundry.audio.AudioHelper.inputToVolume(normalizedVolume);
-
         for (const ps of playlist.sounds) {
           if (!ps.playing || !ps.sound) continue;
           if (Flags.getSoundFlag(ps, "isSilenceGap")) continue;
           if (Flags.getSoundFlag(ps, "allowVolumeOverride")) continue;
 
+          const expectedVolume = Flags.resolveTargetVolume(ps);
           const currentGain = ps.sound.gain?.value;
           if (currentGain !== undefined && Math.abs(currentGain - expectedVolume) > 0.01 && !State.isSoundFading(ps.sound)) {
             debug(`[Visibility] Volume correction for "${ps.name}": gain=${currentGain.toFixed(3)} -> expected=${expectedVolume.toFixed(3)}`);
@@ -449,14 +936,10 @@ Hooks.once("ready", () => {
 
     const playlist = soundDoc.parent;
     if (!playlist || !Flags.getPlaybackMode(playlist).soundscape) return;
-
-    if (Flags.getSoundFlag(soundDoc, "isProcedural")) {
-      const engine = State.getSoundscapeEngine(playlist);
-      if (engine) {
-        if (changes.playing) engine.armProceduralSound(soundDoc);
-        else engine.disarmProceduralSound(soundDoc);
-      }
-    }
+    _scheduleSoundscapeReconcile(
+      playlist,
+      `sound update: ${soundDoc.name} playing=${Boolean(changes.playing)}`
+    );
   });
 
   // Auto-stop a Soundscape playlist when its last playing sound goes idle.
@@ -600,6 +1083,7 @@ Hooks.once("ready", () => {
       });
       logFeature(LogSymbols.STOP, "Stop", `Playlist: ${this.name}`);
       State.markPlaylistAsStopping(this);
+      await PlaybackClock.clear(this, "stopAll");
       const fadeDuration = Number(this.fade) || 0;
 
       // --- Step 1: Identify all sounds that need to be stopped ---
@@ -888,6 +1372,10 @@ Hooks.once("ready", () => {
       State.clearPlaylistCrossfading(playlist);
       return;
     }
+    const sharedTargetVolIn = Number.isFinite(Number(targetVolIn))
+      ? Number(targetVolIn)
+      : Flags.resolveSharedTargetVolume(psIn);
+    const localTargetVolIn = Flags.resolveTargetVolume(psIn, { sharedVolume: sharedTargetVolIn });
 
     const [soundOut, soundIn] = await Promise.all([
       psOut ? waitForMedia(psOut) : Promise.resolve(null),
@@ -906,7 +1394,7 @@ Hooks.once("ready", () => {
     // Graceful fallback: outgoing already stopped (network reorder) — snap incoming to target
     if (!soundOut?.playing) {
       debug(`[Crossfade-Sync] Outgoing sound already stopped; snapping "${psIn.name}" to target volume.`);
-      soundIn.volume = targetVolIn;
+      soundIn.volume = localTargetVolIn;
       State.clearFadingSound(soundIn);
       State.clearPlaylistCrossfading(playlist);
       return;
@@ -915,7 +1403,7 @@ Hooks.once("ready", () => {
     debug(`[Crossfade-Sync] Applying equal-power crossfade "${psOut?.name}" → "${psIn.name}" (${fadeMs}ms)`);
 
     // equalPowerCrossfade internally cancels any pending S-curve from applyFadeIn
-    equalPowerCrossfade(soundOut, soundIn, fadeMs, { targetVolIn });
+    equalPowerCrossfade(soundOut, soundIn, fadeMs, { targetVolIn: localTargetVolIn });
 
     AudioTimeout.wait(fadeMs + 50).then(() => {
       State.clearFadingSound(soundIn);
@@ -1036,9 +1524,11 @@ Hooks.once("ready", () => {
         });
 
         if (game.user.isGM) {
-          startSoundscape(this).catch((err) =>
-            debug(`[Soundscape] startSoundscape failed for "${this.name}":`, err?.message)
-          );
+          startSoundscape(this)
+            .then((engine) => engine?.syncProceduralSounds?.())
+            .catch((err) =>
+              debug(`[Soundscape] startSoundscape failed for "${this.name}":`, err?.message)
+            );
         }
         return result;
       }
@@ -1301,7 +1791,11 @@ Hooks.once("ready", () => {
         debug(`[Sync Guard] Blocked sync() for "${this.name}" — SoS fade curve active`);
         return;
       }
-      return wrapped();
+      const result = wrapped();
+      if (this.sound?.playing && !State.isSoundFading(this.sound)) {
+        this.sound.volume = Flags.resolveTargetVolume(this);
+      }
+      return result;
     },
     "MIXED"
   );
@@ -1358,6 +1852,9 @@ Hooks.once("ready", () => {
    * Uncomment for shuffle to start fresh each time playlist plays
    */
   Hooks.on("stopPlaylist", (playlist) => {
+    PlaybackClock.clear(playlist, "stopPlaylist").catch((err) =>
+      debug(`[Clock] Failed to clear stopped playlist clock:`, err?.message ?? err)
+    );
     if (playlist.mode === CONST.PLAYLIST_MODES.SHUFFLE) {
       AdvancedShuffle.reset(playlist);
       debug(`[Shuffle] Reset state for "${playlist.name}" on stop`);
@@ -1374,22 +1871,10 @@ Hooks.once("ready", () => {
     );
     const playingChanged = Object.prototype.hasOwnProperty.call(changes, "playing");
     const modeChanged = Object.prototype.hasOwnProperty.call(changes, "mode");
-    if (!soundscapeChanged && !playingChanged && !modeChanged) return;
+    const soundStatesChanged = Array.isArray(changes?.sounds);
+    if (!soundscapeChanged && !playingChanged && !modeChanged && !soundStatesChanged) return;
 
-    const nowSoundscape = Flags.getPlaybackMode(playlist).soundscape;
-    const engineActive = isSoundscapeActive(playlist);
-
-    if (playlist.playing && nowSoundscape && !engineActive) {
-      debug(`[Soundscape] Activating engine for "${playlist.name}" from playlist update.`);
-      startSoundscape(playlist).catch((err) =>
-        debug(`[Soundscape] Start-from-update failed:`, err?.message)
-      );
-    } else if ((!playlist.playing || !nowSoundscape) && engineActive) {
-      debug(`[Soundscape] Deactivating engine for "${playlist.name}" from playlist update.`);
-      // Let the surrounding playlist update own bed-track replication. This hook
-      // is only responsible for the local engine lifecycle on each client.
-      stopSoundscape(playlist, { stopBeds: false });
-    }
+    _scheduleSoundscapeReconcile(playlist, "playlist update");
   });
 
   // Soundscape is only valid in Soundboard mode. If the GM changes the
@@ -1561,6 +2046,13 @@ Hooks.once("ready", () => {
   function _schedulePostPlayActions(ps, sound, { fromCrossfade = false } = {}) {
     const playlist = ps.parent;
     const isResume = Number.isFinite(ps.pausedTime);
+
+    PlaybackClock.record(playlist, ps, sound, {
+      reason: fromCrossfade ? "crossfade playback" : (isResume ? "resume" : "play"),
+      force: isResume,
+    }).catch((err) => {
+      debug(`[Clock] Failed to record playback clock for "${ps.name}":`, err?.message ?? err);
+    });
 
     // Resume or schedule new loop
     if (isResume) {

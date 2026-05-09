@@ -166,8 +166,20 @@ After 3 seconds, a dialog appears showing each client's audio state side-by-side
 - **Fade status** — shows which sounds have active `setValueCurveAtTime` curves
 - **AudioContext state** — detects suspended contexts from background tabs
 - **Sequence numbers** — compares GM and player dedup counters to diagnose replication failures
+- **Playback clock state** - shows SoS wall-clock metadata, media-clock drift, and overdue playback recovery details
+- **Core audio volume state** - shows client-side Foundry audio channel volume values when available
 
 Visual indicators highlight problems automatically: red for stuck gains or suspended contexts, amber for active fades.
+
+#### Known Playback Limitation: GM Music Volume at 0
+
+Foundry playlist advancement is owner-client driven. If the GM is the playlist owner, sets Foundry's **Music Volume** to exact `0`, and then minimizes or backgrounds Foundry, the browser/Foundry audio clock can stall or report invalid time. When that happens, the playlist document may still say a track is playing, but the GM client may not fire the normal end/crossfade transition until the window becomes active again.
+
+SoS includes a shared playback clock and recovery-on-focus safeguards, but it cannot fully replace Foundry with server-side playlist playback while the owner client is throttled. If the GM wants not to hear music while players do, use one of these instead:
+
+- Set Foundry Music Volume to a tiny non-zero value, such as `0.01`.
+- Mute the browser tab, app, OS mixer, speakers, or headphones instead of setting Foundry Music Volume to exact `0`.
+- Keep the GM Foundry window active when long playlist transitions need to run unattended.
 
 ---
 

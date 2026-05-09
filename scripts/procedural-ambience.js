@@ -81,6 +81,9 @@ export class SoundscapeEngine {
         /** @type {Map<string, number>} soundId -> active instance count */
         this.activeOneShotCounts = new Map();
 
+        /** @type {WeakMap<foundry.audio.Sound, {soundId: string, varianceFactor: number}>} active one-shot volume metadata */
+        this.oneShotSharedTargetVolumes = new WeakMap();
+
         /** @type {WeakMap<foundry.audio.Sound, {panner: StereoPannerNode, panValue: number}>} */
         this.panners = new WeakMap();
 
@@ -325,13 +328,15 @@ export class SoundscapeEngine {
         };
 
         // Compute target volume with random variance.
-        const baseVol = Flags.resolveTargetVolume(ps);
+        const baseVol = Flags.resolveSharedTargetVolume(ps);
         const variancePct = Flags.resolveProceduralField(ps, "volumeVariance") ?? 0;
-        let targetVol = baseVol;
+        let sharedTargetVol = baseVol;
         if (variancePct > 0) {
             const offset = (Math.random() * 2 - 1) * variancePct;
-            targetVol = Math.max(0, Math.min(1, baseVol * (1 + offset)));
+            sharedTargetVol = Math.max(0, Math.min(1, baseVol * (1 + offset)));
         }
+        const varianceFactor = baseVol > 0 ? sharedTargetVol / baseVol : 1;
+        const targetVol = Flags.resolveTargetVolume(ps, { sharedVolume: sharedTargetVol });
 
         let sound;
         try {
@@ -360,6 +365,7 @@ export class SoundscapeEngine {
 
         sound._sosProceduralId = ps.id;
         this.activeOneShots.add(sound);
+        this.oneShotSharedTargetVolumes.set(sound, { soundId: ps.id, varianceFactor });
         this._incrementActiveCount(ps.id);
         releaseReservation();
         _notifySoundscapeUi(this.playlist, "soundscape-one-shot-active", ps.id);
@@ -386,6 +392,7 @@ export class SoundscapeEngine {
         } catch (err) {
             warn(`[Soundscape] Play failed for "${ps.name}":`, err?.message);
             this.activeOneShots.delete(sound);
+            this.oneShotSharedTargetVolumes.delete(sound);
             this._decrementActiveCount(ps.id);
             this._detachPanner(sound);
             _notifySoundscapeUi(this.playlist, "soundscape-one-shot-play-failed", ps.id);
@@ -396,6 +403,7 @@ export class SoundscapeEngine {
         if (this.isDestroyed || !ps.playing) {
             safeStop(sound, "soundscape fire aborted post-play");
             this.activeOneShots.delete(sound);
+            this.oneShotSharedTargetVolumes.delete(sound);
             this._decrementActiveCount(ps.id);
             this._detachPanner(sound);
             _notifySoundscapeUi(this.playlist, "soundscape-one-shot-aborted", ps.id);
@@ -408,6 +416,7 @@ export class SoundscapeEngine {
             if (cleanedUp) return;
             cleanedUp = true;
             this.activeOneShots.delete(sound);
+            this.oneShotSharedTargetVolumes.delete(sound);
             this._decrementActiveCount(ps.id);
             this._detachPanner(sound);
             if (sound.playing) safeStop(sound, "soundscape fire cleanup");
@@ -600,6 +609,34 @@ export class SoundscapeEngine {
     }
 
     /**
+     * Re-apply this client's personal audio mix to active one-shots.
+     * Shared per-fire variance is preserved; only local controls change.
+     */
+    applyPersonalAudioMix(options = {}) {
+        if (this.isDestroyed) return;
+
+        for (const sound of this.activeOneShots) {
+            if (!sound?.playing) continue;
+            const volumeData = this.oneShotSharedTargetVolumes.get(sound);
+            const ps = volumeData?.soundId ? this.playlist.sounds.get(volumeData.soundId) : null;
+            const sharedBase = ps ? Flags.resolveSharedTargetVolume(ps) : null;
+            const varianceFactor = Number(volumeData?.varianceFactor);
+            const sharedTarget = Number.isFinite(sharedBase)
+                ? Math.max(0, Math.min(1, sharedBase * (Number.isFinite(varianceFactor) ? varianceFactor : 1)))
+                : null;
+            if (!Number.isFinite(sharedTarget)) continue;
+            sound.volume = Flags.resolveTargetVolume(ps, {
+                sharedVolume: sharedTarget,
+                playlistVolume: options.playlistVolume,
+            });
+        }
+    }
+
+    applyPersonalPlaylistVolume(options = {}) {
+        this.applyPersonalAudioMix(options);
+    }
+
+    /**
      * Fire a procedural one-shot immediately, cancelling any armed timer.
      * Client-local: no replication. GM uses this for testing from the
      * Currently Playing panel.
@@ -636,6 +673,30 @@ export class SoundscapeEngine {
         if (!ps || !Flags.getSoundFlag(ps, "isProcedural")) return;
         if (this.oneShotTimers.has(ps.id)) return;
         this._armOneShot(ps, { initial: true });
+    }
+
+    /**
+     * Reconcile armed timers with the current PlaylistSound document state.
+     * This repairs client-side startup races where a playlist update arrives
+     * before embedded sound playing flags have settled locally.
+     */
+    syncProceduralSounds() {
+        if (this.isDestroyed || !this.isStarted) return;
+
+        for (const ps of this.playlist.sounds) {
+            if (!Flags.getSoundFlag(ps, "isProcedural")) continue;
+
+            if (ps.playing) {
+                this.armProceduralSound(ps);
+                continue;
+            }
+
+            const hasRuntimeState =
+                this.oneShotTimers.has(ps.id) ||
+                this.isOneShotActive(ps.id) ||
+                this.isOneShotPending(ps.id);
+            if (hasRuntimeState) this.disarmProceduralSound(ps);
+        }
     }
 
     /**

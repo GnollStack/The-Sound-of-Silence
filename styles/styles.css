@@ -2728,6 +2728,31 @@ body.theme-light .currently-playing .sos-now-playing.sos-progress-card {
   opacity: 0.85;
 }
 
+.currently-playing .sos-progress-card .sos-personal-mix-badge {
+  display: inline-flex;
+  align-items: center;
+  align-self: flex-start;
+  gap: 5px;
+  max-width: calc(100% - 14px);
+  margin: 4px 7px 0;
+  padding: 2px 6px;
+  border: 1px solid rgba(125, 183, 255, 0.45);
+  border-radius: var(--sos-radius-sm);
+  background: rgba(125, 183, 255, 0.12);
+  color: var(--sos-info-color, #7db7ff);
+  font-size: var(--sos-text-xs);
+  font-weight: 600;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+
+.currently-playing .sos-progress-card .sos-personal-mix-icons {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  opacity: 0.95;
+}
+
 .currently-playing .sos-progress-card .sos-volume-col range-picker,
 .currently-playing .sos-progress-card .sos-volume-col .sound-volume {
   flex: 1 1 auto;
@@ -2748,6 +2773,14 @@ body.theme-light .currently-playing .sos-now-playing.sos-progress-card {
 
 .currently-playing .sos-progress-card .sos-volume-col .sos-playlist-volume-slider input[type="range"] {
   accent-color: var(--sos-checkbox-accent);
+}
+
+.currently-playing .sos-progress-card .sos-volume-col .sos-personal-volume-slider input[type="range"] {
+  accent-color: var(--sos-info-color, #7db7ff);
+}
+
+.currently-playing .sos-progress-card .sos-volume-col .sos-personal-track-volume-slider input[type="range"] {
+  accent-color: var(--sos-info-color, #7db7ff);
 }
 
 .currently-playing .sos-progress-card .sos-volume-col range-picker input[type="number"] {

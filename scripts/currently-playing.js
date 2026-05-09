@@ -7,6 +7,7 @@
  */
 import { MODULE_ID, debug } from "./utils.js";
 import { Flags } from "./flag-service.js";
+import { PlaybackClock } from "./playback-clock.js";
 import { State } from "./state-manager.js";
 import { findSoundById } from "./sound-cache.js";
 import {
@@ -134,6 +135,15 @@ function _clampPercent(value) {
 }
 
 function _getSoundPlaybackPosition(ps) {
+    const clockPosition = PlaybackClock.resolvePosition(ps);
+    if (clockPosition) {
+        return {
+            currentTime: Math.max(0, clockPosition.currentTime),
+            duration: clockPosition.duration,
+            progressPct: clockPosition.progressPct,
+        };
+    }
+
     const media = ps?.sound;
     const duration = Number(media?.duration);
     const hasDuration = Number.isFinite(duration) && duration > 0;
@@ -246,6 +256,12 @@ function _buildSoundscapeSummary(beds, procs) {
     };
 }
 
+function _isSoundscapeGroupCollapsed(playlist, isSoundscape = true) {
+    if (!playlist || !isSoundscape) return false;
+    const saved = game.user.getFlag(MODULE_ID, `cp-collapsed.${playlist.id}`);
+    return saved !== false;
+}
+
 function _buildCurrentlyPlayingGroups(soundContexts) {
     const groups = [];
     let currentGroup = null;
@@ -255,7 +271,7 @@ function _buildCurrentlyPlayingGroups(soundContexts) {
         const isSoundscape = !!soundCtx.sos?.soundscapeActive;
 
         if (!currentGroup || currentGroup.playlistId !== soundCtx.playlistId) {
-            const collapsed = !!(playlist && game.user.getFlag(MODULE_ID, `cp-collapsed.${playlist.id}`));
+            const collapsed = _isSoundscapeGroupCollapsed(playlist, isSoundscape);
             currentGroup = {
                 playlistId: soundCtx.playlistId,
                 playlistName: playlist?.name ?? soundCtx.sos?.playlistName ?? "",
@@ -498,6 +514,12 @@ async function _wrapPreparePlayingContext(wrapped, context, options) {
         const normEnabled = Flags.getPlaylistFlag(playlist, "volumeNormalizationEnabled");
         const hasOverride = Flags.getSoundFlag(ps, "allowVolumeOverride");
         const normalizedVolume = Flags.getPlaylistFlag(playlist, "normalizedVolume") ?? 0.5;
+        const personalVolumeEnabled = Flags.isPersonalAudioMixEnabled();
+        const personalVolume = Flags.getPersonalPlaylistVolume(playlist, {
+            fallbackSound: ps,
+            fallbackToShared: true,
+        });
+        const personalTrackVolume = Flags.getPersonalTrackVolumeInput(ps);
 
         const playbackMode = Flags.getPlaybackMode(playlist);
         const silenceEnabled = playbackMode.silence;
@@ -511,6 +533,8 @@ async function _wrapPreparePlayingContext(wrapped, context, options) {
         const playbackPosition = _getSoundPlaybackPosition(ps);
         const progressPct = playbackPosition.progressPct;
         const fadeZones = _getSoundFadeZones(playlist, ps, playbackPosition.duration);
+        soundCtx.currentTime = _formatCurrentlyPlayingTime(playbackPosition.currentTime);
+        soundCtx.durationTime = _formatCurrentlyPlayingTime(playbackPosition.duration);
 
         // Procedural countdown readout (local clock, so each client sees its own ETA).
         let proceduralEta = "";
@@ -591,6 +615,10 @@ async function _wrapPreparePlayingContext(wrapped, context, options) {
             playlistNormalizationEnabled: !!normEnabled,
             normalizationEnabled: !!(normEnabled && !hasOverride),
             normalizedVolume,
+            personalVolumeEnabled,
+            personalVolume,
+            personalTrackVolume,
+            personalTrackVolumeOverridden: Flags.hasPersonalTrackVolume(ps),
             progressPct: progressPct.toFixed(2),
             ...fadeZones,
             isGM: game.user.isGM,
@@ -601,7 +629,7 @@ async function _wrapPreparePlayingContext(wrapped, context, options) {
         };
 
         // Disable native volume slider if managed by normalization
-        if (soundCtx.sos.normalizationEnabled && soundCtx.volume) {
+        if (soundCtx.sos.normalizationEnabled && soundCtx.volume && !soundCtx.sos.personalVolumeEnabled) {
             soundCtx.volume.managed = true;
             soundCtx.volume.disabled = true;
         }
@@ -621,8 +649,18 @@ async function _wrapPreparePlayingContext(wrapped, context, options) {
         soundCtx.sos.isPlaylistGroupStart = isPlaylistGroupStart;
         soundCtx.sos.showPlaylistVolumeRow = !!(
             soundCtx.sos.playlistNormalizationEnabled &&
+            !soundCtx.sos.personalVolumeEnabled &&
             !soundCtx.sos.showProceduralCard &&
             (!soundCtx.sos.soundscapeActive || isPlaylistGroupStart)
+        );
+        soundCtx.sos.showPersonalVolumeRow = !!(
+            soundCtx.sos.personalVolumeEnabled &&
+            !soundCtx.sos.showProceduralCard &&
+            isPlaylistGroupStart
+        );
+        soundCtx.sos.showPersonalTrackVolume = !!(
+            soundCtx.sos.personalVolumeEnabled &&
+            !soundCtx.sos.showProceduralCard
         );
         soundCtx.sos.showSoundscapePolyphony = isPlaylistGroupStart && !!groupPolyphony;
         lastPlaylistId = soundCtx.playlistId;
@@ -702,7 +740,10 @@ function _tickCurrentlyPlayingReadouts(app = ui.playlists) {
  */
 function _wrapUpdateTimestamps(wrapped, ...args) {
     _ensureTimestampCompatibility(this);
-    const result = wrapped.call(this, ...args);
+    const hasSosRows = _getCurrentlyPlayingSections(this).some((section) =>
+        !!section.querySelector(".sos-progress-card, .sos-procedural-eta, .sos-soundscape-strip")
+    );
+    const result = hasSosRows ? undefined : wrapped.call(this, ...args);
     _updateProgressBars(this);
     _updateSoundscapeReadouts(this);
     _syncCurrentlyPlayingTicker(this, { immediate: false });
@@ -822,7 +863,7 @@ function _updateProgressBars(app) {
             if (currentEl) currentEl.textContent = _formatCurrentlyPlayingTime(position.currentTime);
 
             const durationEl = row.querySelector(".sound-timer .duration");
-            if (durationEl && position.duration > 0) {
+            if (durationEl) {
                 durationEl.textContent = _formatCurrentlyPlayingTime(position.duration);
             }
         }
@@ -979,6 +1020,15 @@ function _onRenderPlaylistDirectory(app, html, context, options) {
     cp.removeEventListener("change", _handlePlaylistVolumeChange);
     cp.addEventListener("change", _handlePlaylistVolumeChange);
 
+    cp.removeEventListener("change", _handlePersonalPlaylistVolumeChange);
+    cp.addEventListener("change", _handlePersonalPlaylistVolumeChange);
+
+    cp.removeEventListener("input", _handlePersonalVolumeInput);
+    cp.addEventListener("input", _handlePersonalVolumeInput);
+
+    cp.removeEventListener("change", _handlePersonalTrackVolumeChange);
+    cp.addEventListener("change", _handlePersonalTrackVolumeChange);
+
     // Keep wheel scrolling pinned to the combined Currently Playing list even
     // when the pointer is over a card control or another module captures the sidebar.
     cp.removeEventListener("wheel", _handleCurrentlyPlayingWheel);
@@ -1101,7 +1151,7 @@ async function _handleSosAction(event, actionEl) {
             const playlist = game.playlists.get(playlistId);
             if (!playlist) return;
             const flagPath = `cp-collapsed.${playlist.id}`;
-            const current = !!game.user.getFlag(MODULE_ID, flagPath);
+            const current = _isSoundscapeGroupCollapsed(playlist, true);
             await game.user.setFlag(MODULE_ID, flagPath, !current);
             ui.playlists?.render({ parts: ["playing"] });
             break;
@@ -1125,6 +1175,147 @@ const _handlePlaylistVolumeChange = foundry.utils.debounce(async (event) => {
     await playlist.setFlag(MODULE_ID, "normalizedVolume", newVolume);
 }, 100);
 
+function _clampVolumeInput(value, fallback = 1) {
+    const num = Number(value);
+    if (!Number.isFinite(num)) return fallback;
+    return Math.max(0, Math.min(1, num));
+}
+
+function _getSliderPlaylist(slider) {
+    const playlistId = slider.dataset.playlistId;
+    return playlistId ? game.playlists.get(playlistId) : null;
+}
+
+function _getSliderSound(slider) {
+    const playlist = _getSliderPlaylist(slider);
+    return playlist?.sounds?.get(slider.dataset.soundId) ?? null;
+}
+
+function _stopPersonalVolumeEvent(event) {
+    event.preventDefault();
+    event.stopPropagation();
+    event.stopImmediatePropagation?.();
+}
+
+function _setRangePickerValue(rangePicker, value) {
+    if (!rangePicker || !Number.isFinite(value)) return false;
+
+    let changed = false;
+    if (Number(rangePicker.value) !== value) {
+        rangePicker.value = value;
+        changed = true;
+    }
+    if (rangePicker.getAttribute?.("value") !== String(value)) {
+        rangePicker.setAttribute?.("value", String(value));
+        changed = true;
+    }
+
+    for (const input of rangePicker.querySelectorAll?.('input[type="range"], input[type="number"]') ?? []) {
+        if (Number(input.value) === value) continue;
+        input.value = String(value);
+        changed = true;
+    }
+
+    return changed;
+}
+
+function _syncPersonalTrackSlidersForPlaylist(playlist, value) {
+    if (!playlist) return;
+    const selector = `.sos-personal-track-volume-slider${_dataSelector("data-playlist-id", playlist.id)}`;
+    for (const control of document.querySelectorAll(selector)) {
+        _setRangePickerValue(control, value);
+    }
+}
+
+function _applyPersonalTrackSliderValue(slider) {
+    if (!Flags.isPersonalAudioMixEnabled()) return;
+
+    const soundDoc = _getSliderSound(slider);
+    if (!soundDoc?.sound?.playing) return;
+    if (State.isSoundFading(soundDoc.sound)) return;
+
+    const newVolume = _clampVolumeInput(slider.value, 1);
+    soundDoc.sound.volume = Flags.resolveTargetVolume(soundDoc, { trackInput: newVolume });
+}
+
+function _applyPersonalPlaylistSliderValue(slider) {
+    if (!Flags.isPersonalAudioMixEnabled()) return;
+
+    const playlist = _getSliderPlaylist(slider);
+    if (!playlist) return;
+
+    const newVolume = _clampVolumeInput(slider.value, 1);
+    _syncPersonalTrackSlidersForPlaylist(playlist, newVolume);
+
+    for (const ps of playlist.sounds ?? []) {
+        const sound = ps.sound;
+        if (!sound?.playing) continue;
+        if (State.isSoundFading(sound)) continue;
+        sound.volume = Flags.resolveTargetVolume(ps, { playlistVolume: newVolume });
+    }
+
+    const engine = State.getSoundscapeEngine(playlist);
+    if (engine?.applyPersonalAudioMix) engine.applyPersonalAudioMix({ playlistVolume: newVolume });
+    else engine?.applyPersonalPlaylistVolume?.({ playlistVolume: newVolume });
+}
+
+function _handlePersonalVolumeInput(event) {
+    const trackSlider = event.target.closest(".sos-personal-track-volume-slider");
+    if (trackSlider) {
+        _stopPersonalVolumeEvent(event);
+        _applyPersonalTrackSliderValue(trackSlider);
+        return;
+    }
+
+    const playlistSlider = event.target.closest(".sos-personal-volume-slider");
+    if (!playlistSlider) return;
+    _stopPersonalVolumeEvent(event);
+    _applyPersonalPlaylistSliderValue(playlistSlider);
+}
+
+function _handlePersonalTrackVolumeChange(event) {
+    const slider = event.target.closest(".sos-personal-track-volume-slider");
+    if (!slider) return;
+
+    _stopPersonalVolumeEvent(event);
+    _applyPersonalTrackSliderValue(slider);
+    _persistPersonalTrackVolumeChange({
+        playlistId: slider.dataset.playlistId,
+        soundId: slider.dataset.soundId,
+        value: _clampVolumeInput(slider.value, 1),
+    });
+}
+
+function _handlePersonalPlaylistVolumeChange(event) {
+    const slider = event.target.closest(".sos-personal-volume-slider");
+    if (!slider) return;
+
+    _stopPersonalVolumeEvent(event);
+    _applyPersonalPlaylistSliderValue(slider);
+    _persistPersonalPlaylistVolumeChange({
+        playlistId: slider.dataset.playlistId,
+        value: _clampVolumeInput(slider.value, 1),
+    });
+}
+
+const _persistPersonalTrackVolumeChange = foundry.utils.debounce(async ({ playlistId, soundId, value } = {}) => {
+    const playlist = game.playlists.get(playlistId);
+    const sound = playlist?.sounds?.get(soundId);
+    if (!sound || !Flags.isPersonalAudioMixEnabled()) return;
+
+    debug(`[CurrentlyPlaying] Setting personal track volume for "${sound.name}" to ${value}`);
+    await Flags.setPersonalTrackVolume(sound, value);
+}, 75);
+
+const _persistPersonalPlaylistVolumeChange = foundry.utils.debounce(async ({ playlistId, value } = {}) => {
+    const playlist = game.playlists.get(playlistId);
+    if (!playlist || !Flags.isPersonalAudioMixEnabled()) return;
+
+    debug(`[CurrentlyPlaying] Setting personal playlist volume for "${playlist.name}" to ${value}`);
+    await Flags.setPersonalPlaylistVolume(playlist, value);
+    await Flags.setPersonalTrackVolumesForPlaylist(playlist, value);
+}, 75);
+
 function _attachPlaylistDirectoryWheelGuard(root) {
     const directoryList = root?.querySelector?.(PLAYLIST_SCROLL_TARGETS.directoryList);
     if (!directoryList) return;
@@ -1142,6 +1333,8 @@ function _isVolumeWheelTarget(target) {
         'input[type="number"]',
         ".sound-volume",
         ".sos-playlist-volume-slider",
+        ".sos-personal-track-volume-slider",
+        ".sos-personal-volume-slider",
     ].join(","));
 }
 

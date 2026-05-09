@@ -390,7 +390,7 @@ Hooks.on("renderPlaylistSoundConfig", (app, htmlRaw, data) => {
   const previewVolume = Number.isFinite(documentVolume)
     ? Math.max(0, Math.min(1, documentVolume))
     : 1;
-  const resolvedTargetVolume = Number(Flags.resolveTargetVolume(app.document));
+  const resolvedTargetVolume = Number(Flags.resolveSharedTargetVolume(app.document));
   const auditionVolume = Number.isFinite(resolvedTargetVolume)
     ? Math.max(0, Math.min(1, resolvedTargetVolume))
     : previewVolume;

@@ -8,6 +8,7 @@
  */
 
 import { Flags } from "./flag-service.js";
+import { PlaybackClock } from "./playback-clock.js";
 import { advancedFade, equalPowerCrossfade, fadeOutAndStop } from "./audio-fader.js";
 import { scheduleCrossfade, performCrossfade, cancelCrossfade } from "./cross-fade.js";
 import { scheduleLoopWithin, cancelLoopWithin, breakLoopWithin } from "./internal-loop.js";
@@ -783,6 +784,23 @@ class SoundOfSilenceAPI {
      * @returns {Object} Full diagnostic payload for this client
      * @private
      */
+    _getCoreAudioVolumes() {
+        const keys = [
+            "globalPlaylistVolume",
+            "globalMusicVolume",
+            "globalAmbientVolume",
+            "globalInterfaceVolume",
+        ];
+        const volumes = {};
+        for (const key of keys) {
+            try {
+                const value = game.settings?.get("core", key);
+                if (Number.isFinite(Number(value))) volumes[key] = Number(value);
+            } catch (_) { }
+        }
+        return volumes;
+    }
+
     _gatherLocalDiagnostics() {
         const base = this.inspectAll();
 
@@ -803,7 +821,12 @@ class SoundOfSilenceAPI {
                     isFading: State.isSoundFading(sound),
                     currentTime: sound.currentTime,
                     duration: sound.duration,
+                    currentTimeFinite: Number.isFinite(Number(sound.currentTime)),
+                    durationFinite: Number.isFinite(Number(sound.duration)) && Number(sound.duration) > 0,
                     contextState: sound.context?.state ?? "unknown",
+                    playbackClock: PlaybackClock.get(playlist)?.soundId === ps.id
+                        ? PlaybackClock.summarizePlaylist(playlist)
+                        : null,
                 });
             }
         }
@@ -813,6 +836,19 @@ class SoundOfSilenceAPI {
         for (const name of ["music", "environment", "interface"]) {
             const ctx = game.audio?.[name];
             audioContexts[name] = ctx ? ctx.state : "unavailable";
+        }
+        const coreAudioVolumes = this._getCoreAudioVolumes();
+
+        const playbackClocks = [];
+        for (const playlist of game.playlists) {
+            const clock = PlaybackClock.summarizePlaylist(playlist);
+            if (clock) {
+                playbackClocks.push({
+                    playlistName: playlist.name,
+                    playlistId: playlist.id,
+                    ...clock,
+                });
+            }
         }
 
         // Soundscape engine state per playlist — procedural fires are client-local
@@ -828,11 +864,27 @@ class SoundOfSilenceAPI {
             });
         }
 
+        const personalPlaylistVolumeEnabled = Flags.isPersonalAudioMixEnabled();
+        const personalPlaylistVolumes = Flags.getPersonalPlaylistVolumes();
+        const personalTrackVolumes = Flags.getPersonalTrackVolumes();
+
         return {
             ...base,
             playingSounds,
             audioContexts,
+            coreAudioVolumes,
+            playbackClocks,
             soundscapes,
+            personalAudioMix: {
+                enabled: personalPlaylistVolumeEnabled,
+                playlistVolumes: personalPlaylistVolumes,
+                trackVolumes: personalTrackVolumes,
+                trackOverrideCount: Object.keys(personalTrackVolumes).length,
+            },
+            personalPlaylistVolume: {
+                enabled: personalPlaylistVolumeEnabled,
+                volumes: personalPlaylistVolumes,
+            },
             sequences: getSequenceSnapshot(),
             client: {
                 userId: game.user.id,
@@ -918,11 +970,12 @@ class SoundOfSilenceAPI {
             for (const sound of client.playingSounds) {
                 sound._gainZero = sound.gainValue !== null && sound.gainValue < 0.001 && !sound.isFading;
                 sound._contextSuspended = sound.contextState !== "running";
+                sound._invalidMediaTime = !sound.currentTimeFinite || !sound.durationFinite;
                 // Round numeric values for display
-                if (sound.gainValue !== null) sound.gainValue = Math.round(sound.gainValue * 1000) / 1000;
-                if (sound.volume !== null) sound.volume = Math.round(sound.volume * 1000) / 1000;
-                if (sound.currentTime !== null) sound.currentTime = Math.round(sound.currentTime * 10) / 10;
-                if (sound.duration !== null) sound.duration = Math.round(sound.duration * 10) / 10;
+                if (Number.isFinite(Number(sound.gainValue))) sound.gainValue = Math.round(sound.gainValue * 1000) / 1000;
+                if (Number.isFinite(Number(sound.volume))) sound.volume = Math.round(sound.volume * 1000) / 1000;
+                if (Number.isFinite(Number(sound.currentTime))) sound.currentTime = Math.round(sound.currentTime * 10) / 10;
+                if (Number.isFinite(Number(sound.duration))) sound.duration = Math.round(sound.duration * 10) / 10;
             }
             client._anyContextSuspended = Object.values(client.audioContexts).some(s => s !== "running" && s !== "unavailable");
             client._contextEntries = Object.entries(client.audioContexts).map(([name, state]) => ({
@@ -930,11 +983,38 @@ class SoundOfSilenceAPI {
                 state,
                 isOk: state === "running",
             }));
+            client._coreAudioVolumeEntries = Object.entries(client.coreAudioVolumes || {}).map(([name, value]) => ({
+                name,
+                value: Math.round(Number(value) * 100),
+                muted: Number(value) <= 0,
+            }));
+            client._playbackClockEntries = (client.playbackClocks || []).map((clock) => ({
+                ...clock,
+                startedAgo: Number.isFinite(Number(clock.startedAt))
+                    ? Math.max(0, Math.round((Date.now() - Number(clock.startedAt)) / 1000))
+                    : null,
+                overdueSec: Number.isFinite(Number(clock.overdueMs))
+                    ? Math.round(Number(clock.overdueMs) / 1000)
+                    : 0,
+            }));
             client._sequenceEntries = Object.entries(client.sequences || {}).map(([key, val]) => ({
                 key,
                 seq: val.seq,
                 age: Math.round((Date.now() - val.timestamp) / 1000),
             }));
+            const activePersonalPlaylistVolumes = client.personalAudioMix?.enabled
+                ? (client.personalAudioMix?.playlistVolumes || client.personalPlaylistVolume?.volumes || {})
+                : {};
+            client._personalPlaylistVolumeEntries = Object.entries(activePersonalPlaylistVolumes)
+                .map(([playlistId, value]) => ({
+                    playlistId,
+                    playlistName: game.playlists.get(playlistId)?.name ?? playlistId,
+                    value: Math.round(Number(value) * 100),
+                }))
+                .filter((entry) => Number.isFinite(entry.value) && entry.value < 100);
+            client._personalTrackVolumeCount = client.personalAudioMix?.enabled
+                ? (Number(client.personalAudioMix?.trackOverrideCount ?? 0) || 0)
+                : 0;
         }
 
         const html = await foundry.applications.handlebars.renderTemplate(
