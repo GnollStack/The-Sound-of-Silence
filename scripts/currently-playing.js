@@ -5,7 +5,7 @@
  * enriches the render context with module state (loops, normalization, crossfade),
  * and handles module-specific event delegation.
  */
-import { MODULE_ID, debug } from "./utils.js";
+import { MODULE_ID, debug, toSec } from "./utils.js";
 import { Flags } from "./flag-service.js";
 import { PlaybackClock } from "./playback-clock.js";
 import { State } from "./state-manager.js";
@@ -134,25 +134,105 @@ function _clampPercent(value) {
     return Math.max(0, Math.min(100, value));
 }
 
-function _getSoundPlaybackPosition(ps) {
-    const clockPosition = PlaybackClock.resolvePosition(ps);
-    if (clockPosition) {
+function _finiteDuration(value) {
+    const duration = Number(value);
+    return Number.isFinite(duration) && duration > 0 ? duration : null;
+}
+
+function _roundDebugNumber(value, digits = 3) {
+    const number = Number(value);
+    if (!Number.isFinite(number)) return null;
+    const multiplier = 10 ** digits;
+    return Math.round(number * multiplier) / multiplier;
+}
+
+function _getDocumentPlaybackDurationInfo(ps) {
+    const candidates = [
+        ["ps.duration", ps?.duration],
+        ["ps._source.duration", ps?._source?.duration],
+        ["ps.system.duration", ps?.system?.duration],
+        ["ps.flags.core.duration", ps?.flags?.core?.duration],
+        [`ps.flags.${MODULE_ID}.duration`, ps?.flags?.[MODULE_ID]?.duration],
+    ];
+    for (const [source, candidate] of candidates) {
+        const duration = _finiteDuration(candidate);
+        if (duration) return { duration, source };
+    }
+    return { duration: null, source: "none" };
+}
+
+function _getPlaybackDurationInfo(ps, media) {
+    const documentInfo = _getDocumentPlaybackDurationInfo(ps);
+    const documentDuration = documentInfo.duration;
+    const mediaDuration = _finiteDuration(media?.duration);
+    const mediaSource = media ? "media.duration" : "none";
+
+    // Foundry may expose a truncated document duration before the live audio
+    // element reports its fractional duration. Treat sub-second differences as
+    // the same length so the displayed total does not bounce by one second.
+    if (documentDuration && mediaDuration && Math.abs(documentDuration - mediaDuration) < 1) {
         return {
-            currentTime: Math.max(0, clockPosition.currentTime),
-            duration: clockPosition.duration,
-            progressPct: clockPosition.progressPct,
+            duration: documentDuration,
+            source: "document-stable-subsecond",
+            documentDuration,
+            documentSource: documentInfo.source,
+            mediaDuration,
+            mediaSource,
+            durationDelta: mediaDuration - documentDuration,
         };
     }
 
-    const media = ps?.sound;
-    const duration = Number(media?.duration);
-    const hasDuration = Number.isFinite(duration) && duration > 0;
+    if (mediaDuration) {
+        return {
+            duration: mediaDuration,
+            source: "media",
+            documentDuration,
+            documentSource: documentInfo.source,
+            mediaDuration,
+            mediaSource,
+            durationDelta: documentDuration ? mediaDuration - documentDuration : null,
+        };
+    }
+
+    if (documentDuration) {
+        return {
+            duration: documentDuration,
+            source: "document",
+            documentDuration,
+            documentSource: documentInfo.source,
+            mediaDuration: null,
+            mediaSource,
+            durationDelta: null,
+        };
+    }
+
+    return {
+        duration: 0,
+        source: "none",
+        documentDuration: null,
+        documentSource: documentInfo.source,
+        mediaDuration: null,
+        mediaSource,
+        durationDelta: null,
+    };
+}
+
+function _getMediaPlaybackPosition(ps, media, fallbackCurrentTime = null, source = "media") {
+    const durationInfo = _getPlaybackDurationInfo(ps, media);
+    const duration = durationInfo.duration;
+    const hasDuration = duration > 0;
 
     const liveTime = Number(media?.currentTime);
     const pausedTime = Number(ps?.pausedTime);
-    const rawTime = ps?.playing && Number.isFinite(liveTime)
-        ? liveTime
-        : pausedTime;
+    const fallbackTime = fallbackCurrentTime == null
+        ? NaN
+        : Number(fallbackCurrentTime);
+    const timeSource = Number.isFinite(fallbackTime)
+        ? `${source}-fallback`
+        : (ps?.playing && Number.isFinite(liveTime) ? `${source}-live` : "pausedTime");
+    const rawTime = Number.isFinite(fallbackTime)
+        ? fallbackTime
+        : (ps?.playing && Number.isFinite(liveTime) ? liveTime : pausedTime);
     const currentTime = Number.isFinite(rawTime)
         ? rawTime
         : (Number.isFinite(liveTime) ? liveTime : 0);
@@ -161,11 +241,206 @@ function _getSoundPlaybackPosition(ps) {
         currentTime: Math.max(0, currentTime),
         duration: hasDuration ? duration : 0,
         progressPct: hasDuration ? _clampPercent((currentTime / duration) * 100) : 0,
+        source: timeSource,
+        durationSource: durationInfo.source,
+        documentDuration: durationInfo.documentDuration,
+        documentDurationSource: durationInfo.documentSource,
+        mediaDuration: durationInfo.mediaDuration,
+        mediaDurationSource: durationInfo.mediaSource,
+        durationDelta: durationInfo.durationDelta,
+        liveTime: Number.isFinite(liveTime) ? liveTime : null,
+        pausedTime: Number.isFinite(pausedTime) ? pausedTime : null,
+        fallbackTime: Number.isFinite(fallbackTime) ? fallbackTime : null,
     };
+}
+
+function _getSegmentStartSeconds(segment) {
+    const direct = Number(segment?.startSec);
+    if (Number.isFinite(direct) && direct > 0) return direct;
+
+    const parsed = toSec(segment?.start);
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+}
+
+function _getLoopStartupFallbackTime(ps, looper, liveTime) {
+    const loopConfig = looper?.config ?? Flags.getLoopConfig(ps);
+    if (!loopConfig?.enabled || !loopConfig?.active || loopConfig.startFromBeginning) return null;
+
+    const segment = looper?.activeLoopSegment ?? loopConfig.segments?.[0];
+    const segmentStart = _getSegmentStartSeconds(segment);
+    if (!segmentStart) return null;
+
+    // During skip-intro startup, Foundry briefly reports the original play()
+    // position near zero before LoopingSound swaps in the offset sound.
+    if (!Number.isFinite(liveTime) || liveTime + 0.75 < segmentStart) {
+        return segmentStart;
+    }
+    return null;
+}
+
+function _getSoundPlaybackPosition(ps) {
+    const looper = State.getActiveLooper(ps);
+    if (looper && !looper.isDestroyed) {
+        const media = looper.activeSound ?? ps?.sound;
+        const liveTime = Number(media?.currentTime);
+        const fallbackTime = _getLoopStartupFallbackTime(ps, looper, liveTime);
+        return _getMediaPlaybackPosition(ps, media, fallbackTime, "looper");
+    }
+
+    const loopConfig = Flags.getLoopConfig(ps);
+    if (loopConfig?.enabled && loopConfig?.active && !loopConfig.startFromBeginning) {
+        const media = ps?.sound;
+        const liveTime = Number(media?.currentTime);
+        const fallbackTime = _getLoopStartupFallbackTime(ps, { config: loopConfig }, liveTime);
+        return _getMediaPlaybackPosition(ps, media, fallbackTime, "loop-config");
+    }
+
+    const clockPosition = PlaybackClock.resolvePosition(ps);
+    if (clockPosition) {
+        const durationInfo = _getPlaybackDurationInfo(ps, ps?.sound);
+        const liveTime = Number(ps?.sound?.currentTime);
+        const pausedTime = Number(ps?.pausedTime);
+        return {
+            currentTime: Math.max(0, clockPosition.currentTime),
+            duration: clockPosition.duration,
+            progressPct: clockPosition.progressPct,
+            source: "playback-clock",
+            durationSource: "playback-clock",
+            documentDuration: durationInfo.documentDuration,
+            documentDurationSource: durationInfo.documentSource,
+            mediaDuration: durationInfo.mediaDuration,
+            mediaDurationSource: durationInfo.mediaSource,
+            durationDelta: durationInfo.durationDelta,
+            clockDuration: clockPosition.duration,
+            liveTime: Number.isFinite(liveTime) ? liveTime : null,
+            pausedTime: Number.isFinite(pausedTime) ? pausedTime : null,
+            fallbackTime: null,
+        };
+    }
+
+    return _getMediaPlaybackPosition(ps, ps?.sound);
 }
 
 function _getSoundProgressPct(ps) {
     return _getSoundPlaybackPosition(ps).progressPct;
+}
+
+function _normalizeCurrentlyPlayingControls(soundCtx, ps) {
+    if (!soundCtx || !ps) return;
+
+    if (ps.playing && soundCtx.pause) {
+        soundCtx.pause = {
+            ...soundCtx.pause,
+            icon: "fa-solid fa-pause",
+            paused: false,
+        };
+    }
+
+    if (!ps.playing && Number.isFinite(Number(ps.pausedTime)) && soundCtx.play) {
+        soundCtx.play = {
+            ...soundCtx.play,
+            icon: "fa-solid fa-play",
+        };
+        if (soundCtx.pause) {
+            soundCtx.pause = {
+                ...soundCtx.pause,
+                paused: true,
+            };
+        }
+    }
+}
+
+function _getRowTimestampDebug(row) {
+    if (!row?.querySelector) return null;
+    return {
+        current: row.querySelector(".sound-timer .sos-current")?.textContent?.trim() ?? null,
+        duration: row.querySelector(".sound-timer .sos-duration")?.textContent?.trim() ?? null,
+        nativeCurrent: row.querySelector(".sos-native-timestamp-proxy .current")?.textContent?.trim() ?? null,
+        nativeDuration: row.querySelector(".sos-native-timestamp-proxy .duration")?.textContent?.trim() ?? null,
+        progressWidth: row.querySelector(".sos-progress-fill")?.style?.width ?? null,
+    };
+}
+
+function _getLoopTimestampDebug(ps) {
+    const looper = State.getActiveLooper(ps);
+    const loopConfig = looper?.config ?? Flags.getLoopConfig(ps);
+    const segment = looper?.activeLoopSegment ?? loopConfig?.segments?.[0];
+    const firstSegment = loopConfig?.segments?.[0];
+
+    return {
+        loopActive: !!(loopConfig?.enabled && loopConfig?.active),
+        looperFound: !!looper,
+        looperDestroyed: !!looper?.isDestroyed,
+        looperSegment: segment?.start ?? null,
+        startFromBeginning: loopConfig?.startFromBeginning ?? null,
+        firstSegmentStart: firstSegment?.start ?? null,
+        firstSegmentStartSec: _getSegmentStartSeconds(firstSegment),
+        activeSoundTime: _roundDebugNumber(looper?.activeSound?.currentTime),
+        activeSoundDuration: _roundDebugNumber(looper?.activeSound?.duration),
+    };
+}
+
+function _isTimestampDebugEnabled() {
+    try {
+        return Boolean(game.settings?.get(MODULE_ID, "debugCurrentlyPlayingTimestamps"));
+    } catch (err) {
+        return false;
+    }
+}
+
+function _debugTimestamp(phase, ps, position = {}, row = null, extra = {}) {
+    if (!_isTimestampDebugEnabled()) return;
+
+    const rowState = _getRowTimestampDebug(row);
+    const loopState = _getLoopTimestampDebug(ps);
+    const media = ps?.sound;
+    const data = {
+        playlist: ps?.parent?.name ?? null,
+        playing: ps?.playing ?? null,
+        pausedTime: _roundDebugNumber(ps?.pausedTime),
+        mediaTime: _roundDebugNumber(media?.currentTime),
+        mediaDuration: _roundDebugNumber(media?.duration),
+        currentTime: _roundDebugNumber(position.currentTime),
+        duration: _roundDebugNumber(position.duration),
+        progressPct: _roundDebugNumber(position.progressPct, 2),
+        source: position.source ?? null,
+        durationSource: position.durationSource ?? null,
+        documentDuration: _roundDebugNumber(position.documentDuration),
+        documentDurationSource: position.documentDurationSource ?? null,
+        selectedMediaDuration: _roundDebugNumber(position.mediaDuration),
+        mediaDurationSource: position.mediaDurationSource ?? null,
+        durationDelta: _roundDebugNumber(position.durationDelta),
+        clockDuration: _roundDebugNumber(position.clockDuration),
+        liveTime: _roundDebugNumber(position.liveTime),
+        fallbackTime: _roundDebugNumber(position.fallbackTime),
+        rowCurrent: rowState?.current ?? null,
+        rowDuration: rowState?.duration ?? null,
+        nativeRowCurrent: rowState?.nativeCurrent ?? null,
+        nativeRowDuration: rowState?.nativeDuration ?? null,
+        rowProgressWidth: rowState?.progressWidth ?? null,
+        ...loopState,
+        ...extra,
+    };
+
+    const message =
+        `[CurrentlyPlaying:Timestamp] ${phase} "${ps?.name ?? "unknown"}" ` +
+        `source=${data.source ?? "n/a"} current=${data.currentTime ?? "null"} ` +
+        `duration=${data.duration ?? "null"} durationSource=${data.durationSource ?? "n/a"} ` +
+        `doc=${data.documentDuration ?? "null"} media=${data.selectedMediaDuration ?? "null"} ` +
+        `delta=${data.durationDelta ?? "null"} row=${data.rowCurrent ?? "n/a"}/${data.rowDuration ?? "n/a"} ` +
+        `native=${data.nativeRowCurrent ?? "n/a"}/${data.nativeRowDuration ?? "n/a"} ` +
+        `looper=${data.looperFound} first=${data.firstSegmentStart ?? "n/a"} firstSec=${data.firstSegmentStartSec ?? "null"}`;
+
+    try {
+        console.log(
+            `%c[${MODULE_ID}] DEBUG`,
+            "color: orange; font-weight: normal",
+            message,
+            data
+        );
+    } catch (err) {
+        console.log(`[${MODULE_ID}] DEBUG`, message, data);
+    }
 }
 
 function _formatCurrentlyPlayingTime(seconds) {
@@ -176,6 +451,12 @@ function _formatCurrentlyPlayingTime(seconds) {
 
     if (hours > 0) return `${hours}:${String(minutes).padStart(2, "0")}:${secs}`;
     return `${minutes}:${secs}`;
+}
+
+function _formatCurrentlyPlayingDuration(seconds) {
+    const duration = Number(seconds);
+    if (!Number.isFinite(duration) || duration <= 0) return "--:--";
+    return _formatCurrentlyPlayingTime(duration);
 }
 
 function _formatFadeDuration(ms) {
@@ -360,7 +641,7 @@ function _getSyntheticPlaylistMode(playlist) {
 
 /**
  * Register the custom Currently Playing templates and libWrapper patches.
- * Called from main.js during the `ready` hook.
+ * Called from bootstrap/lifecycle.js during the `ready` hook.
  */
 export function registerCurrentlyPlaying() {
     const sosTemplate = `modules/${MODULE_ID}/templates/currently-playing.hbs`;
@@ -534,7 +815,12 @@ async function _wrapPreparePlayingContext(wrapped, context, options) {
         const progressPct = playbackPosition.progressPct;
         const fadeZones = _getSoundFadeZones(playlist, ps, playbackPosition.duration);
         soundCtx.currentTime = _formatCurrentlyPlayingTime(playbackPosition.currentTime);
-        soundCtx.durationTime = _formatCurrentlyPlayingTime(playbackPosition.duration);
+        soundCtx.durationTime = _formatCurrentlyPlayingDuration(playbackPosition.duration);
+        _normalizeCurrentlyPlayingControls(soundCtx, ps);
+        _debugTimestamp("render-context", ps, playbackPosition, null, {
+            formattedCurrent: soundCtx.currentTime,
+            formattedDuration: soundCtx.durationTime,
+        });
 
         // Procedural countdown readout (local clock, so each client sees its own ETA).
         let proceduralEta = "";
@@ -801,6 +1087,25 @@ function _wrapPreparePlaylistContext(wrapped, root, playlist) {
     return ctx;
 }
 
+function _ensureNativeTimestampProxy(row) {
+    if (!row || row.querySelector(".sos-native-timestamp-proxy")) return false;
+
+    const proxy = document.createElement("span");
+    proxy.className = "sos-native-timestamp-proxy sos-timestamp-proxy";
+    proxy.setAttribute("aria-hidden", "true");
+
+    const current = document.createElement("span");
+    current.className = "current";
+    const duration = document.createElement("span");
+    duration.className = "duration";
+    const pause = document.createElement("i");
+    pause.className = "pause fa-solid fa-pause";
+
+    proxy.append(current, duration, pause);
+    row.append(proxy);
+    return true;
+}
+
 function _ensureTimestampCompatibility(app) {
     const sections = document.querySelectorAll(".playlists-sidebar .currently-playing");
     if (!sections.length || !app?._playing?.sounds?.length) return;
@@ -808,18 +1113,13 @@ function _ensureTimestampCompatibility(app) {
     for (const section of sections) {
         for (const sound of app._playing.sounds) {
             const row = section.querySelector(`.sound[data-sound-uuid="${sound.uuid}"]`);
-            if (!row || row.querySelector(".pause")) continue;
+            if (!row) continue;
+            const addedProxy = _ensureNativeTimestampProxy(row);
 
-            const proxy = document.createElement("i");
-            proxy.className = "pause fa-solid fa-pause sos-timestamp-proxy";
-            proxy.hidden = true;
-            proxy.setAttribute("aria-hidden", "true");
-            row.append(proxy);
-
-            if (_timestampProxyWarnings.has(sound.uuid)) continue;
+            if (!addedProxy || _timestampProxyWarnings.has(sound.uuid)) continue;
             const soundType = Flags.getSoundFlag(sound, "isProcedural") ? "procedural" : "standard";
             debug(
-                `[CurrentlyPlaying] Added timestamp pause proxy for ` +
+                `[CurrentlyPlaying] Added native timestamp proxy for ` +
                 `"${sound.name}" in "${sound.parent?.name}" (${soundType}).`
             );
             _timestampProxyWarnings.add(sound.uuid);
@@ -843,7 +1143,9 @@ function _updateProgressBars(app) {
             if (!sound) continue;
 
             foundProgressRow = true;
+            const beforeRow = _getRowTimestampDebug(row);
             const position = _getSoundPlaybackPosition(sound);
+            _debugTimestamp("tick-before", sound, position, row, { beforeRow });
             fill.style.width = `${position.progressPct.toFixed(2)}%`;
 
             const fadeZones = _getSoundFadeZones(playlist, sound, position.duration);
@@ -859,13 +1161,14 @@ function _updateProgressBars(app) {
                 label: fadeZones.fadeOutLabel,
             });
 
-            const currentEl = row.querySelector(".sound-timer .current");
+            const currentEl = row.querySelector(".sound-timer .sos-current");
             if (currentEl) currentEl.textContent = _formatCurrentlyPlayingTime(position.currentTime);
 
-            const durationEl = row.querySelector(".sound-timer .duration");
+            const durationEl = row.querySelector(".sound-timer .sos-duration");
             if (durationEl) {
-                durationEl.textContent = _formatCurrentlyPlayingTime(position.duration);
+                durationEl.textContent = _formatCurrentlyPlayingDuration(position.duration);
             }
+            _debugTimestamp("write-progress", sound, position, row, { beforeRow });
         }
     }
 

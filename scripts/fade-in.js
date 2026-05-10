@@ -55,7 +55,7 @@ export async function applyFadeIn(playlist, ps, { targetVolume } = {}) {
     // Use explicit target volume if provided, otherwise fall back to document volume
     const targetVol = (typeof targetVolume === 'number') ? targetVolume : (ps.volume ?? 1);
 
-    // In our main.js wrapper, we will pre-mute the sound before it plays,
+    // The Sound.play wrapper pre-mutes the sound before it plays,
     // so the fade will correctly start from an actual volume of 0.
     logFeature(LogSymbols.FADE_IN, 'Fade', `${ps.name} (${fadeTotal}ms)`);
     advancedFade(media, { targetVol, duration: fadeTotal });

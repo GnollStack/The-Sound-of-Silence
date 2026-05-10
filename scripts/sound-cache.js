@@ -9,6 +9,7 @@
 /** @type {Map<string, PlaylistSound>} */
 let soundCache = new Map();
 let cacheInvalidated = true;
+let hooksRegistered = false;
 
 function rebuildSoundCache() {
     soundCache.clear();
@@ -41,9 +42,14 @@ export function ensureCacheReady() {
     if (cacheInvalidated) rebuildSoundCache();
 }
 
-// Invalidate cache when playlists/sounds change
-Hooks.on("createPlaylist", invalidateSoundCache);
-Hooks.on("deletePlaylist", invalidateSoundCache);
-Hooks.on("createPlaylistSound", invalidateSoundCache);
-Hooks.on("deletePlaylistSound", invalidateSoundCache);
-Hooks.on("updatePlaylistSound", invalidateSoundCache);
+export function registerSoundCacheHooks() {
+    if (hooksRegistered) return;
+    hooksRegistered = true;
+
+    // Invalidate cache when playlists/sounds change.
+    Hooks.on("createPlaylist", invalidateSoundCache);
+    Hooks.on("deletePlaylist", invalidateSoundCache);
+    Hooks.on("createPlaylistSound", invalidateSoundCache);
+    Hooks.on("deletePlaylistSound", invalidateSoundCache);
+    Hooks.on("updatePlaylistSound", invalidateSoundCache);
+}

@@ -1,0 +1,235 @@
+/* ========================================================= */
+/*   Light Mode - Targeted Rule Overrides                    */
+/* ========================================================= */
+
+/* Timeline track */
+body.theme-light .sos-loop-timeline-track {
+  background-color: var(--sos-timeline-track-bg);
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.12);
+}
+
+/* Timeline handle */
+body.theme-light .sos-loop-timeline-handle {
+  border-color: var(--sos-timeline-handle-border);
+  background: linear-gradient(
+    to bottom,
+    rgba(0, 0, 0, 0.05),
+    rgba(0, 0, 0, 0.15)
+  );
+}
+
+/* Crossfade stripe pattern */
+body.theme-light .sos-loop-timeline-crossfade::before {
+  background: repeating-linear-gradient(
+    -45deg,
+    rgba(0, 0, 0, 0.08),
+    rgba(0, 0, 0, 0.08) 3px,
+    transparent 3px,
+    transparent 6px
+  );
+}
+
+/* Tooltip - keep light text for readability on dark tooltip background */
+body.theme-light .sos-loop-timeline-tooltip {
+  color: var(--sos-text-primary);
+}
+
+/* Sticky form footer */
+body.theme-light form[id^="PlaylistSoundConfig-"] > footer.form-footer {
+  background: var(--color-bg-primary, #f5f5f0);
+  border-top: 1px solid var(--color-border-dark, #ccc);
+  box-shadow: 0 -2px 8px rgba(0, 0, 0, 0.1);
+}
+
+/* Subsection subtle glow */
+body.theme-light .sos-subsection {
+  background: linear-gradient(90deg, rgba(0,0,0,0.03), transparent 20px);
+}
+
+/* Collapsible segment header hover overlay */
+body.theme-light .sos-segment-header.collapsible::before {
+  background-color: rgba(0, 0, 0, 0.04);
+}
+
+/* Compact segment section */
+body.theme-light .sos-loop-segment-section.sos-compact {
+  background: linear-gradient(
+    to bottom,
+    rgba(0, 0, 0, 0.03),
+    rgba(0, 0, 0, 0.06)
+  );
+}
+
+/* Currently-playing sound blocks */
+body.theme-light .currently-playing .playlist-sounds.plain {
+  background: linear-gradient(
+    to bottom,
+    rgba(0, 0, 0, 0.04),
+    rgba(0, 0, 0, 0.02)
+  );
+}
+
+/* Currently-playing track card */
+body.theme-light .sos-now-playing {
+  background: linear-gradient(
+    to bottom,
+    rgba(0, 0, 0, 0.01),
+    rgba(0, 0, 0, 0.03)
+  );
+}
+
+/* Timer and track header — darker for light backgrounds */
+body.theme-light .sos-transport-row .sound-timer {
+  color: #555;
+}
+body.theme-light .sos-track-header i,
+body.theme-light .sos-track-header label {
+  color: #666;
+}
+
+/* Volume rows and loop controls */
+body.theme-light .sos-volume-row,
+body.theme-light .sos-loop-controls-row {
+  background: linear-gradient(
+    to bottom,
+    rgba(0, 0, 0, 0.02),
+    rgba(0, 0, 0, 0.04)
+  );
+}
+
+/* Procedural one-shot readout in light theme */
+body.theme-light .sos-procedural-eta {
+  color: #666;
+}
+
+/* Procedural badges, meter, and Fire Now in light theme */
+body.theme-light .sos-procedural-chance-badge {
+  background: rgba(238, 155, 58, 0.12);
+  color: #b06b1a;
+  border-color: rgba(238, 155, 58, 0.45);
+}
+
+body.theme-light .sos-polyphony-meter {
+  background: rgba(120, 115, 110, 0.12);
+  color: #555;
+  border-color: rgba(120, 115, 110, 0.28);
+}
+
+body.theme-light .sos-procedural-fire-btn {
+  color: #b06b1a;
+}
+
+body.theme-light .sos-procedural-fire-btn:not(:disabled):hover {
+  color: #c9593f;
+  text-shadow: 0 0 4px rgba(238, 155, 58, 0.5);
+}
+
+body.theme-light .currently-playing .sos-soundscape-strip {
+  background: linear-gradient(
+    to bottom,
+    rgba(238, 155, 58, 0.06),
+    rgba(0, 0, 0, 0.025)
+  );
+  border-color: var(--sos-border-light);
+}
+
+body.theme-light .currently-playing .sos-soundscape-strip > .sos-playlist-header {
+  background: linear-gradient(
+    to bottom,
+    rgba(238, 155, 58, 0.08),
+    rgba(0, 0, 0, 0.015)
+  );
+}
+
+body.theme-light .currently-playing .sos-group-summary,
+body.theme-light .currently-playing .sos-proc-section {
+  background: rgba(0, 0, 0, 0.035);
+}
+
+body.theme-light .currently-playing .sos-summary-row .meta,
+body.theme-light .currently-playing .sos-proc-section-header .next {
+  color: #555;
+}
+
+body.theme-light .currently-playing .sos-soundscape-bed-card .sos-bed-track-header > i {
+  color: #666;
+}
+
+/* Soundscape panel + per-sound procedural fieldsets in light theme */
+body.theme-light .sos-soundscape-panel {
+  background: linear-gradient(
+    90deg,
+    rgba(238, 155, 58, 0.08),
+    transparent 30px
+  );
+}
+
+body.theme-light .sos-soundscape-defaults,
+body.theme-light .sos-soundscape-preview,
+body.theme-light .sos-procedural-roster,
+body.theme-light .sos-procedural-fieldset {
+  background: rgba(0, 0, 0, 0.04);
+  border-color: rgba(0, 0, 0, 0.12);
+}
+
+body.theme-light .sos-soundscape-defaults legend,
+body.theme-light .sos-soundscape-preview legend,
+body.theme-light .sos-procedural-roster legend,
+body.theme-light .sos-procedural-fieldset legend {
+  color: #b06b1a;
+}
+
+body.theme-light .sos-roster-table thead th {
+  border-bottom-color: rgba(0, 0, 0, 0.12);
+}
+
+body.theme-light .sos-roster-table tbody td {
+  border-bottom-color: rgba(0, 0, 0, 0.08);
+}
+
+body.theme-light .sos-poly-hint {
+  color: #777;
+}
+
+body.theme-light .sos-proc-min-readout,
+body.theme-light .sos-proc-max-readout,
+body.theme-light .sos-proc-avg-readout {
+  color: #b06b1a;
+}
+
+body.theme-light .sos-proc-audition {
+  background: linear-gradient(
+    90deg,
+    rgba(238, 155, 58, 0.12),
+    rgba(0, 0, 0, 0.03)
+  );
+}
+
+body.theme-light .sos-proc-audition-fire,
+body.theme-light .sos-proc-audition-stop {
+  color: #2f241c;
+}
+
+/* Checkbox accent color & Clean up - neutralize Foundry's default styling in light mode */
+body.theme-light .sos-compact-checkbox input[type="checkbox"],
+body.theme-light .sos-feature-toggle input[type="checkbox"] {
+  accent-color: var(--sos-checkbox-accent, #ee9b3a);
+  /* Strip Foundry's default input styling (background boxes, borders) */
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+  /* Force native rendering and prevent custom size stretching */
+  -webkit-appearance: checkbox !important;
+  appearance: checkbox !important;
+  width: auto !important;
+  height: auto !important;
+  margin: 0 !important;
+}
+
+/* Visible focus indicator for keyboard accessibility */
+body.theme-light .sos-compact-checkbox input[type="checkbox"]:focus-visible,
+body.theme-light .sos-feature-toggle input[type="checkbox"]:focus-visible {
+  outline: 2px solid var(--sos-hover-glow) !important;
+  outline-offset: 2px;
+  box-shadow: none !important;
+}

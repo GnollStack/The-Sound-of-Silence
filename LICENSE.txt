@@ -1,21 +1,58 @@
 # END USER LICENSE AGREEMENT (EULA)
 
-**Software:** The-Sound-of-Silence
+**Software:** The Sound of Silence
 **Author:** GnollStack
-**Copyright (c) 2025 GnollStack. All Rights Reserved.**
+**Copyright (c) 2026 GnollStack. All Rights Reserved.**
 
-## 1. GRANT OF LICENSE (PERSONAL USE)
-Permission is hereby granted, free of charge, to any person obtaining a copy of this software (the "Software"), to use the Software for **personal, non-commercial** tabletop role-playing game sessions.
+This Software is source-available but not open source. You may inspect the source code and use the Software only under the permissions granted by this EULA. All rights not expressly granted are reserved by the Author.
 
-## 2. RESTRICTIONS
-You are strictly prohibited from doing any of the following without prior written consent from the Author:
-1.  **Selling:** You may not sell, rent, lease, or sublicense the Software.
-2.  **Redistribution:** You may not redistribute the Software in any form, including hosting the files on another server, repository, or website.
-3.  **Bundling:** You may not include this Software (in whole or in part) within other packages, modules, map packs, or adventures.
-4.  **Public Modification:** You may modify the Software for your own personal use, but you may NOT distribute those modifications to the public.
+## 1. GRANT OF LICENSE
 
-## 3. COMMERCIAL USE AND INTEGRATION
-Developers, Map Makers, and Content Creators who wish to bundle, integrate, or commercially recommend this Software as part of a paid product must contact the Author (GnollStack) to obtain a Commercial License.
+Permission is granted, free of charge, to install and use the Software for personal, non-commercial tabletop role-playing game sessions.
 
-## 4. DISCLAIMER OF WARRANTY
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+You may install and run the Software on a Foundry Virtual Tabletop installation you control and allow connected players to load the Software as required for gameplay, provided they do not separately redistribute, rehost, sell, sublicense, or publish the Software.
+
+You may modify the Software for your own personal use at your own table. You may not distribute, publish, sublicense, or otherwise share modified versions without prior written permission from the Author.
+
+## 2. STREAMING AND RECORDED PLAY
+
+Streaming and recorded actual-play use is permitted, including monetized streams and videos, provided the Software itself is not redistributed, sold, bundled, rehosted, sublicensed, or offered as part of a paid software package, content package, service, or platform.
+
+## 3. RESTRICTIONS
+
+You may not do any of the following without prior written permission from the Author:
+
+1. Sell, rent, lease, sublicense, or otherwise commercially distribute the Software.
+2. Redistribute, mirror, rehost, upload, publish, or make the Software available from another server, repository, package manager, website, archive, or service.
+3. Bundle or include the Software, in whole or in part, within another module, system, map pack, adventure, world, content package, software package, Patreon reward, marketplace product, or similar distribution.
+4. Publish or distribute modified versions, forks, ports, translations, renamed copies, or derivative public releases of the Software.
+5. Remove, obscure, or alter copyright notices, license notices, attribution notices, or author identifiers.
+6. Use the Software in a way that violates Foundry Virtual Tabletop's applicable license terms or any third-party rights.
+
+## 4. COMMERCIAL USE AND INTEGRATION
+
+Commercial bundling, redistribution, resale, paid hosting, paid integration, inclusion in paid modules, map packs, adventures, systems, services, or other commercial products requires prior written permission from the Author.
+
+Developers, map makers, publishers, content creators, and service operators who want commercial permission should contact the Author to obtain a separate written license or written exception.
+
+## 5. ADDITIONAL PERMISSIONS AND SEPARATE LICENSES
+
+The Author may grant additional permissions, exceptions, or commercial licenses in writing.
+
+Any additional permission applies only to the named person or organization, project, use case, version, duration, and distribution channel described in that written permission. It does not grant rights to the public, does not modify this EULA for anyone else, and does not waive any rights not expressly granted.
+
+Additional permissions are non-transferable unless the written permission explicitly says otherwise. If a recipient violates the terms of their written permission or this EULA, the additional permission terminates automatically.
+
+## 6. CONTRIBUTIONS
+
+Unless a separate written agreement says otherwise, by submitting code, documentation, issue text, pull requests, patches, artwork, or other contributions to the Author or to an official project repository, you grant the Author a perpetual, worldwide, royalty-free license to use, reproduce, modify, distribute, sublicense, and relicense those contributions as part of the Software or related projects.
+
+You represent that you have the right to submit your contributions and to grant the permissions described above.
+
+## 7. FOUNDRY VIRTUAL TABLETOP NOTICE
+
+This Software is an independent package for Foundry Virtual Tabletop. It is not affiliated with, endorsed by, sponsored by, or approved by Foundry Gaming LLC. Use of this Software requires a licensed copy of Foundry Virtual Tabletop and must comply with Foundry Virtual Tabletop's applicable license terms.
+
+## 8. DISCLAIMER OF WARRANTY
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, TITLE, AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHOR OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES, OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT, OR OTHERWISE, ARISING FROM, OUT OF, OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.

@@ -7,6 +7,8 @@ import { Flags } from "./flag-service.js";
 
 // max amount of Loop Segments
 const MAX_SEGMENTS = 16;
+let wrappersRegistered = false;
+let hooksRegistered = false;
 
 // =========================================================================
 // Flag Constants & Defaults
@@ -72,6 +74,11 @@ function formatProceduralNumber(value, digits = 1) {
 // =========================================================================
 
 export function registerSoundConfigWrappers() {
+  if (wrappersRegistered) {
+    _registerSoundConfigHooks();
+    return;
+  }
+  wrappersRegistered = true;
   debug("Registering PlaylistSoundConfig wrappers (loop-within)");
 
   libWrapper.register(
@@ -292,6 +299,8 @@ export function registerSoundConfigWrappers() {
     },
     "WRAPPER"
   );
+
+  _registerSoundConfigHooks();
 }
 
 
@@ -382,7 +391,11 @@ function _createSegmentHtml(segmentData, index) {
 }
 
 
-Hooks.on("renderPlaylistSoundConfig", (app, htmlRaw, data) => {
+function _registerSoundConfigHooks() {
+  if (hooksRegistered) return;
+  hooksRegistered = true;
+
+  Hooks.on("renderPlaylistSoundConfig", (app, htmlRaw, data) => {
   const html = htmlRaw instanceof HTMLElement ? $(htmlRaw) : htmlRaw;
   const loop = data.loopWithin ?? Flags.getLoopConfig(app.document);
   const allowVolumeOverride = Flags.getSoundFlag(app.document, "allowVolumeOverride");
@@ -841,21 +854,22 @@ Hooks.on("renderPlaylistSoundConfig", (app, htmlRaw, data) => {
 
   // React instantly to the checkbox.
   $overrideCheckbox.on('change', updateVolumeControls);
-});
+  });
 
 
 
-Hooks.on("closePlaylistSoundConfig", (app) => {
-  const previewer = app._soundOfSilencePreviewer;
-  if (previewer?.stopAll) {
-    debug("[Previewer] Config window closed. Calling stopAll.");
-    previewer.stopAll();
-  }
+  Hooks.on("closePlaylistSoundConfig", (app) => {
+    const previewer = app._soundOfSilencePreviewer;
+    if (previewer?.stopAll) {
+      debug("[Previewer] Config window closed. Calling stopAll.");
+      previewer.stopAll();
+    }
 
-  const auditioner = app._soundOfSilenceProceduralAuditioner;
-  if (auditioner?.destroy) {
-    debug("[Auditioner] Config window closed. Destroying procedural auditioner.");
-    auditioner.destroy();
-    app._soundOfSilenceProceduralAuditioner = null;
-  }
-});
+    const auditioner = app._soundOfSilenceProceduralAuditioner;
+    if (auditioner?.destroy) {
+      debug("[Auditioner] Config window closed. Destroying procedural auditioner.");
+      auditioner.destroy();
+      app._soundOfSilenceProceduralAuditioner = null;
+    }
+  });
+}

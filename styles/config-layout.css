@@ -1,0 +1,18 @@
+/* ========================================================= */
+/*   ⚙️  Configuration Sheets - Scrollable Layout           */
+/* ========================================================= */
+
+form[id^="PlaylistConfig-"],
+form[id^="PlaylistSoundConfig-"] {
+  display: flex;
+  flex-direction: column;
+  height: 80%;
+}
+
+form[id^="PlaylistConfig-"] > section.window-content,
+form[id^="PlaylistSoundConfig-"] > section.window-content {
+  flex: 1;
+  overflow-y: auto !important;
+  padding-right: 10px;
+}
+

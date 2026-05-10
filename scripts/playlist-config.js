@@ -9,6 +9,9 @@ import { debug } from "./utils.js";
 import { Flags } from "./flag-service.js";
 import { SoundscapePreviewer } from "./soundscape-previewer.js";
 
+let wrappersRegistered = false;
+let hooksRegistered = false;
+
 /**
  * Defines the flag keys and default values for all playlist-level settings.
  */
@@ -104,7 +107,11 @@ function formatProceduralCadenceSummary(min, max, timingMode) {
  * Registers the necessary libWrapper patches for the PlaylistConfig sheet.
  */
 export function registerPlaylistSheetWrappers() {
-  _registerV13Wrappers();
+  if (!wrappersRegistered) {
+    wrappersRegistered = true;
+    _registerV13Wrappers();
+  }
+  _registerPlaylistConfigHooks();
 }
 
 /**
@@ -411,7 +418,11 @@ function _buildSoundscapePanel(playlist, sos, fieldName, visible) {
 /**
  * Injects custom HTML form controls into the PlaylistConfig sheet.
  */
-Hooks.on("renderPlaylistConfig", (app, htmlRaw, data) => {
+function _registerPlaylistConfigHooks() {
+  if (hooksRegistered) return;
+  hooksRegistered = true;
+
+  Hooks.on("renderPlaylistConfig", (app, htmlRaw, data) => {
   const html = htmlRaw instanceof HTMLElement ? $(htmlRaw) : htmlRaw;
   debug("Rendering PlaylistConfig with SOS fields");
 
@@ -745,12 +756,13 @@ if (fadeRangePicker.length) {
   $modeSelect.on('change', refreshSoundscapeState);
   refreshSoundscapeState();
   refreshLoopToggle();
-});
+  });
 
-Hooks.on("closePlaylistConfig", (app) => {
-  if (!app?._soundOfSilenceSoundscapePreview) return;
-  if (SoundscapePreviewer.isPreviewing(app.document)) {
-    SoundscapePreviewer.stop(app.document, { notify: false });
-  }
-  app._soundOfSilenceSoundscapePreview = false;
-});
+  Hooks.on("closePlaylistConfig", (app) => {
+    if (!app?._soundOfSilenceSoundscapePreview) return;
+    if (SoundscapePreviewer.isPreviewing(app.document)) {
+      SoundscapePreviewer.stop(app.document, { notify: false });
+    }
+    app._soundOfSilenceSoundscapePreview = false;
+  });
+}

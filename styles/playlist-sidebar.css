@@ -1,0 +1,185 @@
+/* ========================================================= */
+/*  v13  •  Playlist header layout & truncation              */
+/* ========================================================= */
+
+/* Ensure the playlist name truncates nicely */
+li.directory-item.playlist label.playlist-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Keep the arrow icon but move it a little closer */
+li.directory-item.playlist i.expand {
+  margin-right: var(--sos-space-sm);
+}
+
+/* Don't let the control cluster shrink */
+li.directory-item.playlist div.sound-controls.playlist-controls {
+  flex-shrink: 0;
+  display: flex;
+  flex-wrap: nowrap;
+  gap: var(--sos-space-xs);
+}
+
+/* ========================================================= */
+/*   🎚️  Toggle buttons: Silence & Cross-fade                */
+/* ========================================================= */
+
+button.sos-toggle,
+button.xfade-toggle {
+  transition: all 0.15s ease;
+  border-radius: var(--sos-radius-sm);
+  padding: 2px 3px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-shadow: var(--sos-btn-text-shadow);
+}
+
+button.sos-toggle.active,
+button.xfade-toggle.active {
+  background: linear-gradient(
+    to bottom,
+    var(--sos-active-bg),
+    rgba(238, 155, 58, 0.15)
+  );
+  border: 1px solid var(--sos-active-border);
+  color: var(--sos-checkbox-accent);
+  box-shadow: inset 0 1px 0 rgba(238, 155, 58, 0.2),
+              0 0 4px var(--sos-active-glow);
+}
+
+button.sos-toggle:not(.active),
+button.xfade-toggle:not(.active) {
+  background: var(--sos-inactive-bg);
+  border: 1px solid var(--sos-inactive-border);
+  box-shadow: inset 0 1px 0 rgba(0, 0, 0, 0.1);
+  opacity: 0.6;
+}
+
+button.sos-toggle:hover:not(.disabled),
+button.xfade-toggle:hover:not(.disabled) {
+  filter: brightness(1.15);
+  box-shadow: 0 0 4px var(--sos-hover-glow);
+}
+
+button.sos-toggle i,
+button.xfade-toggle i {
+  font-size: var(--sos-text-md);
+}
+
+button.sos-toggle.disabled,
+button.xfade-toggle.disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+  filter: grayscale(100%);
+  box-shadow: none;
+}
+
+/* ========================================================= */
+/*   Internal-sos-loop toggle (tracks)                          */
+/* ========================================================= */
+
+button.sos-loop-toggle {
+  border-radius: var(--sos-radius-sm);
+  padding: 2px 3px;
+  transition: all 0.15s ease;
+  text-shadow: var(--sos-btn-text-shadow);
+}
+
+button.sos-loop-toggle.active {
+  background: linear-gradient(
+    to bottom,
+    rgba(220, 160, 70, 0.38),
+    rgba(220, 160, 70, 0.26)
+  );
+  border: 1px solid var(--sos-loop-active-border);
+  box-shadow: inset 0 1px 0 rgba(240, 200, 110, 0.3),
+              0 0 4px rgba(240, 180, 90, 0.35);
+}
+
+button.sos-loop-toggle:not(.active) {
+  background: linear-gradient(
+    to bottom,
+    rgba(80, 75, 70, 0.3),
+    rgba(80, 75, 70, 0.2)
+  );
+  border: 1px solid var(--sos-border-light);
+  box-shadow: inset 0 1px 0 rgba(0, 0, 0, 0.1);
+}
+
+button.sos-loop-toggle i {
+  font-size: var(--sos-text-sm);
+}
+
+button.sos-loop-skip i {
+  font-size: var(--sos-text-xs);
+}
+
+.currently-playing .sos-loop-toggle {
+  display: none !important;
+}
+
+button.sound-control.disabled {
+  opacity: 0.35;
+  pointer-events: none;
+  cursor: default;
+}
+
+button.sos-loop-toggle:hover:not(.disabled),
+button.sos-loop-skip:hover:not(.disabled) {
+  filter: brightness(1.15);
+  box-shadow: 0 0 4px var(--sos-hover-glow);
+  cursor: pointer;
+}
+
+/* ========================================================= */
+/*   ✅  sos-loop Playlist - Green Glow Effect                  */
+/* ========================================================= */
+
+.sos-looped-static-glow {
+  position: relative;
+  overflow: hidden;
+}
+
+.sos-looped-static-glow::after {
+  content: "";
+  position: absolute;
+  bottom: -5px;
+  left: 0;
+  width: 100%;
+  height: 70%;
+  background: radial-gradient(
+    ellipse at 50% 100%,
+    rgba(90, 200, 160, 0.6) 0%,
+    rgba(90, 200, 160, 0) 70%
+  );
+  border-top-left-radius: 50%;
+  border-top-right-radius: 50%;
+  filter: blur(5px);
+}
+
+/* ========================================================= */
+/*   🔁  sos-loop-Playlist Indicator                            */
+/* ========================================================= */
+
+.currently-playing .sound-controls.flexrow {
+  flex-wrap: nowrap;
+  gap: var(--sos-space-xs);
+}
+
+.sos-loop-playlist-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--sos-icon-size-md);
+  height: var(--sos-icon-size-md);
+  font-size: var(--sos-text-xs);
+  color: var(--sos-crossfade-bg);
+  opacity: 0.9;
+  margin-right: var(--sos-space-xs);
+}
+

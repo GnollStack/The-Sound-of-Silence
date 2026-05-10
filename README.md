@@ -138,7 +138,8 @@ The "Currently Playing" panel in the sidebar has been completely overhauled with
 - **Full transport row** - repeat, silence toggle, crossfade toggle, internal loop toggle, playlist mode cycle, previous track, next track, pause/resume, stop.
 - **Inline playlist controls** - toggle silence gaps, auto-crossfade, and cycle playback mode (disabled/sequential/shuffle/simultaneous/soundscape) directly from the Currently Playing panel, even when the playlist is hidden in a folder.
 - **Bidirectional sync** - all toggles stay in sync with the sidebar playlist header buttons.
-- **Pause/Resume toggle** - when a track is paused, the button switches to a play icon so you can resume without stopping.
+- **Pause/Resume toggle** - when a track is paused, the button switches to a play icon so you can resume without stopping, and the timer resumes from the paused position.
+- **Stable timer display** - SoS owns the visible progress timer, keeping it steady during pause/resume, internal-loop startup, and Foundry timestamp refreshes.
 - **Dual volume sliders** - separate Track Volume and Playlist Volume controls render side by side on normal cards, with the labels above the slider/value rows for easy comparison.
 - **Fade-aware progress bars** - normal tracks and soundscape beds show subtle gray fade-in/fade-out zones over the amber progress bar when those fade windows apply. The left zone follows the playlist `fadeIn` setting; the right zone follows the playlist's native fade-out duration and hides for repeating tracks.
 - **Loop controls row** - appears whenever a track has live loop segments and stays visible across the gap between segments (and after pressing Break) so you can react to whatever loops next. Prev/next segment buttons grey out automatically at the first/last segment, plus break loop and disable loops.
@@ -152,6 +153,8 @@ The "Currently Playing" panel in the sidebar has been completely overhauled with
 ### Diagnostics
 
 Debug logging is the primary troubleshooting path. Developer inspection remains available through `game.modules.get('the-sound-of-silence').api.inspectAll()`.
+
+For timer-specific UI issues, enable **Trace Currently Playing Timers** in module settings. This world-level diagnostic setting logs each client's timer source, visible row text, hidden native timestamp proxy values, loop state, and media/document duration data without requiring every client to enable general debug logging.
 
 #### Remote Client Diagnostics
 
@@ -408,7 +411,7 @@ SoS includes a built-in integration layer that automatically detects and coopera
 SoS owns the Currently Playing panel DOM. Any other module that tries to restyle or rewrite the same sidebar elements will either lose (if it goes through Foundry's PARTS template system) or visually fight with SoS (if it injects DOM after render). Specifically, SoS:
 
 - **Replaces the `PARTS.playing` template** on the actual running `CONFIG.ui.playlists` class via `Integrations.patchPlayingParts()`. Any other module that also overrides `PARTS.playing` will be overridden by whichever loads last — SoS patches at the `ready` hook, which is late, so SoS normally wins.
-- **Replaces each sound row** with SoS partials. Normal rows use `sos-sound-partial.hbs`; grouped soundscapes use `sos-soundscape-group.hbs` with shared `sos-sound-content.hbs` children. Modules that rely on Foundry's native `sound-partial.hbs` DOM (`.sound-controls.flexrow`, the native volume slider markup, etc.) will not see their expected selectors on rows rendered by SoS. The critical selectors Foundry itself reads (`.sound[data-sound-uuid]`, `.current`, `.duration`, `.pause`) are preserved on real sound rows.
+- **Replaces each sound row** with SoS partials. Normal rows use `sos-sound-partial.hbs`; grouped soundscapes use `sos-soundscape-group.hbs` with shared `sos-sound-content.hbs` children. Modules that rely on Foundry's native `sound-partial.hbs` DOM (`.sound-controls.flexrow`, the native volume slider markup, etc.) will not see their expected selectors on rows rendered by SoS. The critical selectors Foundry itself reads (`.sound[data-sound-uuid]`, `.current`, `.duration`, `.pause`) are preserved through hidden compatibility targets on real sound rows.
 - **Caps the panel height and styles the scrollbar** on `.currently-playing.global-control` and `.playlist-sounds.plain`. Any module that injects additional rows into the Currently Playing widget will be constrained by the same max-height (`clamp(200px, 40vh, 480px)`) and scrolled by the same amber scrollbar. Wheel events over SoS track and playlist volume controls are exempt so Foundry's normal mouse-wheel volume behavior still works.
 - **Preserves sidebar scroll during playback renders** by wrapping PlaylistDirectory part sync and containing wheel scrolling on the playlist directory list. Modules that replace the same sidebar scroll containers should preserve `.directory-list` and `.playlist-sounds.plain` semantics.
 - **Defines new click targets via `data-sos-action`** (e.g. `toggleSoundscapeGroup`, `soundscapeFireNow`, `soundscapeStopAll`, `cyclePlaylistMode`, `toggleLoop`). A global click listener on the playlist directory handles these; modules that add their own delegated `click` listeners should scope them so they do not intercept SoS's attributes.
@@ -439,28 +442,35 @@ No known conflicts with non-playlist modules. If you find a compatibility issue,
 
 ---
 
-## ⚖️ License & Permissions
+## License & Permissions
 
-### Proprietary EULA
-This module is licensed under the **GnollStack Proprietary EULA**.
-It is **free for personal use** — you can use it in your home games, stream it, or modify it for your own table without restriction.
+### Source-Available Proprietary EULA
+This module is licensed under the **GnollStack Proprietary EULA** in [LICENSE.txt](LICENSE.txt).
 
-**Commercial redistribution is strictly prohibited.**
-You may not sell this module, bundle it within paid content (such as Patreon maps or adventures), or host it as a commercial service without prior written consent.
+The source is visible, but this is **not an open-source project**. You may inspect the source, install the module, use it in your own Foundry VTT games, and modify it for your own table under the EULA.
+
+Connected players may load the module from your Foundry VTT server as needed for gameplay. Streaming and recorded actual-play use is permitted, including monetized streams and videos, as long as the module itself is not redistributed, sold, bundled, rehosted, sublicensed, or offered as part of a paid software/content package or service.
+
+**Redistribution and commercial use require permission.**
+You may not sell this module, publish modified versions, rehost it, bundle it within paid content such as Patreon maps or adventures, or include it in another module, system, service, or package without prior written permission.
+
+### Written Permissions
+Need permission for a use not covered by the EULA? Ask first. I can grant written exceptions, commercial licenses, bundling permissions, integration permissions, or other case-by-case permissions.
+
+Written permissions apply only to the person or organization, project, use case, version, duration, and distribution channel described in that permission. They do not change the public EULA for everyone else.
 
 ### Commercial Licensing
-I am open to partnerships. If you are a map maker, adventure writer, or developer who wishes to use this module commercially, please get in touch. Commercial licenses are available for:
+I am open to partnerships. If you are a map maker, adventure writer, publisher, developer, or service operator who wishes to use this module commercially, please get in touch. Commercial licenses are available for:
 * Bundling with paid VTT content
 * Official integration into commercial systems
 * Custom feature development
+* Marketplace, Patreon, publisher, or hosted-service use
 
 ### Contact
 For licensing inquiries or permission slips:
 * **Discord:** `GnollStack` (Preferred)
 * **Email:** `Somedudeed@gmail.com`
-* *Please do not open GitHub Issues for commercial licensing discussions. But feel free to contact me via Discord or Email*
-
-Please do not open GitHub issues for commercial licensing discussions.
+* Please do not open GitHub Issues for commercial licensing discussions. Feel free to contact me via Discord or email.
 
 ---
 

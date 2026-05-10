@@ -807,7 +807,7 @@ export class SoundscapeEngine {
 }
 
 // =========================================================================
-// Registry helpers — single entry points used by main.js and api.js
+// Registry helpers - single entry points used by bootstrap/lifecycle.js and api.js
 // =========================================================================
 
 /**

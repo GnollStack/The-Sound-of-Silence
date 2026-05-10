@@ -9,6 +9,7 @@ import { LoopingSound } from "./looping-sound.js";
 import { scheduleEndOfTrackFade } from "./audio-fader.js";
 import { cancelCrossfade, scheduleCrossfade } from "./cross-fade.js";
 import { Flags } from "./flag-service.js";
+import { PlaybackClock } from "./playback-clock.js";
 import { State } from "./state-manager.js";  //  Import State manager
 
 const AudioTimeout = foundry.audio.AudioTimeout;
@@ -66,6 +67,9 @@ export function scheduleLoopWithin(ps) {
   }
 
   cancelStandardTransitionScheduling(ps);
+  PlaybackClock.clear(ps.parent, "internal loop active").catch((err) =>
+    debug(`[Clock] Failed to clear internal-loop clock for "${ps.name}":`, err?.message ?? err)
+  );
 
   // If we are about to create a looper, it becomes the authority for this
   // sound's lifecycle. Cancel any playlist-level crossfade timer.

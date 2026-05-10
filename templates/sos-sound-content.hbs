@@ -34,9 +34,14 @@
     <span class="ellipsis sos-playlist-title">{{ sos.playlistName }}</span>
     {{/if}}
     <div class="sound-timer">
-        <span class="current">{{ currentTime }}</span>
+        <span class="sos-native-timestamp-proxy sos-timestamp-proxy" aria-hidden="true">
+            <span class="current"></span>
+            <span class="duration"></span>
+            <i class="pause fa-solid fa-pause"></i>
+        </span>
+        <span class="sos-current">{{ currentTime }}</span>
         <span class="sep">&sol;</span>
-        <span class="duration">{{ durationTime }}</span>
+        <span class="sos-duration">{{ durationTime }}</span>
     </div>
 </header>
 

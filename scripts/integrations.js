@@ -11,8 +11,8 @@
  * 2. Patches PARTS.playing on the ACTUAL running class (not just the base)
  * 3. Guards our audio pipeline (setValueCurveAtTime curves) from external fade() calls
  *
- * The sync() wrapper in main.js prevents Foundry's sync() from stopping sounds
- * mid-crossfade — that is the critical companion to the guards registered here.
+ * The sync() wrapper prevents Foundry's sync() from stopping sounds
+ * mid-crossfade; that is the critical companion to the guards registered here.
  */
 import { MODULE_ID, debug, warn } from "./utils.js";
 import { State } from "./state-manager.js";
@@ -52,12 +52,12 @@ export const Integrations = {
     },
 
     // =====================================================================
-    // Lifecycle — called from main.js
+    // Lifecycle - called from bootstrap/lifecycle.js
     // =====================================================================
 
     /**
      * Detect active conflicting modules. Call during `init`.
-     * This is informational only — SoS continues to activate regardless.
+     * This is informational only; SoS continues to activate regardless.
      */
     detect() {
         _detected.monks = !!game.modules.get(KNOWN_MODULES.MONKS)?.active;

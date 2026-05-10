@@ -777,12 +777,18 @@ class FlagService {
  * The singleton instance of the FlagService, exported for use throughout the module.
  */
 export const Flags = new FlagService();
+let hooksRegistered = false;
 
-// Auto-invalidate cache when documents are updated
-Hooks.on("updatePlaylist", (playlist) => {
-    Flags._clearCache(playlist);
-});
+export function registerFlagServiceHooks() {
+    if (hooksRegistered) return;
+    hooksRegistered = true;
 
-Hooks.on("updatePlaylistSound", (sound) => {
-    Flags._clearCache(sound);
-});
+    // Auto-invalidate cache when documents are updated.
+    Hooks.on("updatePlaylist", (playlist) => {
+        Flags._clearCache(playlist);
+    });
+
+    Hooks.on("updatePlaylistSound", (sound) => {
+        Flags._clearCache(sound);
+    });
+}

@@ -1,0 +1,237 @@
+/* ========================================================= */
+/*   Remote Diagnostics Dialog                               */
+/* ========================================================= */
+
+.sos-remote-diagnostics .dialog-content {
+  max-height: 70vh;
+  overflow-y: auto;
+}
+
+.sos-remote-timestamp {
+  font-size: var(--font-size-12, 12px);
+  color: var(--sos-text-secondary, #aaa);
+  margin-bottom: 8px;
+}
+
+.sos-remote-diagnostics-content .client-card {
+  border: 1px solid var(--sos-border-medium, #444);
+  border-radius: 6px;
+  margin-bottom: 12px;
+  padding: 10px;
+  background: rgba(0, 0, 0, 0.15);
+}
+
+.sos-remote-diagnostics-content .client-card.problem {
+  border-color: var(--color-level-error, #ce0707);
+  background: rgba(206, 7, 7, 0.06);
+}
+
+.sos-remote-diagnostics-content .client-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.sos-remote-diagnostics-content .client-header h3 {
+  margin: 0;
+  font-size: var(--font-size-16, 16px);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.sos-remote-diagnostics-content .role-badge {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  padding: 1px 6px;
+  border-radius: 3px;
+}
+
+.sos-remote-diagnostics-content .role-badge.gm {
+  background: var(--sos-checkbox-accent, #ee9b3a);
+  color: #1a1a1a;
+}
+
+.sos-remote-diagnostics-content .role-badge.player {
+  background: rgba(100, 100, 100, 0.5);
+  color: var(--sos-text-primary, #ddd);
+}
+
+.sos-remote-diagnostics-content .context-states {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.sos-remote-diagnostics-content .context-chip {
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 3px;
+  font-family: monospace;
+}
+
+.sos-remote-diagnostics-content .context-chip.ok {
+  background: rgba(38, 178, 49, 0.2);
+  color: var(--color-level-success, #26b231);
+}
+
+.sos-remote-diagnostics-content .context-chip.warn {
+  background: rgba(206, 7, 7, 0.2);
+  color: var(--color-level-error, #ce0707);
+}
+
+/* Sound table */
+.sos-remote-diagnostics-content .sound-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--font-size-12, 12px);
+  margin-bottom: 8px;
+}
+
+.sos-remote-diagnostics-content .sound-table th {
+  text-align: left;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+  color: var(--sos-text-label, #888);
+  padding: 3px 6px;
+  border-bottom: 1px solid var(--sos-border-light, #333);
+}
+
+.sos-remote-diagnostics-content .sound-table td {
+  padding: 3px 6px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+}
+
+.sos-remote-diagnostics-content .sound-table tr.problem {
+  background: rgba(206, 7, 7, 0.08);
+}
+
+.sos-remote-diagnostics-content .sound-table .mono {
+  font-family: monospace;
+}
+
+.sos-remote-diagnostics-content .sound-table .error-text {
+  color: var(--color-level-error, #ce0707);
+  font-weight: 700;
+}
+
+/* Status dot indicator */
+.sos-remote-diagnostics-content .status-dot {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  margin-right: 4px;
+  vertical-align: middle;
+}
+
+.sos-remote-diagnostics-content .status-dot.ok {
+  background: var(--color-level-success, #26b231);
+  box-shadow: 0 0 3px rgba(38, 178, 49, 0.5);
+}
+
+.sos-remote-diagnostics-content .status-dot.error {
+  background: var(--color-level-error, #ce0707);
+  box-shadow: 0 0 3px rgba(206, 7, 7, 0.5);
+}
+
+/* Fade badge */
+.sos-remote-diagnostics-content .fade-badge {
+  font-size: 10px;
+  padding: 0 4px;
+  border-radius: 3px;
+  background: rgba(238, 155, 58, 0.2);
+  color: var(--color-level-warning, #ee9b3a);
+}
+
+.sos-remote-diagnostics-content .no-fade {
+  color: var(--sos-text-secondary, #888);
+}
+
+/* Feature list */
+.sos-remote-diagnostics-content .client-features {
+  margin-top: 6px;
+}
+
+.sos-remote-diagnostics-content .client-features h4 {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+  color: var(--sos-text-label, #888);
+  margin: 0 0 4px;
+}
+
+.sos-remote-diagnostics-content .feature-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.sos-remote-diagnostics-content .feature-list li {
+  margin-bottom: 3px;
+  font-size: var(--font-size-12, 12px);
+}
+
+/* Sequence details */
+.sos-remote-diagnostics-content .sequence-details {
+  margin-top: 6px;
+}
+
+.sos-remote-diagnostics-content .sequence-details summary {
+  font-size: 11px;
+  color: var(--sos-text-label, #888);
+  cursor: pointer;
+}
+
+.sos-remote-diagnostics-content .sequence-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 11px;
+  margin-top: 4px;
+}
+
+.sos-remote-diagnostics-content .sequence-table th {
+  text-align: left;
+  font-size: 10px;
+  text-transform: uppercase;
+  color: var(--sos-text-label, #888);
+  padding: 2px 6px;
+  border-bottom: 1px solid var(--sos-border-light, #333);
+}
+
+.sos-remote-diagnostics-content .sequence-table td {
+  padding: 2px 6px;
+  font-family: monospace;
+}
+
+/* Light mode overrides for remote diagnostics */
+body.theme-light .sos-remote-diagnostics-content .client-card {
+  background: rgba(0, 0, 0, 0.04);
+}
+
+body.theme-light .sos-remote-diagnostics-content .client-card.problem {
+  background: rgba(206, 7, 7, 0.04);
+}
+
+body.theme-light .sos-remote-diagnostics-content .role-badge.player {
+  background: rgba(100, 100, 100, 0.15);
+  color: #555;
+}
+
+form[id^="PlaylistConfig-"]
+  .form-group.slim:has(input[name="fade"])
+  .form-fields
+  input[type="number"] {
+  padding: 3px 6px;
+  height: 28px;
+  width: 100%;
+  min-width: 293px;
+  text-align: left;
+}
+

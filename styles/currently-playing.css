@@ -1,0 +1,1203 @@
+/* ========================================================= */
+/*   Currently Playing - Overhauled Layout                   */
+/* ========================================================= */
+
+/* Sound list container */
+.currently-playing .playlist-sounds.plain {
+  border: 1px solid var(--sos-border-medium);
+  border-radius: var(--sos-radius-sm);
+  margin-bottom: var(--sos-space-md);
+  overflow-y: auto !important;
+  overflow-x: hidden !important;
+  background: linear-gradient(
+    to bottom,
+    rgba(0, 0, 0, 0.18),
+    rgba(0, 0, 0, 0.08)
+  );
+  box-shadow: var(--sos-shadow-md);
+  scrollbar-width: thin;
+  scrollbar-color: rgba(238, 155, 58, 0.45) transparent;
+}
+
+.currently-playing .playlist-sounds.plain:last-child {
+  margin-bottom: 0;
+}
+
+/* Cap panel height so an overloaded Currently Playing list cannot push the
+   playlists directory off-screen; inner <ol> scrolls while the header and
+   pin caret stay fixed. */
+.currently-playing.global-control {
+  max-height: clamp(200px, 40vh, 480px) !important;
+  display: flex !important;
+  flex-direction: column;
+  min-height: 0;
+  box-sizing: border-box;
+  overflow: hidden !important;
+}
+
+.currently-playing.global-control > .playlist-header {
+  flex: 0 0 auto;
+}
+
+.currently-playing.global-control .playlist-sounds.plain {
+  display: block !important;
+  flex: 1 1 auto;
+  min-height: 0;
+  max-height: calc(clamp(200px, 40vh, 480px) - 28px) !important;
+  overscroll-behavior: contain;
+}
+
+.playlists-sidebar .directory-list {
+  overscroll-behavior: contain;
+}
+
+.currently-playing .playlist-sounds.plain::-webkit-scrollbar {
+  width: 8px;
+}
+
+.currently-playing .playlist-sounds.plain::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.currently-playing .playlist-sounds.plain::-webkit-scrollbar-thumb {
+  background: rgba(238, 155, 58, 0.35);
+  border-radius: 4px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+
+.currently-playing .playlist-sounds.plain::-webkit-scrollbar-thumb:hover {
+  background: rgba(238, 155, 58, 0.6);
+  background-clip: padding-box;
+  border: 2px solid transparent;
+}
+
+/* Row 0: Playlist name (primary header) */
+.sos-playlist-header {
+  display: flex;
+  align-items: center;
+  gap: var(--sos-space-md);
+  line-height: var(--entry-height, 24px);
+}
+
+.sos-playlist-header > i {
+  flex-shrink: 0;
+  color: var(--sos-checkbox-accent);
+}
+
+.sos-playlist-header .sos-playlist-title {
+  flex: 1;
+  font-weight: 600;
+  font-size: var(--sos-text-md);
+}
+
+/* Track card */
+.sos-now-playing {
+  display: flex;
+  flex-direction: column;
+  flex: 0 0 auto;
+  padding: var(--sos-space-sm) 6px;
+  background: linear-gradient(
+    to bottom,
+    rgba(255, 255, 255, 0.02),
+    rgba(0, 0, 0, 0.05)
+  );
+  border-bottom: 1px solid var(--sos-border-light);
+}
+
+.sos-now-playing:last-child {
+  border-bottom: none;
+}
+
+/* Row 1: Track header (secondary) */
+.sos-track-header {
+  display: flex;
+  align-items: center;
+  gap: var(--sos-space-md);
+  padding-left: calc(var(--sos-space-md) + 4px);
+  line-height: var(--entry-height, 24px);
+}
+
+.sos-track-header i {
+  flex-shrink: 0;
+  color: #9f8475;
+}
+
+.sos-track-header label {
+  flex: 1;
+  font-weight: 400;
+  font-size: var(--sos-text-sm);
+  color: #9f8475;
+}
+
+/* Row 2: Transport controls */
+.sos-transport-row {
+  display: flex;
+  align-items: center;
+  gap: var(--sos-space-md);
+  padding: var(--sos-space-xs) 0;
+}
+
+.sos-transport-row .sound-timer {
+  flex: 0 0 auto;
+  font-size: var(--font-size-12, 12px);
+  color: #d0b8a3;
+  white-space: nowrap;
+}
+
+.sos-transport-controls {
+  display: flex;
+  align-items: center;
+  gap: var(--sos-space-xs);
+  flex: 1;
+  justify-content: flex-end;
+  flex-wrap: nowrap;
+}
+
+/* Playback controls group — visually separated from toggle buttons */
+.sos-playback-group {
+  display: flex;
+  align-items: center;
+  gap: var(--sos-space-xs);
+  margin-left: var(--sos-space-sm);
+  padding-left: var(--sos-space-md);
+  border-left: 1px solid var(--sos-border-medium);
+}
+
+/* Transport button base */
+.sos-transport-btn {
+  padding: var(--sos-space-xs) var(--sos-space-sm);
+  background: var(--sos-btn-bg);
+  border: 1px solid var(--sos-border-medium);
+  border-radius: var(--sos-radius-sm);
+  color: var(--sos-text-primary);
+  cursor: pointer;
+  transition: all 0.15s ease;
+  min-width: 22px;
+  height: var(--sos-button-height-sm);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: var(--sos-btn-inset-shadow), var(--sos-shadow-sm);
+  text-shadow: var(--sos-btn-text-shadow);
+  font-size: 11px;
+}
+
+.sos-transport-btn i {
+  font-size: 10px;
+  pointer-events: none;
+}
+
+.sos-transport-btn:hover:not(.disabled):not([disabled]) {
+  background: var(--sos-btn-hover-bg);
+  border-color: var(--sos-hover-glow);
+  box-shadow: var(--sos-shadow-glow), var(--sos-btn-inset-shadow);
+}
+
+.sos-transport-btn.disabled,
+.sos-transport-btn[disabled] {
+  opacity: 0.3;
+  cursor: not-allowed;
+  background: var(--sos-disabled-bg);
+  border-color: var(--sos-border-light);
+  box-shadow: none;
+  filter: grayscale(100%);
+}
+
+/* Repeat button inactive state */
+.sos-transport-btn.inactive {
+  opacity: 0.4;
+}
+
+/* Stop button — gold accent */
+.sos-stop-btn {
+  color: var(--sos-checkbox-accent);
+}
+
+/* Loop toggle button — highlighted when active */
+.sos-loop-toggle-btn.active {
+  background: var(--sos-loop-active-bg);
+  border-color: var(--sos-loop-active-border);
+  color: var(--sos-checkbox-accent);
+}
+
+
+/* Row 3 alt: Procedural one-shot readout (replaces transport-row when showProceduralCard) */
+.sos-procedural-row {
+  display: flex;
+  align-items: center;
+  gap: var(--sos-space-sm);
+  padding: var(--sos-space-sm) 6px;
+  background: linear-gradient(
+    to bottom,
+    rgba(238, 155, 58, 0.06),
+    rgba(238, 155, 58, 0.02)
+  );
+  border-top: 1px solid var(--sos-border-light);
+  border-bottom: 1px solid var(--sos-border-light);
+}
+
+.sos-procedural-icon {
+  color: var(--sos-checkbox-accent);
+  font-size: var(--sos-text-md);
+  flex: 0 0 auto;
+}
+
+.sos-procedural-label {
+  font-size: var(--sos-text-xs);
+  font-weight: 600;
+  color: var(--sos-checkbox-accent);
+  white-space: nowrap;
+  flex: 0 0 auto;
+}
+
+.sos-procedural-stop {
+  margin-left: auto;
+}
+
+.sos-timestamp-proxy {
+  display: none !important;
+}
+
+.sos-procedural-eta {
+  font-size: var(--sos-text-xs);
+  color: #d0b8a3;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  margin-left: var(--sos-space-sm);
+  opacity: 0.85;
+}
+
+/* Procedural play-chance badge (rendered when chance < 100%) */
+.sos-procedural-chance-badge {
+  font-size: 0.65rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  padding: 1px 5px;
+  border-radius: 8px;
+  background: rgba(238, 155, 58, 0.18);
+  color: var(--sos-checkbox-accent, #ee9b3a);
+  border: 1px solid rgba(238, 155, 58, 0.35);
+  font-variant-numeric: tabular-nums;
+  flex: 0 0 auto;
+}
+
+/* Soundscape polyphony meter (X/Y) — rendered once per playlist group */
+.sos-polyphony-meter {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 0.65rem;
+  font-weight: 600;
+  padding: 1px 5px;
+  border-radius: 8px;
+  background: rgba(80, 75, 70, 0.35);
+  color: #d0b8a3;
+  border: 1px solid rgba(208, 184, 163, 0.18);
+  font-variant-numeric: tabular-nums;
+  flex: 0 0 auto;
+}
+
+.sos-polyphony-meter i {
+  font-size: 0.7em;
+  opacity: 0.85;
+}
+
+/* Soundscape Stop All button — sits right of the polyphony meter in the
+   playlist header, GM-only, stops every bed and procedural in the playlist. */
+.sos-soundscape-stop-all {
+  flex: 0 0 auto;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  font-size: 0.7rem;
+  line-height: 1;
+  color: var(--sos-checkbox-accent);
+  border-radius: 4px;
+}
+
+.sos-soundscape-stop-all:not(:disabled):hover {
+  color: #fff;
+  text-shadow: 0 0 6px rgba(238, 155, 58, 0.7);
+}
+
+/* Procedural "Fire Now" GM testing button */
+.sos-procedural-fire-btn {
+  color: var(--sos-checkbox-accent, #ee9b3a);
+  flex: 0 0 auto;
+}
+
+.sos-procedural-fire-btn:not(:disabled):hover {
+  color: #fff;
+  text-shadow: 0 0 6px rgba(238, 155, 58, 0.7);
+}
+
+.sos-procedural-fire-btn:disabled,
+.sos-procedural-fire-btn.disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+/* ========================================================= */
+/*   Compact procedural one-shot row (Option B hover-reveal) */
+/* ========================================================= */
+
+.sos-proc-hover {
+  display: flex;
+  align-items: center;
+  gap: var(--sos-space-md);
+  padding: var(--sos-space-xs) 6px var(--sos-space-xs) 10px;
+  border-bottom: 1px solid var(--sos-border-light);
+  min-height: var(--sos-button-height-sm);
+  background: linear-gradient(
+    to bottom,
+    rgba(238, 155, 58, 0.03),
+    rgba(0, 0, 0, 0.04)
+  );
+}
+
+.sos-proc-hover:last-child {
+  border-bottom: none;
+}
+
+.sos-proc-hover .proc-name {
+  flex: 1;
+  font-size: var(--sos-text-xs);
+  color: #9f8475;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+  transition: color 0.15s ease;
+}
+
+.sos-proc-hover:hover .proc-name {
+  color: var(--sos-text-primary);
+}
+
+.sos-proc-hover .ph-right {
+  display: flex;
+  align-items: center;
+  gap: var(--sos-space-sm);
+  flex-shrink: 0;
+}
+
+.sos-proc-hover .ph-controls {
+  display: flex;
+  align-items: center;
+  gap: var(--sos-space-xs);
+  opacity: 0;
+  transform: translateX(6px);
+  transition: opacity 0.15s ease, transform 0.15s ease;
+  pointer-events: none;
+}
+
+.sos-proc-hover:hover .ph-controls {
+  opacity: 1;
+  transform: translateX(0);
+  pointer-events: auto;
+}
+
+.sos-proc-hover .sos-procedural-eta {
+  font-size: var(--sos-text-xs);
+  color: var(--sos-text-label);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+body.theme-light .sos-proc-hover {
+  background: linear-gradient(
+    to bottom,
+    rgba(238, 155, 58, 0.04),
+    rgba(0, 0, 0, 0.02)
+  );
+}
+
+body.theme-light .sos-proc-hover .proc-name {
+  color: #666;
+}
+
+body.theme-light .sos-proc-hover:hover .proc-name {
+  color: var(--sos-text-primary);
+}
+
+/* Row 3/4: Volume rows */
+.sos-volume-row {
+  display: flex;
+  align-items: center;
+  gap: var(--sos-space-xs);
+  padding: var(--sos-space-xs) 2px;
+  border-top: 1px solid var(--sos-border-light);
+  background: linear-gradient(
+    to bottom,
+    rgba(0, 0, 0, 0.04),
+    rgba(0, 0, 0, 0.08)
+  );
+}
+
+/* Fixed-width label wrapper — keeps sliders aligned across all volume rows */
+.sos-vol-label-wrap {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  flex: 0 0 78px;
+  min-width: 78px;
+}
+
+.sos-vol-label {
+  font-size: var(--sos-text-xs);
+  font-weight: 600;
+  color: var(--sos-checkbox-accent);
+  white-space: nowrap;
+}
+
+.sos-vol-sublabel {
+  font-size: var(--sos-text-xs);
+  font-weight: 400;
+  color: var(--sos-text-label);
+  white-space: nowrap;
+}
+
+.sos-volume-row .volume-icon {
+  flex: 0 0 1rem;
+  font-size: var(--sos-text-xs);
+  color: var(--sos-text-secondary);
+  opacity: 0.7;
+}
+
+.sos-volume-row range-picker,
+.sos-volume-row .sound-volume {
+  flex: 1;
+}
+
+/* Disabled volume slider (managed by normalization) */
+.sos-volume-row range-picker[disabled],
+.sos-volume-row .sound-volume[disabled] {
+  opacity: 0.4;
+  pointer-events: none;
+}
+
+/* Row 5: Loop controls */
+.sos-loop-controls-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: var(--sos-space-sm) 6px;
+  background: linear-gradient(
+    to bottom,
+    rgba(0, 0, 0, 0.08),
+    rgba(0, 0, 0, 0.12)
+  );
+  border-top: 1px solid var(--sos-border-light);
+}
+
+.sos-controls-label {
+  font-size: var(--sos-text-xs);
+  font-weight: 600;
+  color: var(--sos-text-label);
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  white-space: nowrap;
+  margin-right: var(--sos-space-sm);
+}
+
+.sos-loop-controls-row.sos-disabled .sos-controls-label {
+  opacity: 0.3;
+  filter: grayscale(100%);
+}
+
+.sos-button-group {
+  display: flex;
+  gap: var(--sos-space-xs);
+  flex: 1;
+  justify-content: flex-end;
+}
+
+.sos-loop-ctrl {
+  padding: var(--sos-space-xs) var(--sos-space-md);
+  background: var(--sos-btn-bg);
+  border: 1px solid var(--sos-border-medium);
+  border-radius: var(--sos-radius-sm);
+  color: var(--sos-text-primary);
+  cursor: pointer;
+  transition: all 0.15s ease;
+  min-width: 24px;
+  height: var(--sos-button-height-sm);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: var(--sos-btn-inset-shadow), var(--sos-shadow-sm);
+  text-shadow: var(--sos-btn-text-shadow);
+}
+
+.sos-loop-ctrl i {
+  font-size: 10px;
+  pointer-events: none;
+}
+
+.sos-loop-ctrl:hover:not(.disabled):not([disabled]) {
+  background: var(--sos-btn-hover-bg);
+  border-color: var(--sos-hover-glow);
+  box-shadow: var(--sos-shadow-glow), var(--sos-btn-inset-shadow);
+}
+
+.sos-loop-ctrl.disabled,
+.sos-loop-ctrl[disabled] {
+  opacity: 0.3;
+  cursor: not-allowed;
+  background: var(--sos-disabled-bg);
+  border-color: var(--sos-border-light);
+  box-shadow: none;
+  filter: grayscale(100%);
+}
+
+/* Hide the old loop toggle in Currently Playing (now in transport row) */
+.currently-playing .sos-loop-toggle {
+  display: none !important;
+}
+
+/* ========================================================= */
+/*   Currently Playing - Version D Compact Card Overrides    */
+/* ========================================================= */
+
+.currently-playing .sos-now-playing.sos-progress-card {
+  padding: 0;
+  margin: 3px 4px;
+  overflow: hidden;
+  background: linear-gradient(
+    to bottom,
+    rgba(255, 255, 255, 0.02),
+    rgba(0, 0, 0, 0.05)
+  );
+  border: 1px solid var(--sos-border-light);
+  border-radius: var(--sos-radius-md);
+  box-shadow: var(--sos-shadow-sm);
+}
+
+body.theme-light .currently-playing .sos-now-playing.sos-progress-card {
+  background: linear-gradient(
+    to bottom,
+    rgba(0, 0, 0, 0.01),
+    rgba(0, 0, 0, 0.03)
+  );
+  border-color: var(--sos-border-light);
+  box-shadow: var(--sos-shadow-sm);
+}
+
+.currently-playing .sos-now-playing.sos-progress-card:last-child {
+  border-bottom: 1px solid var(--sos-border-light);
+}
+
+.currently-playing .sos-progress-card .sos-playlist-header {
+  display: flex;
+  align-items: center;
+  gap: var(--sos-space-md);
+  padding: 5px 7px 1px;
+  min-width: 0;
+  line-height: normal;
+  background: transparent;
+}
+
+.currently-playing .sos-progress-card .sos-playlist-header > i {
+  flex: 0 0 auto;
+  font-size: var(--sos-text-sm);
+  color: var(--sos-checkbox-accent);
+}
+
+.currently-playing .sos-progress-card .sos-playlist-header .sos-playlist-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--sos-text-md);
+  font-weight: 600;
+  color: var(--sos-text-primary);
+}
+
+.currently-playing .sos-progress-card .sos-playlist-header .sound-timer {
+  flex: 0 0 auto;
+  margin-left: 2px;
+  font-size: var(--sos-text-sm);
+  color: #d0b8a3;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.currently-playing .sos-progress-card .sos-playlist-header .sound-timer .sep {
+  opacity: 0.55;
+  margin: 0 1px;
+}
+
+.currently-playing .sos-progress-card .sos-track-block {
+  padding: 0 7px 5px;
+  margin-top: 2px;
+}
+
+.currently-playing .sos-progress-card .sos-track-block .sos-track-header {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0;
+  line-height: normal;
+  min-width: 0;
+}
+
+.currently-playing .sos-progress-card .sos-track-block .sos-track-header i {
+  flex: 0 0 auto;
+  font-size: var(--sos-text-xs);
+  color: #9f8475;
+}
+
+.currently-playing .sos-progress-card .sos-track-block .sos-track-header label {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--sos-text-sm);
+  font-weight: 400;
+  color: #9f8475;
+}
+
+.currently-playing .sos-progress-card .sos-progress-bar {
+  position: relative;
+  width: 100%;
+  height: 4px;
+  margin-top: 3px;
+  overflow: hidden;
+  background: var(--sos-bg-sunken);
+  border-radius: 2px;
+}
+
+.currently-playing .sos-progress-card .sos-progress-fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  z-index: 1;
+  height: 100%;
+  background: var(--sos-checkbox-accent);
+  border-radius: 2px;
+  transition: width 0.5s linear;
+}
+
+.currently-playing .sos-progress-card .sos-progress-fade {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  z-index: 2;
+  min-width: 2px;
+  background: var(--sos-inactive-border);
+  opacity: 0.75;
+}
+
+.currently-playing .sos-progress-card .sos-progress-fade[hidden] {
+  display: none;
+}
+
+.currently-playing .sos-progress-card .sos-progress-fade-in {
+  left: 0;
+  border-right: 1px solid var(--sos-active-border);
+  border-radius: 2px 0 0 2px;
+}
+
+.currently-playing .sos-progress-card .sos-progress-fade-out {
+  border-left: 1px solid var(--sos-active-border);
+  border-radius: 0 2px 2px 0;
+}
+
+.currently-playing .sos-progress-card .sos-progress-bar:hover .sos-progress-fade {
+  opacity: 0.95;
+}
+
+.currently-playing .sos-progress-card .sos-transport-row {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  padding: 4px 7px;
+  border-top: 1px solid var(--sos-border-light);
+  border-bottom: 1px solid var(--sos-border-light);
+}
+
+.currently-playing .sos-progress-card .sos-transport-controls,
+.currently-playing .sos-progress-card .sos-playback-group,
+.currently-playing .sos-progress-card .sos-button-group {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex-wrap: nowrap;
+}
+
+.currently-playing .sos-progress-card .sos-transport-controls {
+  flex: 0 0 auto;
+  justify-content: flex-start;
+}
+
+.currently-playing .sos-progress-card .sos-transport-spacer,
+.currently-playing .sos-progress-card .sos-loop-spacer {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.currently-playing .sos-progress-card .sos-playback-group {
+  flex: 0 0 auto;
+  margin-left: 0;
+  padding-left: 5px;
+  border-left: 1px solid var(--sos-border-light);
+}
+
+.currently-playing .sos-progress-card .sos-transport-btn,
+.currently-playing .sos-progress-card .sos-loop-ctrl {
+  box-sizing: border-box;
+  flex: 0 0 var(--sos-button-height-md);
+  width: var(--sos-button-height-md);
+  min-width: var(--sos-button-height-md);
+  max-width: var(--sos-button-height-md);
+  height: var(--sos-button-height-md);
+  padding: 0 3px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--sos-btn-bg);
+  border: 1px solid var(--sos-border-medium);
+  border-radius: var(--sos-radius-sm);
+  color: var(--sos-text-secondary);
+  box-shadow: var(--sos-btn-inset-shadow);
+  font-size: var(--sos-text-sm);
+  line-height: 1;
+  opacity: 0.9;
+  text-shadow: var(--sos-btn-text-shadow);
+}
+
+.currently-playing .sos-progress-card .sos-transport-btn i,
+.currently-playing .sos-progress-card .sos-loop-ctrl i {
+  font-size: var(--sos-text-sm);
+  pointer-events: none;
+}
+
+.currently-playing .sos-progress-card .sos-transport-btn:hover:not(.disabled):not([disabled]),
+.currently-playing .sos-progress-card .sos-loop-ctrl:hover:not(.disabled):not([disabled]) {
+  background: var(--sos-btn-hover-bg);
+  border-color: var(--sos-active-border);
+  box-shadow: var(--sos-btn-inset-shadow), var(--sos-shadow-glow);
+  filter: brightness(1.08);
+  opacity: 1;
+}
+
+.currently-playing .sos-progress-card .sos-transport-btn.disabled,
+.currently-playing .sos-progress-card .sos-transport-btn[disabled],
+.currently-playing .sos-progress-card .sos-loop-ctrl.disabled,
+.currently-playing .sos-progress-card .sos-loop-ctrl[disabled] {
+  opacity: 0.32;
+  cursor: not-allowed;
+  background: var(--sos-btn-bg);
+  border-color: var(--sos-border-medium);
+  box-shadow: var(--sos-btn-inset-shadow);
+  filter: grayscale(100%);
+}
+
+.currently-playing .sos-progress-card .sos-transport-btn.inactive,
+.currently-playing .sos-progress-card .sos-mode-btn.inactive {
+  opacity: 0.4;
+}
+
+.currently-playing .sos-progress-card button.sos-toggle.active {
+  background: var(--sos-active-bg);
+  border-color: var(--sos-active-border);
+  color: var(--sos-checkbox-accent);
+  box-shadow: inset 0 1px 0 rgba(238, 155, 58, 0.2), 0 0 4px var(--sos-active-glow);
+  opacity: 1;
+}
+
+.currently-playing .sos-progress-card button.xfade-toggle.active {
+  background: var(--sos-active-bg);
+  border-color: var(--sos-active-border);
+  color: var(--sos-checkbox-accent);
+  box-shadow: inset 0 1px 0 rgba(238, 155, 58, 0.2), 0 0 4px var(--sos-active-glow);
+  opacity: 1;
+}
+
+.currently-playing .sos-progress-card .sos-loop-toggle-btn.active {
+  background: var(--sos-loop-active-bg);
+  border-color: var(--sos-loop-active-border);
+  color: var(--sos-checkbox-accent);
+  opacity: 1;
+}
+
+.currently-playing .sos-progress-card .sos-stop-btn {
+  background: var(--sos-active-bg);
+  border-color: var(--sos-active-border);
+  color: var(--sos-checkbox-accent);
+  opacity: 1;
+}
+
+.currently-playing .sos-progress-card .sos-volume-columns {
+  display: flex;
+  align-items: stretch;
+  border-top: 1px solid var(--sos-border-light);
+}
+
+.currently-playing .sos-progress-card .sos-volume-col {
+  flex: 1 1 0;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 7px;
+}
+
+.currently-playing .sos-progress-card .sos-volume-col + .sos-volume-col {
+  border-left: 1px solid var(--sos-border-light);
+}
+
+.currently-playing .sos-progress-card .sos-volume-single .sos-volume-col {
+  flex-basis: 100%;
+}
+
+.currently-playing .sos-progress-card .sos-volume-col .sos-volume-compact-label {
+  flex: 0 0 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.currently-playing .sos-progress-card .sos-volume-col .sos-vol-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: var(--sos-text-xs);
+  font-weight: 600;
+  letter-spacing: 0;
+  color: var(--sos-checkbox-accent);
+  white-space: nowrap;
+}
+
+.currently-playing .sos-progress-card .sos-volume-col .sos-vol-sublabel {
+  font-size: var(--sos-text-xs);
+  font-weight: 400;
+  color: var(--sos-text-label);
+  white-space: nowrap;
+}
+
+.currently-playing .sos-progress-card .sos-volume-col .volume-icon {
+  flex: 0 0 auto;
+  font-size: var(--sos-text-xs);
+  color: var(--sos-text-label);
+  opacity: 0.85;
+}
+
+.currently-playing .sos-progress-card .sos-personal-mix-badge {
+  display: inline-flex;
+  align-items: center;
+  align-self: flex-start;
+  gap: 5px;
+  max-width: calc(100% - 14px);
+  margin: 4px 7px 0;
+  padding: 2px 6px;
+  border: 1px solid rgba(125, 183, 255, 0.45);
+  border-radius: var(--sos-radius-sm);
+  background: rgba(125, 183, 255, 0.12);
+  color: var(--sos-info-color, #7db7ff);
+  font-size: var(--sos-text-xs);
+  font-weight: 600;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+
+.currently-playing .sos-progress-card .sos-personal-mix-icons {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  opacity: 0.95;
+}
+
+.currently-playing .sos-progress-card .sos-volume-col range-picker,
+.currently-playing .sos-progress-card .sos-volume-col .sound-volume {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.currently-playing .sos-progress-card .sos-volume-col range-picker {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.currently-playing .sos-progress-card .sos-volume-col range-picker input[type="range"] {
+  flex: 1 1 auto;
+  min-width: 28px;
+  accent-color: var(--sos-text-label);
+}
+
+.currently-playing .sos-progress-card .sos-volume-col .sos-playlist-volume-slider input[type="range"] {
+  accent-color: var(--sos-checkbox-accent);
+}
+
+.currently-playing .sos-progress-card .sos-volume-col .sos-personal-volume-slider input[type="range"] {
+  accent-color: var(--sos-info-color, #7db7ff);
+}
+
+.currently-playing .sos-progress-card .sos-volume-col .sos-personal-track-volume-slider input[type="range"] {
+  accent-color: var(--sos-info-color, #7db7ff);
+}
+
+.currently-playing .sos-progress-card .sos-volume-col range-picker input[type="number"] {
+  flex: 0 0 26px;
+  width: 30px;
+  min-width: 30px;
+  height: var(--sos-input-height-sm);
+  padding: 0 3px;
+  border: 1px solid var(--sos-border-medium);
+  border-radius: var(--sos-radius-sm);
+  background: var(--sos-bg-sunken);
+  box-shadow: var(--sos-shadow-inset);
+  color: var(--sos-text-primary);
+  font-size: var(--sos-text-xs);
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+
+.currently-playing .sos-progress-card .sos-volume-col range-picker[disabled],
+.currently-playing .sos-progress-card .sos-volume-col .sound-volume[disabled] {
+  opacity: 0.4;
+  pointer-events: none;
+}
+
+.currently-playing .sos-progress-card:not(.sos-soundscape-bed-card) .sos-volume-columns {
+  flex-direction: row;
+}
+
+.currently-playing .sos-progress-card:not(.sos-soundscape-bed-card) .sos-volume-col {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  grid-template-areas:
+    "label label"
+    "icon control";
+  align-items: center;
+  gap: 2px 5px;
+  padding: 4px 7px 5px;
+}
+
+.currently-playing .sos-progress-card:not(.sos-soundscape-bed-card) .sos-volume-col + .sos-volume-col {
+  border-left: 1px solid var(--sos-border-light);
+  border-top: none;
+}
+
+.currently-playing .sos-progress-card:not(.sos-soundscape-bed-card) .sos-volume-col .sos-volume-compact-label {
+  grid-area: label;
+}
+
+.currently-playing .sos-progress-card:not(.sos-soundscape-bed-card) .sos-volume-col .volume-icon {
+  grid-area: icon;
+}
+
+.currently-playing .sos-progress-card:not(.sos-soundscape-bed-card) .sos-volume-col range-picker,
+.currently-playing .sos-progress-card:not(.sos-soundscape-bed-card) .sos-volume-col .sound-volume {
+  grid-area: control;
+  width: 100%;
+}
+
+.currently-playing .sos-progress-card .sos-loop-controls-row {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  padding: 4px 7px;
+  border-top: 1px solid var(--sos-border-light);
+  background: var(--sos-bg-elevated);
+}
+
+body.theme-light .currently-playing .sos-progress-card .sos-loop-controls-row {
+  background: var(--sos-bg-elevated);
+}
+
+.currently-playing .sos-progress-card .sos-loop-controls-row .sos-loop-icon {
+  flex: 0 0 auto;
+  font-size: var(--sos-text-xs);
+  color: var(--sos-checkbox-accent);
+}
+
+.currently-playing .sos-progress-card .sos-loop-controls-row .sos-controls-label {
+  flex: 0 0 auto;
+  margin-right: 0;
+  font-size: var(--sos-text-xs);
+  font-weight: 600;
+  color: var(--sos-checkbox-accent);
+  text-transform: uppercase;
+  letter-spacing: 0;
+  white-space: nowrap;
+}
+
+.currently-playing .sos-progress-card .sos-loop-controls-row.sos-disabled .sos-loop-icon,
+.currently-playing .sos-progress-card .sos-loop-controls-row.sos-disabled .sos-controls-label {
+  opacity: 0.32;
+  filter: grayscale(100%);
+}
+
+/* ========================================================= */
+/*   Currently Playing - Soundscape Group Strip              */
+/* ========================================================= */
+
+.currently-playing .sos-soundscape-strip {
+  padding: 0;
+  margin: 4px;
+  overflow: hidden;
+  background: linear-gradient(
+    to bottom,
+    rgba(238, 155, 58, 0.045),
+    rgba(0, 0, 0, 0.075)
+  );
+  border: 1px solid var(--sos-border-light);
+  border-radius: var(--sos-radius-md);
+  box-shadow: var(--sos-shadow-sm);
+}
+
+.currently-playing .sos-soundscape-strip:last-child {
+  border-bottom: 1px solid var(--sos-border-light);
+}
+
+.currently-playing .sos-soundscape-strip > .sos-playlist-header {
+  min-width: 0;
+  padding: 5px 7px;
+  line-height: normal;
+  background: linear-gradient(
+    to bottom,
+    rgba(238, 155, 58, 0.08),
+    rgba(0, 0, 0, 0.03)
+  );
+  border-bottom: 1px solid var(--sos-border-light);
+}
+
+.currently-playing .sos-soundscape-toggle {
+  cursor: pointer;
+  user-select: none;
+}
+
+.currently-playing .sos-soundscape-toggle:focus-visible {
+  outline: 1px solid var(--sos-active-border);
+  outline-offset: -2px;
+  box-shadow: inset 0 0 0 1px var(--sos-active-glow);
+}
+
+.currently-playing .sos-group-caret {
+  flex: 0 0 10px;
+  width: 10px;
+  color: var(--sos-checkbox-accent);
+  font-size: var(--sos-text-xs);
+  text-align: center;
+}
+
+.currently-playing .sos-soundscape-body {
+  padding: 2px 0 4px;
+}
+
+.currently-playing .sos-soundscape-strip .sos-soundscape-bed-card {
+  margin: 3px 5px;
+}
+
+.currently-playing .sos-soundscape-bed-card .sos-bed-track-header > i {
+  flex: 0 0 auto;
+  font-size: var(--sos-text-xs);
+  color: #9f8475;
+}
+
+.currently-playing .sos-soundscape-bed-card .sos-bed-track-header .sos-playlist-title {
+  font-size: var(--sos-text-sm);
+  color: var(--sos-text-primary);
+}
+
+.currently-playing .sos-soundscape-bed-card .sos-bed-progress-block {
+  padding-top: 0;
+}
+
+.currently-playing .sos-group-summary {
+  display: grid;
+  gap: 2px;
+  padding: 5px 8px 7px 22px;
+  background: rgba(0, 0, 0, 0.05);
+}
+
+.currently-playing .sos-summary-row {
+  display: flex;
+  align-items: center;
+  gap: var(--sos-space-md);
+  min-width: 0;
+  font-size: var(--sos-text-xs);
+  color: var(--sos-text-label);
+}
+
+.currently-playing .sos-summary-row i {
+  flex: 0 0 12px;
+  color: var(--sos-checkbox-accent);
+  opacity: 0.9;
+}
+
+.currently-playing .sos-summary-row .label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.currently-playing .sos-summary-row .meta {
+  margin-left: auto;
+  color: #d0b8a3;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.currently-playing .sos-proc-section {
+  margin: 4px 5px 0;
+  overflow: hidden;
+  border: 1px solid var(--sos-border-light);
+  border-radius: var(--sos-radius-sm);
+  background: rgba(0, 0, 0, 0.055);
+}
+
+.currently-playing .sos-proc-section-header {
+  display: flex;
+  align-items: center;
+  gap: var(--sos-space-sm);
+  min-width: 0;
+  padding: 3px 6px;
+  color: var(--sos-checkbox-accent);
+  font-size: var(--sos-text-xs);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0;
+  border-bottom: 1px solid var(--sos-border-light);
+  background: rgba(238, 155, 58, 0.05);
+}
+
+.currently-playing .sos-proc-section-header .count {
+  color: var(--sos-text-label);
+  font-weight: 500;
+}
+
+.currently-playing .sos-proc-section-header .line {
+  flex: 1 1 auto;
+  min-width: 10px;
+  height: 1px;
+  background: var(--sos-border-light);
+}
+
+.currently-playing .sos-proc-section-header .next {
+  color: #d0b8a3;
+  font-variant-numeric: tabular-nums;
+  text-transform: none;
+  white-space: nowrap;
+}
+
+.currently-playing .sos-proc-section > .sos-now-playing {
+  padding: 0;
+  background: transparent;
+  border-bottom: none;
+}
+
+.currently-playing .sos-proc-section .sos-proc-hover {
+  padding-left: 8px;
+  border-bottom: 1px solid var(--sos-border-light);
+}
+
+.currently-playing .sos-proc-section > .sos-now-playing:last-child .sos-proc-hover {
+  border-bottom: none;
+}
+

@@ -1,0 +1,160 @@
+/* ========================================================= */
+/*   CSS Variables - Foundry-Aligned Design System          */
+/* ========================================================= */
+
+:root {
+  /* State Colors - Warm amber palette aligned with Foundry's --color-warm-1 (#ee9b3a) */
+  --sos-active-bg: rgba(238, 155, 58, 0.25);
+  --sos-active-border: rgba(238, 155, 58, 0.5);
+  --sos-active-glow: rgba(238, 155, 58, 0.4);
+
+  --sos-inactive-bg: rgba(80, 75, 70, 0.3);
+  --sos-inactive-border: rgba(100, 95, 90, 0.4);
+
+  --sos-loop-active-bg: rgba(220, 160, 70, 0.32);
+  --sos-loop-active-border: rgba(240, 180, 90, 0.5);
+
+  --sos-crossfade-bg: rgba(100, 140, 180, 0.4);
+  --sos-crossfade-border: rgba(120, 160, 200, 0.6);
+
+  --sos-neutral-bg: rgba(80, 75, 70, 0.25);
+  --sos-disabled-bg: rgba(50, 50, 50, 0.2);
+
+  /* Text Colors */
+  --sos-text-primary: #d4d0c5;
+  --sos-text-secondary: #aaa;
+  --sos-text-disabled: #777;
+  --sos-text-label: #8a8681;
+
+  /* Borders */
+  --sos-border-light: rgba(0, 0, 0, 0.25);
+  --sos-border-medium: rgba(0, 0, 0, 0.35);
+  --sos-border-heavy: rgba(0, 0, 0, 0.5);
+  --sos-border-subtle: rgba(255, 255, 255, 0.08);
+
+  /* Backgrounds */
+  --sos-bg-elevated: rgba(0, 0, 0, 0.12);
+  --sos-bg-sunken: rgba(0, 0, 0, 0.2);
+  --sos-bg-overlay: rgba(0, 0, 0, 0.85);
+
+  /* Effects */
+  --sos-error-bg: rgba(140, 50, 50, 0.25);
+  --sos-error-border: rgba(180, 70, 70, 0.65);
+  --sos-error-text: #e88;
+
+  --sos-hover-overlay: rgba(255, 255, 255, 0.08);
+  --sos-hover-glow: rgba(255, 160, 80, 0.5);
+
+  /* Timeline */
+  --sos-timeline-track-bg: #302831;
+  --sos-timeline-handle-border: #191813;
+  --sos-checkbox-accent: #ee9b3a;
+
+  /* Spacing Scale */
+  --sos-space-xs: 2px;
+  --sos-space-sm: 3px;
+  --sos-space-md: 5px;
+  --sos-space-lg: 7px;
+  --sos-space-xl: 10px;
+
+  /* Typography Scale */
+  --sos-text-xs: 0.7rem;
+  --sos-text-sm: 0.8rem;
+  --sos-text-md: 0.85rem;
+  --sos-text-lg: 0.9rem;
+  --sos-text-xl: 1rem;
+
+  /* Component Sizes */
+  --sos-button-height-sm: 20px;
+  --sos-button-height-md: 22px;
+  --sos-button-height-lg: 24px;
+
+  --sos-input-height-sm: 22px;
+  --sos-input-height-md: 24px;
+
+  --sos-icon-size-sm: 14px;
+  --sos-icon-size-md: 16px;
+
+  /* Border Radius */
+  --sos-radius-sm: 3px;
+  --sos-radius-md: 4px;
+
+  /* Shadows */
+  --sos-shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.2);
+  --sos-shadow-md: 0 2px 4px rgba(0, 0, 0, 0.25);
+  --sos-shadow-lg: 0 4px 8px rgba(0, 0, 0, 0.3);
+  --sos-shadow-inset: inset 0 2px 3px rgba(0, 0, 0, 0.3);
+  --sos-shadow-glow: 0 0 4px var(--sos-hover-glow);
+
+  /* Button Appearance */
+  --sos-btn-bg: linear-gradient(to bottom, rgba(255,255,255,0.05), rgba(0,0,0,0.1));
+  --sos-btn-inset-shadow: inset 0 1px 0 rgba(255,255,255,0.08);
+  --sos-btn-hover-bg: linear-gradient(to bottom, rgba(255,255,255,0.08), rgba(0,0,0,0.05));
+  --sos-btn-text-shadow: 0 -1px 0 rgba(0, 0, 0, 0.4);
+}
+
+/* ========================================================= */
+/*   Light Mode Overrides                                    */
+/* ========================================================= */
+
+body.theme-light {
+  /* State Colors - Warm amber for light mode */
+  --sos-active-bg: rgba(238, 155, 58, 0.18);
+  --sos-active-border: rgba(238, 155, 58, 0.45);
+  --sos-active-glow: rgba(238, 155, 58, 0.5);
+
+  --sos-inactive-bg: rgba(120, 115, 110, 0.15);
+  --sos-inactive-border: rgba(120, 115, 110, 0.35);
+
+  --sos-loop-active-bg: rgba(200, 140, 40, 0.2);
+  --sos-loop-active-border: rgba(200, 140, 40, 0.45);
+
+  --sos-crossfade-bg: rgba(60, 110, 160, 0.3);
+  --sos-crossfade-border: rgba(60, 110, 160, 0.5);
+
+  --sos-neutral-bg: rgba(120, 115, 110, 0.12);
+  --sos-disabled-bg: rgba(180, 180, 180, 0.2);
+
+  /* Text Colors */
+  --sos-text-primary: #2c2a28;
+  --sos-text-secondary: #555;
+  --sos-text-disabled: #999;
+  --sos-text-label: #666;
+
+  /* Borders */
+  --sos-border-light: rgba(0, 0, 0, 0.12);
+  --sos-border-medium: rgba(0, 0, 0, 0.2);
+  --sos-border-heavy: rgba(0, 0, 0, 0.35);
+  --sos-border-subtle: rgba(0, 0, 0, 0.08);
+
+  /* Backgrounds */
+  --sos-bg-elevated: rgba(0, 0, 0, 0.04);
+  --sos-bg-sunken: rgba(0, 0, 0, 0.07);
+  --sos-bg-overlay: rgba(255, 255, 255, 0.92);
+
+  /* Effects */
+  --sos-error-bg: rgba(200, 50, 50, 0.1);
+  --sos-error-border: rgba(200, 50, 50, 0.5);
+  --sos-error-text: #c62828;
+
+  --sos-hover-overlay: rgba(0, 0, 0, 0.06);
+  --sos-hover-glow: rgba(200, 120, 40, 0.5);
+
+  /* Shadows */
+  --sos-shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.1);
+  --sos-shadow-md: 0 2px 4px rgba(0, 0, 0, 0.12);
+  --sos-shadow-lg: 0 4px 8px rgba(0, 0, 0, 0.15);
+  --sos-shadow-inset: inset 0 2px 3px rgba(0, 0, 0, 0.1);
+  --sos-shadow-glow: 0 0 4px var(--sos-hover-glow);
+
+  /* Button Appearance */
+  --sos-btn-bg: linear-gradient(to bottom, rgba(0,0,0,0.03), rgba(0,0,0,0.08));
+  --sos-btn-inset-shadow: inset 0 1px 0 rgba(255,255,255,0.5);
+  --sos-btn-hover-bg: linear-gradient(to bottom, rgba(0,0,0,0.05), rgba(0,0,0,0.1));
+  --sos-btn-text-shadow: none;
+
+  /* Timeline */
+  --sos-timeline-track-bg: #c8c4c0;
+  --sos-timeline-handle-border: #b8b4b0;
+}
+

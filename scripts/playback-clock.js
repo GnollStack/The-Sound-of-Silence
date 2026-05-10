@@ -102,6 +102,11 @@ export const PlaybackClock = {
     if (Flags.getPlaybackMode(playlist).soundscape) return null;
     if (Flags.getSoundFlag(ps, "isSilenceGap")) return null;
     if (ps.repeat) return null;
+    const loopConfig = Flags.getLoopConfig(ps);
+    if (loopConfig?.enabled && loopConfig?.active) {
+      debug(`[Clock] Skipping clock for "${ps.name}" - internal loop is active.`);
+      return null;
+    }
 
     const durationSec = _resolveDurationSeconds(ps, media);
     if (!durationSec) {

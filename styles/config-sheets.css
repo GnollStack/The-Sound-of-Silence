@@ -1,0 +1,921 @@
+/* ========================================================= */
+/*   Sticky Update Button for Sound Config                  */
+/* ========================================================= */
+
+form[id^="PlaylistSoundConfig-"] > footer.form-footer {
+  position: sticky;
+  bottom: 0;
+  background: var(--color-bg-primary, #1c1c1c);
+  border-top: 1px solid var(--color-border-dark, #444);
+  padding: 0.5rem;
+  margin-top: auto;
+  z-index: 10;
+  box-shadow: 0 -2px 8px rgba(0, 0, 0, 0.3);
+}
+
+form[id^="PlaylistSoundConfig-"] > footer.form-footer button[type="submit"] {
+  width: 100%;
+  font-weight: bold;
+}
+
+/* ========================================================= */
+/*   Playlist Config - Compact Layout                       */
+/* ========================================================= */
+
+.sos-config-section {
+  margin-bottom: 6px;
+}
+
+.sos-config-section .form-group.sos-compact {
+  margin: 4px 0;
+}
+
+.sos-config-section .form-group.sos-compact label {
+  margin-bottom: var(--sos-space-xs);
+  font-size: var(--sos-text-lg);
+  color: var(--sos-text-primary);
+}
+
+.sos-config-section .form-group.sos-compact input[type="number"],
+.sos-config-section .form-group.sos-compact select {
+  padding: var(--sos-space-xs) var(--sos-space-md);
+  height: var(--sos-input-height-md);
+  border-radius: var(--sos-radius-sm);
+}
+
+.sos-feature-toggle {
+  display: flex;
+  align-items: center;
+  gap: var(--sos-space-md);
+  padding: var(--sos-space-sm) 0;
+}
+
+.sos-feature-toggle input[type="checkbox"] {
+  margin: 0;
+}
+
+.sos-feature-label {
+  font-weight: 600;
+  font-size: 0.95em;
+  color: var(--sos-text-primary);
+}
+
+.sos-subsection {
+  border-left: 2px solid var(--sos-border-light);
+  padding-left: var(--sos-space-xl);
+  margin-left: 6px;
+  margin-bottom: var(--sos-space-sm);
+  background: linear-gradient(90deg, rgba(255,255,255,0.02), transparent 20px);
+}
+
+.sos-section-divider {
+  margin: var(--sos-space-md) 0;
+  border-color: var(--sos-border-light);
+}
+
+p.notes.sos-compact {
+  font-size: var(--sos-text-sm);
+  color: var(--sos-text-secondary);
+  margin: var(--sos-space-xs) 0 0 0;
+  line-height: 1.25;
+}
+
+p.notes.disabled-note {
+  color: var(--sos-text-disabled);
+  font-style: italic;
+}
+
+.sos-label-units {
+  font-size: var(--sos-text-sm);
+  opacity: 0.7;
+  font-weight: normal;
+  color: var(--sos-text-label);
+}
+
+.radio-group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sos-space-sm);
+}
+
+.radio.sos-compact {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin: var(--sos-space-xs) 0;
+}
+
+.radio.sos-compact input[type="radio"] {
+  margin: 0;
+}
+
+.radio.sos-compact span {
+  font-size: var(--sos-text-md);
+  color: var(--sos-text-primary);
+}
+
+.sos-custom-fade-input {
+  margin-top: var(--sos-space-sm) !important;
+  margin-left: 16px;
+  width: calc(100% - 16px);
+}
+
+.sos-range-label {
+  font-size: var(--sos-text-md);
+  margin: var(--sos-space-sm) 0 var(--sos-space-xs) 0;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.sos-range-label span {
+  font-weight: 600;
+  color: var(--sos-text-primary);
+}
+
+.sos-delay-group input[type="range"] {
+  margin: 0 0 6px 0;
+}
+
+/* A container for the main feature toggles */
+.sos-toggle-cluster {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sos-space-xs);
+}
+
+/* ========================================================= */
+/*   Sound Config - Compact Layout                          */
+/* ========================================================= */
+
+.sos-sound-config {
+  margin: 6px 0;
+}
+
+.sos-sound-config .form-group.sos-compact {
+  margin: 4px 0;
+}
+
+.sos-sound-config .form-group.sos-compact > label:not(.checkbox) {
+  margin-bottom: var(--sos-space-xs);
+  font-size: var(--sos-text-lg);
+  color: var(--sos-text-primary);
+}
+
+.sos-compact-checkbox {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin: 0;
+}
+
+.sos-compact-checkbox input[type="checkbox"] {
+  margin: 0;
+}
+
+.sos-compact-checkbox span {
+  font-size: var(--sos-text-lg);
+  color: var(--sos-text-primary);
+}
+
+.sos-loop-active-row.sos-compact {
+  display: flex;
+  align-items: center;
+  padding: var(--sos-space-sm) 0;
+  margin-left: 16px;
+}
+
+.sos-loop-editor.sos-compact {
+  margin-top: 6px;
+  margin-bottom: 6px;
+}
+
+.sos-loop-editor.sos-compact .sos-editor-label {
+  font-size: var(--sos-text-lg);
+  font-weight: 600;
+  margin-bottom: var(--sos-space-sm);
+  display: block;
+  color: var(--sos-text-primary);
+}
+
+.sos-loop-buttons-row.sos-compact {
+  padding: var(--sos-space-sm) 0;
+  margin-bottom: var(--sos-space-sm);
+}
+
+.sos-loop-buttons-row button.sos-compact {
+  height: var(--sos-button-height-md);
+  padding: 0 6px;
+  font-size: var(--sos-text-md);
+  background: var(--sos-btn-bg);
+  border: 1px solid var(--sos-border-medium);
+  border-radius: var(--sos-radius-sm);
+  box-shadow: var(--sos-btn-inset-shadow), var(--sos-shadow-sm);
+  transition: all 0.15s ease;
+}
+
+.sos-loop-buttons-row button.sos-compact:hover:not(.disabled) {
+  border-color: var(--sos-hover-glow);
+  box-shadow: var(--sos-shadow-glow);
+}
+
+.sos-loop-buttons-row .sos-loop-play-pause.sos-compact,
+.sos-loop-buttons-row .sos-loop-stop.sos-compact {
+  width: 26px;
+  padding: 0;
+}
+
+.sos-loop-segment-section.sos-compact {
+  border: 1px solid var(--sos-border-light);
+  border-radius: var(--sos-radius-sm);
+  padding: 6px;
+  margin-top: var(--sos-space-lg);
+  background: linear-gradient(
+    to bottom,
+    rgba(0, 0, 0, 0.18),
+    rgba(0, 0, 0, 0.12)
+  );
+  box-shadow: var(--sos-shadow-sm);
+}
+
+.sos-segment-header.sos-compact {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 6px;
+  padding-bottom: var(--sos-space-md);
+  border-bottom: 1px solid var(--sos-border-light);
+}
+
+.sos-segment-header.sos-compact h4 {
+  margin: 0;
+  font-size: 1.2em;
+  font-weight: 600;
+  border: none;
+  color: var(--sos-text-primary);
+}
+
+.sos-segment-preview-buttons {
+  display: flex;
+  gap: var(--sos-space-sm);
+  align-items: center;
+}
+
+button.sos-loop-preview-point.sos-compact {
+  height: var(--sos-button-height-md);
+  padding: var(--sos-space-xs) 6px;
+  font-size: var(--sos-text-sm);
+  line-height: 1.15;
+  display: flex;
+  align-items: center;
+  gap: var(--sos-space-sm);
+  background: linear-gradient(
+    to bottom,
+    rgba(220, 140, 70, 0.28),
+    rgba(220, 140, 70, 0.18)
+  );
+  border: 1px solid var(--sos-loop-active-border);
+  border-radius: var(--sos-radius-sm);
+  box-shadow: var(--sos-shadow-sm);
+  transition: all 0.15s ease;
+}
+
+button.sos-loop-preview-point.sos-compact:hover {
+  background: linear-gradient(
+    to bottom,
+    rgba(240, 160, 80, 0.35),
+    rgba(220, 140, 70, 0.25)
+  );
+  box-shadow: 0 0 4px rgba(240, 180, 90, 0.5);
+}
+
+button.sos-loop-preview-point.sos-compact i {
+  font-size: var(--sos-text-md);
+}
+
+button.sos-loop-preview-segment.sos-compact {
+  height: var(--sos-button-height-md);
+  padding: var(--sos-space-xs) 6px;
+  font-size: var(--sos-text-sm);
+  line-height: 1.15;
+  display: flex;
+  align-items: center;
+  gap: var(--sos-space-sm);
+  background: var(--sos-btn-bg);
+  border: 1px solid var(--sos-border-medium);
+  border-radius: var(--sos-radius-sm);
+  box-shadow: var(--sos-btn-inset-shadow), var(--sos-shadow-sm);
+  transition: all 0.15s ease;
+}
+
+button.sos-loop-preview-segment.sos-compact:hover:not(.disabled) {
+  border-color: var(--sos-hover-glow);
+  box-shadow: var(--sos-shadow-glow);
+}
+
+button.sos-loop-preview-segment.sos-compact i {
+  font-size: var(--sos-text-md);
+}
+
+.sos-segment-content {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sos-space-md);
+}
+
+.sos-time-inputs {
+  display: flex;
+  gap: 6px;
+}
+
+.sos-time-input-wrapper {
+  flex: 1;
+}
+
+.sos-time-input-wrapper label {
+  display: block;
+  font-size: var(--sos-text-md);
+  margin-bottom: var(--sos-space-xs);
+  color: var(--sos-text-primary);
+}
+
+.sos-time-input-wrapper input {
+  width: 100%;
+  padding: var(--sos-space-xs) var(--sos-space-md);
+  height: var(--sos-input-height-sm);
+  border-radius: var(--sos-radius-sm);
+}
+
+.sos-two-column {
+  display: flex;
+  gap: 6px;
+}
+
+.sos-two-column .sos-column {
+  flex: 1;
+}
+
+.sos-two-column .sos-column label {
+  display: block;
+  font-size: var(--sos-text-md);
+  margin-bottom: var(--sos-space-xs);
+  color: var(--sos-text-primary);
+}
+
+.sos-two-column .sos-column input {
+  width: 100%;
+  padding: var(--sos-space-xs) var(--sos-space-md);
+  height: var(--sos-input-height-sm);
+  border-radius: var(--sos-radius-sm);
+}
+
+/* =================================================================
+ * Soundscape panel (PlaylistConfig)
+ * Dedicated subsection for procedural ambience defaults + roster.
+ * ================================================================= */
+.sos-soundscape-panel {
+  border-left-color: var(--sos-checkbox-accent, #ee9b3a);
+  background: linear-gradient(
+    90deg,
+    rgba(238, 155, 58, 0.05),
+    transparent 30px
+  );
+  padding-top: var(--sos-space-sm);
+  padding-bottom: var(--sos-space-sm);
+}
+
+.sos-soundscape-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--sos-space-md);
+  margin-bottom: var(--sos-space-md);
+}
+
+.sos-soundscape-cell {
+  min-width: 0;
+}
+
+.sos-poly-input-row {
+  display: flex;
+  align-items: center;
+  gap: var(--sos-space-sm);
+}
+
+.sos-poly-input-row input[type="number"] {
+  width: 64px;
+}
+
+.sos-poly-hint {
+  font-size: var(--sos-text-sm);
+  color: var(--sos-text-secondary);
+  opacity: 0.75;
+  font-variant-numeric: tabular-nums;
+}
+
+.sos-radio-row {
+  display: flex !important;
+  flex-direction: row !important;
+  flex-wrap: wrap;
+  gap: var(--sos-space-md) !important;
+}
+
+.sos-soundscape-defaults,
+.sos-procedural-roster {
+  border: 1px solid var(--sos-border-light);
+  border-radius: var(--sos-radius-sm);
+  padding: var(--sos-space-sm) var(--sos-space-md) var(--sos-space-md);
+  margin: var(--sos-space-sm) 0;
+  background: rgba(0, 0, 0, 0.12);
+}
+
+.sos-soundscape-defaults legend,
+.sos-procedural-roster legend {
+  font-size: var(--sos-text-md);
+  font-weight: 600;
+  color: var(--sos-checkbox-accent, #ee9b3a);
+  padding: 0 var(--sos-space-sm);
+}
+
+.sos-soundscape-defaults .sos-two-column {
+  margin-bottom: var(--sos-space-sm);
+}
+
+.sos-soundscape-defaults label.checkbox.sos-compact-checkbox {
+  margin-top: var(--sos-space-sm);
+}
+
+.sos-soundscape-preview {
+  border: 1px solid var(--sos-border-light);
+  border-radius: var(--sos-radius-sm);
+  padding: var(--sos-space-sm) var(--sos-space-md);
+  margin: var(--sos-space-sm) 0;
+  background: linear-gradient(
+    90deg,
+    rgba(238, 155, 58, 0.08),
+    rgba(0, 0, 0, 0.08)
+  );
+}
+
+.sos-soundscape-preview legend {
+  font-size: var(--sos-text-md);
+  font-weight: 600;
+  color: var(--sos-checkbox-accent, #ee9b3a);
+  padding: 0 var(--sos-space-sm);
+}
+
+.sos-soundscape-preview-row {
+  display: flex;
+  align-items: center;
+  gap: var(--sos-space-sm);
+  min-height: 34px;
+}
+
+.sos-soundscape-preview-status {
+  margin-left: auto;
+  min-width: 64px;
+  font-size: var(--sos-text-sm);
+  font-variant-numeric: tabular-nums;
+  color: var(--sos-text-secondary);
+  text-align: right;
+  white-space: nowrap;
+}
+
+.sos-soundscape-preview.is-loading .sos-soundscape-preview-status {
+  color: var(--color-level-warning, #ee9b3a);
+}
+
+.sos-soundscape-preview.is-playing .sos-soundscape-preview-status {
+  color: var(--color-level-success, #26b231);
+}
+
+.sos-soundscape-preview.is-failed .sos-soundscape-preview-status {
+  color: var(--color-level-error, #ce0707);
+}
+
+/* Procedural roster table */
+.sos-roster-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--sos-text-sm);
+  color: var(--sos-text-primary);
+}
+
+.sos-roster-table thead th {
+  text-align: left;
+  font-weight: 600;
+  color: var(--sos-text-secondary);
+  padding: var(--sos-space-xs) var(--sos-space-sm);
+  border-bottom: 1px solid var(--sos-border-light);
+  font-size: var(--sos-text-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.sos-roster-table tbody td {
+  padding: var(--sos-space-xs) var(--sos-space-sm);
+  border-bottom: 1px dashed var(--sos-border-light);
+  vertical-align: middle;
+}
+
+.sos-roster-table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.sos-roster-name {
+  font-weight: 500;
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sos-roster-num {
+  font-variant-numeric: tabular-nums;
+  color: var(--sos-text-secondary);
+  white-space: nowrap;
+}
+
+.sos-roster-pan {
+  text-align: center;
+  color: var(--sos-checkbox-accent, #ee9b3a);
+  opacity: 0.85;
+}
+
+.sos-roster-empty {
+  font-style: italic;
+  text-align: center;
+  margin: var(--sos-space-md) 0 0 0 !important;
+}
+
+/* Per-sound procedural fieldsets (Timing / Variation) */
+.sos-procedural-fieldset {
+  border: 1px solid var(--sos-border-light);
+  border-radius: var(--sos-radius-sm);
+  padding: var(--sos-space-sm) var(--sos-space-md);
+  margin: var(--sos-space-sm) 0;
+  background: rgba(0, 0, 0, 0.1);
+}
+
+.sos-procedural-fieldset legend {
+  font-size: var(--sos-text-md);
+  font-weight: 600;
+  color: var(--sos-checkbox-accent, #ee9b3a);
+  padding: 0 var(--sos-space-sm);
+}
+
+.sos-proc-delay-preview,
+.sos-proc-rate-preview,
+.sos-proc-startup-preview {
+  font-style: italic;
+  color: var(--sos-text-secondary);
+  opacity: 0.85;
+}
+
+.sos-proc-min-readout,
+.sos-proc-max-readout,
+.sos-proc-avg-readout {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  color: var(--sos-checkbox-accent, #ee9b3a);
+}
+
+.sos-proc-audition {
+  background: linear-gradient(
+    90deg,
+    rgba(238, 155, 58, 0.08),
+    rgba(0, 0, 0, 0.08)
+  );
+}
+
+.sos-proc-audition-row {
+  display: grid;
+  grid-template-columns: 32px 32px minmax(120px, 1fr) minmax(64px, auto);
+  align-items: center;
+  gap: var(--sos-space-sm);
+  min-height: 34px;
+}
+
+.sos-proc-audition-fire,
+.sos-proc-audition-stop {
+  width: 32px;
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  color: var(--sos-text-primary);
+  background: var(--sos-btn-bg);
+  border: 1px solid var(--sos-border-medium);
+  border-radius: var(--sos-radius-sm);
+  box-shadow: var(--sos-btn-inset-shadow), var(--sos-shadow-sm);
+  transition: border-color 0.15s ease, color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.sos-proc-audition-fire:hover:not(:disabled),
+.sos-proc-audition-stop:hover:not(:disabled) {
+  color: var(--sos-checkbox-accent, #ee9b3a);
+  border-color: var(--sos-hover-glow);
+  box-shadow: var(--sos-shadow-glow);
+}
+
+.sos-proc-audition-fire:disabled,
+.sos-proc-audition-stop:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.sos-proc-audition-volume-wrap {
+  display: grid;
+  grid-template-columns: 18px minmax(96px, 1fr);
+  align-items: center;
+  gap: var(--sos-space-xs);
+  min-width: 0;
+}
+
+.sos-proc-audition-volume-wrap i {
+  color: var(--sos-text-secondary);
+  text-align: center;
+}
+
+.sos-proc-audition-volume-wrap range-picker {
+  width: 100%;
+  min-width: 0;
+}
+
+.sos-proc-audition-status {
+  justify-self: end;
+  min-width: 64px;
+  font-size: var(--sos-text-sm);
+  font-variant-numeric: tabular-nums;
+  color: var(--sos-text-secondary);
+  text-align: right;
+  white-space: nowrap;
+}
+
+.sos-proc-audition.is-loading .sos-proc-audition-status {
+  color: var(--color-level-warning, #ee9b3a);
+}
+
+.sos-proc-audition.is-playing .sos-proc-audition-status {
+  color: var(--color-level-success, #26b231);
+}
+
+.sos-proc-audition.is-failed .sos-proc-audition-status {
+  color: var(--color-level-error, #ce0707);
+}
+
+.sos-loop-controls-footer.sos-compact {
+  display: flex;
+  justify-content: center;
+  gap: var(--sos-space-md);
+  margin-top: var(--sos-space-lg);
+  padding-top: 6px;
+  border-top: 1px solid var(--sos-border-light);
+}
+
+.sos-loop-controls-footer button.sos-compact {
+  flex: 1;
+  max-width: 160px;
+  height: var(--sos-button-height-lg);
+  padding: 0 var(--sos-space-xl);
+  font-size: var(--sos-text-md);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--sos-space-sm);
+  background: var(--sos-btn-bg);
+  border: 1px solid var(--sos-border-medium);
+  border-radius: var(--sos-radius-sm);
+  box-shadow: var(--sos-btn-inset-shadow), var(--sos-shadow-sm);
+  transition: all 0.15s ease;
+}
+
+.sos-loop-controls-footer button.sos-compact:hover:not(.disabled) {
+  border-color: var(--sos-hover-glow);
+  box-shadow: var(--sos-shadow-glow);
+}
+
+.sos-loop-controls-footer button.sos-compact i {
+  font-size: var(--sos-text-sm);
+}
+
+.sos-loop-segment-section.error.sos-compact {
+  background: linear-gradient(
+    to bottom,
+    rgba(140, 50, 50, 0.2),
+    rgba(140, 50, 50, 0.15)
+  );
+  border-color: var(--sos-error-border);
+}
+
+.sos-error-text {
+  color: var(--sos-error-text);
+  font-size: var(--sos-text-md);
+  margin: var(--sos-space-sm) 0;
+  text-align: center;
+}
+
+.sos-loop-segment-section .sos-compact-checkbox {
+  padding: var(--sos-space-xs) 0;
+}
+
+.sos-loop-segment-section .sos-compact-checkbox input[type="checkbox"] {
+  transform: scale(1.08);
+}
+
+.sos-loop-timeline-container-fallback p.loading {
+  font-size: var(--sos-text-md);
+  color: var(--sos-text-secondary);
+  margin: var(--sos-space-sm) 0;
+}
+
+/* Fade zone indicators - more solid and Foundry-consistent */
+.sos-loop-timeline-fadein,
+.sos-loop-timeline-fadeout {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  height: 10px;
+  border-radius: 5px;
+  z-index: 0;
+  pointer-events: none;
+  opacity: 0.55;
+  transition: opacity 0.2s ease;
+}
+
+.sos-loop-timeline-fadein {
+  background: linear-gradient(
+    90deg,
+    rgba(100, 140, 180, 0.75) 0%,
+    rgba(100, 140, 180, 0.6) 100%
+  );
+  border-right: 2px solid var(--sos-crossfade-border);
+  box-shadow: inset 0 0 6px rgba(120, 160, 200, 0.5);
+}
+
+.sos-loop-timeline-fadeout {
+  background: linear-gradient(
+    90deg,
+    rgba(100, 140, 180, 0.6) 0%,
+    rgba(100, 140, 180, 0.75) 100%
+  );
+  border-left: 2px solid var(--sos-crossfade-border);
+  box-shadow: inset 0 0 6px rgba(120, 160, 200, 0.5);
+}
+
+/* Make fade zones more visible on hover */
+.sos-loop-timeline-container:hover .sos-loop-timeline-fadein,
+.sos-loop-timeline-container:hover .sos-loop-timeline-fadeout {
+  opacity: 0.7;
+}
+
+/* When timeline is in error state, fade zones become more prominent */
+.sos-loop-timeline-container.validation-error .sos-loop-timeline-fadein,
+.sos-loop-timeline-container.validation-error .sos-loop-timeline-fadeout {
+  opacity: 0.75;
+  border-color: var(--sos-error-border);
+}
+
+/* Error message display */
+.sos-loop-validation-error-msg {
+  display: none;
+  background: var(--sos-error-bg);
+  border: 1px solid var(--sos-error-border);
+  border-radius: var(--sos-radius-sm);
+  padding: 6px var(--sos-space-xl);
+  margin-bottom: 6px;
+  color: var(--sos-error-text);
+  font-size: var(--sos-text-lg);
+  font-weight: 600;
+  text-align: center;
+  box-shadow: var(--sos-shadow-sm);
+}
+
+.sos-segment-header.collapsible {
+  cursor: pointer;
+  position: relative;
+  border-radius: var(--sos-radius-sm);
+}
+
+.sos-segment-header.collapsible::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background-color: rgba(255, 255, 255, 0.06);
+  border-radius: inherit;
+  opacity: 0;
+  transition: opacity 0.2s ease;
+  pointer-events: none;
+}
+
+.sos-segment-header.collapsible:hover::before {
+  opacity: 1;
+}
+
+.sos-segment-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.segment-toggle-icon {
+  transition: transform 0.2s ease-in-out;
+  font-size: var(--sos-text-md);
+  width: 1em;
+  text-align: center;
+}
+
+.sos-diagnostics-window .window-content {
+  overflow-y: auto;
+}
+
+.sos-diagnostics-content .metrics-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.sos-diagnostics-content .metric-item {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  background: var(--sos-bg-elevated);
+  padding: 6px;
+  border-radius: var(--sos-radius-sm);
+  border: 1px solid var(--sos-border-subtle);
+  text-align: center;
+}
+
+.sos-diagnostics-content .metric-item-wide {
+  grid-column: span 3;
+}
+
+.sos-diagnostics-content .metric-item label {
+  font-weight: bold;
+  font-size: 11px;
+  opacity: 0.7;
+}
+
+.sos-diagnostics-content .metric-item span,
+.sos-diagnostics-content .metric-item .tag-row {
+  font-size: 1.05em;
+}
+
+.sos-diagnostics-content .diag-mono {
+  font-family: monospace;
+  font-size: 0.9em;
+  word-break: break-all;
+}
+
+.sos-diagnostics-content .tag-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  justify-content: center;
+}
+
+.sos-diagnostics-content .playlist-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.sos-diagnostics-content .playlist-item {
+  border: 1px solid var(--sos-border-medium);
+  border-radius: 5px;
+  padding: 10px;
+  margin-bottom: 8px;
+}
+
+.sos-diagnostics-content .playlist-item h4 {
+  margin: 0 0 8px 0;
+}
+
+.sos-diagnostics-content .feature-tag {
+  background: var(--sos-hover-overlay);
+  padding: 3px 6px;
+  border-radius: 5px;
+  display: inline-block;
+  margin-bottom: 5px;
+  font-size: 0.9em;
+}
+
+.sos-diagnostics-content .loop-list {
+  list-style: none;
+  padding-left: 15px;
+  margin: 0;
+}
+
+.sos-diagnostics-content .loop-item {
+  margin-bottom: 3px;
+}
+
+.sos-diagnostics-content .loop-state {
+  font-style: italic;
+  color: var(--sos-hover-glow);
+}
+

@@ -7,8 +7,14 @@ import { findSoundById, ensureCacheReady } from "./sound-cache.js";
 
 import { breakLoopWithin } from "./internal-loop.js";
 
-// Hook into the rendering of the playlist directory to add our custom UI elements.
-Hooks.on("renderPlaylistDirectory", async (app, htmlRaw) => {
+let hooksRegistered = false;
+
+export function registerPlaylistUiHooks() {
+    if (hooksRegistered) return;
+    hooksRegistered = true;
+
+    // Hook into the rendering of the playlist directory to add our custom UI elements.
+    Hooks.on("renderPlaylistDirectory", async (app, htmlRaw) => {
     const $html = $(htmlRaw);
 
     // Ensure cache is built (lazy initialization)
@@ -299,4 +305,5 @@ Hooks.on("renderPlaylistDirectory", async (app, htmlRaw) => {
             // Re-enable after a short delay
             setTimeout(() => $btn.removeClass("disabled"), 500);
         });
-});
+    });
+}

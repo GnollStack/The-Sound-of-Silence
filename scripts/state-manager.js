@@ -74,6 +74,7 @@ class StateManager {
          * @type {WeakMap<PlaylistSound, LoopingSound>}
          */
         this._activeLoopers = new WeakMap();
+        this._activeLoopersByKey = new Map();
 
         // ============================================
         // Soundscape Feature State
@@ -448,13 +449,19 @@ class StateManager {
     // Loop State Methods
     // ============================================
 
+    _soundStateKey(sound) {
+        const playlistId = sound?.parent?.id ?? sound?.playlistId;
+        const soundId = sound?.id;
+        return playlistId && soundId ? `${playlistId}:${soundId}` : null;
+    }
+
     /**
      * Get the active LoopingSound instance for a sound
      * @param {PlaylistSound} sound
      * @returns {LoopingSound|undefined}
      */
     getActiveLooper(sound) {
-        return this._activeLoopers.get(sound);
+        return this._activeLoopers.get(sound) ?? this._activeLoopersByKey.get(this._soundStateKey(sound));
     }
 
     /**
@@ -464,6 +471,8 @@ class StateManager {
      */
     setActiveLooper(sound, looper) {
         this._activeLoopers.set(sound, looper);
+        const key = this._soundStateKey(sound);
+        if (key) this._activeLoopersByKey.set(key, looper);
         debug(`[State] Set active looper for "${sound.name}"`);
         this._emitStateChange();
     }
@@ -473,8 +482,10 @@ class StateManager {
      * @param {PlaylistSound} sound
      */
     clearActiveLooper(sound) {
-        const had = this._activeLoopers.has(sound);
+        const key = this._soundStateKey(sound);
+        const had = this._activeLoopers.has(sound) || (key ? this._activeLoopersByKey.has(key) : false);
         this._activeLoopers.delete(sound);
+        if (key) this._activeLoopersByKey.delete(key);
         if (had) {
             debug(`[State] Cleared active looper for "${sound.name}"`);
             this._emitStateChange();
@@ -487,7 +498,7 @@ class StateManager {
      * @returns {boolean}
      */
     hasActiveLooper(sound) {
-        return this._activeLoopers.has(sound);
+        return !!this.getActiveLooper(sound);
     }
 
     // ============================================
@@ -978,3 +989,15 @@ export function logSummary(operation, details) {
 
 // Export singleton instance
 export const State = new StateManager();
+
+/**
+ * Centralized cleanup coordinator for all module state.
+ * Ensures cleanup happens in the correct order without race conditions.
+ * @param {Playlist} playlist The playlist to clean up.
+ * @param {object} options Cleanup options.
+ * @returns {Promise<void>}
+ */
+export async function cleanupPlaylistState(playlist, options = {}) {
+    debug(`[Cleanup] Delegating to State manager for "${playlist?.name}"`);
+    return State.cleanup(playlist, options);
+}

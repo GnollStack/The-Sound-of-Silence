@@ -1,8 +1,6 @@
 // utils.js
 // A collection of utility functions used throughout the module.
 
-import { State } from "./state-manager.js";
-
 const AudioTimeout = foundry.audio.AudioTimeout;
 
 // Module identifier for flag storage and settings as well as debug logging.
@@ -274,27 +272,6 @@ export const formatTime = (sec, showMilliseconds = true) => {
 };
 
 
-/**
- * Centralized cleanup coordinator for all module state.
- * Ensures cleanup happens in the correct order without race conditions.
- * 
- * Now delegates to State.cleanup() for proper coordination
- * 
- * @param {Playlist} playlist The playlist to clean up
- * @param {object} options Cleanup options
- * @param {boolean} options.cleanSilence Whether to cancel silent gaps
- * @param {boolean} options.cleanCrossfade Whether to cancel crossfades
- * @param {boolean} options.cleanLoopers Whether to cancel all track loopers
- * @param {PlaylistSound} options.onlySound If provided, only clean this specific sound's looper
- * @param {boolean} options.allowFadeOut Whether to allow sounds to fade out naturally
- * @returns {Promise<void>}
- */
-
-export async function cleanupPlaylistState(playlist, options = {}) {
-    debug(`[Cleanup] Delegating to State manager for "${playlist?.name}"`);
-    return State.cleanup(playlist, options);
-}
-
 export class PlaylistActionAuthority {
     static isAuthorizedGM() {
         if (!game.user.isGM) return false;
@@ -348,11 +325,24 @@ function cleanupOldSequences() {
 // Periodic cleanup runs via setInterval (not AudioTimeout, which requires
 // game.audio to be initialized). The interval is cleared if the page unloads.
 let _sequenceCleanupInterval = null;
-if (typeof window !== 'undefined') {
-    _sequenceCleanupInterval = setInterval(cleanupOldSequences, SEQUENCE_CLEANUP_INTERVAL);
-    window.addEventListener('beforeunload', () => {
-        if (_sequenceCleanupInterval) clearInterval(_sequenceCleanupInterval);
-    }, { once: true });
+let _sequenceCleanupHooksRegistered = false;
+
+export function registerSequenceCleanupHooks() {
+    if (_sequenceCleanupHooksRegistered) return;
+    _sequenceCleanupHooksRegistered = true;
+
+    if (typeof window !== 'undefined' && !_sequenceCleanupInterval) {
+        _sequenceCleanupInterval = setInterval(cleanupOldSequences, SEQUENCE_CLEANUP_INTERVAL);
+        window.addEventListener('beforeunload', () => {
+            if (_sequenceCleanupInterval) clearInterval(_sequenceCleanupInterval);
+        }, { once: true });
+    }
+
+    // Clean up when playlists are deleted.
+    Hooks.on("deletePlaylist", (playlist) => {
+        ACTION_SEQUENCES.delete(`pl:${playlist.id}`);
+        debug(`[Sequence Cleanup] Cleared sequences for deleted playlist: ${playlist.name}`);
+    });
 }
 
 export function getNextSequence(id, prefix = "pl") {
@@ -386,12 +376,6 @@ export function getSequenceSnapshot() {
     }
     return snapshot;
 }
-
-// Clean up when playlists are deleted
-Hooks.on("deletePlaylist", (playlist) => {
-    ACTION_SEQUENCES.delete(`pl:${playlist.id}`);
-    debug(`[Sequence Cleanup] Cleared sequences for deleted playlist: ${playlist.name}`);
-});
 
 /**
  * Feature-specific logging with consistent emoji prefixes

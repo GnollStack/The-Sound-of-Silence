@@ -18,8 +18,8 @@ import {
     isSoundscapeActive,
 } from "./procedural-ambience.js";
 import { Silence } from "./silence.js";
-import { cleanupPlaylistState, toSec, formatTime, info, debug, getSequenceSnapshot, MODULE_ID } from "./utils.js";
-import { State } from "./state-manager.js";
+import { toSec, formatTime, info, debug, getSequenceSnapshot, MODULE_ID } from "./utils.js";
+import { State, cleanupPlaylistState } from "./state-manager.js";
 import { Integrations } from "./integrations.js";
 
 /**
@@ -448,6 +448,7 @@ class SoundOfSilenceAPI {
             ...State.inspectAll(),
             debug: {
                 enabled: Boolean(game.settings?.get(this.ID, "debug")),
+                currentlyPlayingTimestamps: Boolean(game.settings?.get(this.ID, "debugCurrentlyPlayingTimestamps")),
                 isGM,
                 authorizedGM,
                 roleLabel: isGM ? "GM" : "Player",

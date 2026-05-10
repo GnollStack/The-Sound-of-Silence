@@ -16,6 +16,7 @@ import {
 const AudioTimeout = foundry.audio.AudioTimeout;
 const RETRY_BACKOFF_MS = 250;
 const DEFAULT_FADE_MS = 500;
+let hooksRegistered = false;
 
 function _getOverrideFlag(configOverrides, key) {
     if (!configOverrides?.flags) return undefined;
@@ -532,12 +533,17 @@ export const SoundscapePreviewer = {
     },
 };
 
-Hooks.on("updatePlaylist", (playlist) => {
-    if (playlist?.playing && SoundscapePreviewer.isPreviewing(playlist)) {
-        SoundscapePreviewer.stop(playlist, { notify: false });
-    }
-});
+export function registerSoundscapePreviewerHooks() {
+    if (hooksRegistered) return;
+    hooksRegistered = true;
 
-Hooks.on("deletePlaylist", (playlist) => {
-    SoundscapePreviewer.stop(playlist, { notify: false });
-});
+    Hooks.on("updatePlaylist", (playlist) => {
+        if (playlist?.playing && SoundscapePreviewer.isPreviewing(playlist)) {
+            SoundscapePreviewer.stop(playlist, { notify: false });
+        }
+    });
+
+    Hooks.on("deletePlaylist", (playlist) => {
+        SoundscapePreviewer.stop(playlist, { notify: false });
+    });
+}
