@@ -5,6 +5,8 @@
 import { Flags } from "../flag-service.js";
 import { debug, MODULE_ID } from "../utils.js";
 
+const VOLUME_EPSILON = 0.0001;
+
 export function registerNormalizationHooks() {
   Hooks.on("updatePlaylist", async (playlist, changes, options, userId) => {
     if (game.user.id !== userId || !game.user.isGM) return;
@@ -32,13 +34,30 @@ export function registerNormalizationHooks() {
 
     const convertedVolume =
       foundry.audio.AudioHelper.inputToVolume(targetVolume);
+    const temporaryOverridePath = `flags.${MODULE_ID}.normalizedVolumeOverride`;
 
     for (const sound of playlist.sounds) {
-      if (
-        !Flags.getSoundFlag(sound, "allowVolumeOverride") &&
-        sound.volume !== convertedVolume
-      ) {
-        updates.push({ _id: sound.id, volume: convertedVolume });
+      if (Flags.getSoundFlag(sound, "allowVolumeOverride")) continue;
+
+      const overrideSnapshot = Flags.getSoundFlag(
+        sound,
+        "normalizedVolumeOverride"
+      );
+      const hasTemporaryOverride =
+        overrideSnapshot !== null &&
+        typeof overrideSnapshot !== "undefined" &&
+        Number.isFinite(Number(overrideSnapshot));
+      const currentVolume = Number(sound.volume);
+      const volumeChanged =
+        !Number.isFinite(currentVolume) ||
+        Math.abs(currentVolume - convertedVolume) > VOLUME_EPSILON;
+
+      if (volumeChanged || hasTemporaryOverride) {
+        updates.push({
+          _id: sound.id,
+          volume: convertedVolume,
+          [temporaryOverridePath]: null,
+        });
       }
     }
 

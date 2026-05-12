@@ -202,8 +202,35 @@ function generateFadeCurve(startVol, targetVol, resolution, curveType) {
 
 // --- Fader Functions ---
 
+function clampVolume(value, fallback = 0) {
+  const num = Number(value);
+  if (!Number.isFinite(num)) return fallback;
+  return Math.max(0, Math.min(1, num));
+}
+
+function clearFadeTokenAfter(sound, token, durationMs, bufferMs = 50) {
+  if (!token) return;
+  AudioTimeout.wait(Math.max(0, Number(durationMs) || 0) + bufferMs)
+    .then(() => State.clearFadingSound(sound, token))
+    .catch(() => { });
+}
+
 export function cancelActiveFade(sound) {
-  sound?.gain?.cancelScheduledValues(sound.context.currentTime);
+  const gain = sound?.gain;
+  const context = sound?.context;
+  if (!gain || !context) {
+    if (sound) State.clearFadingSound(sound);
+    return;
+  }
+
+  const now = context.currentTime;
+  const currentValue = Number.isFinite(gain.value)
+    ? gain.value
+    : clampVolume(sound.volume, 0);
+
+  gain.cancelScheduledValues(now);
+  gain.setValueAtTime(currentValue, now);
+  State.clearFadingSound(sound);
 }
 
 /**
@@ -214,31 +241,37 @@ export function cancelActiveFade(sound) {
  * @param {object} options
  * @param {number} options.targetVol The final volume (0 to 1).
  * @param {number} options.duration The duration of the fade in milliseconds.
+ * @returns {object|null} The fade ownership token, if a curve was scheduled.
  */
 export function advancedFade(sound, { targetVol, duration }) {
   ensureAudioContext();
   if (!sound?.gain) return;
+  targetVol = clampVolume(targetVol, 1);
   if (!Number.isFinite(duration) || duration <= 0) {
+    State.clearFadingSound(sound);
     sound.volume = targetVol;
-    return;
+    return null;
   }
 
   const gain = sound.gain;
   const context = sound.context;
+  const now = context.currentTime;
 
-  // Cancel any existing scheduled values FIRST to get a clean state
-  gain.cancelScheduledValues(context.currentTime);
-
-  // Read current value and handle potential NaN from interrupted curves
+  // Read current value and handle potential NaN from interrupted curves.
   let startVol = gain.value;
   if (!Number.isFinite(startVol)) {
     // Fallback: use the Sound's volume property or target as starting point
-    startVol = Number.isFinite(sound.volume) ? sound.volume : targetVol;
+    startVol = clampVolume(sound.volume, targetVol);
     debug(`[AF] Recovered from NaN gain.value, using fallback: ${startVol}`);
   }
+  startVol = clampVolume(startVol, targetVol);
+
+  // Cancel any existing scheduled values and clear their token before replacing them.
+  gain.cancelScheduledValues(now);
+  State.clearFadingSound(sound);
 
   // Establish a known value at current time (Web Audio best practice after cancel)
-  gain.setValueAtTime(startVol, context.currentTime);
+  gain.setValueAtTime(startVol, now);
 
   const durationSec = duration / 1000;
 
@@ -249,15 +282,23 @@ export function advancedFade(sound, { targetVol, duration }) {
   const direction = targetVol >= startVol ? "in" : "out";
   const curveType = getFadeCurveType(direction);
   const curve = generateFadeCurve(startVol, targetVol, resolution, curveType);
+  const token = State.startFade(sound, {
+    type: `fade-${direction}`,
+    duration,
+    targetVol,
+    curveType,
+  });
 
   debug(`[AF] Fade-${direction} (${curveType}): ${startVol.toFixed(3)} → ${targetVol.toFixed(3)} over ${duration}ms (${resolution} samples)`);
 
   // Schedule on the audio thread (slight offset to avoid collision with setValueAtTime)
-  gain.setValueCurveAtTime(curve, context.currentTime + 0.001, durationSec);
+  gain.setValueCurveAtTime(curve, now + 0.001, durationSec);
+  clearFadeTokenAfter(sound, token, duration);
+  return token;
 }
 
 /**
- * Fades a sound to 0 using exponential curve, then stops it.
+ * Fades a sound to 0 using the configured fade-out curve, then stops it.
  * @param {Sound} sound
  * @param {number} ms Fade duration in milliseconds (default 500ms).
  * @returns {Promise<void>}
@@ -265,16 +306,21 @@ export function advancedFade(sound, { targetVol, duration }) {
 export async function fadeOutAndStop(sound, ms = 500) {
   if (!sound) return Promise.resolve();
 
-  advancedFade(sound, { targetVol: 0, duration: ms });
+  const token = advancedFade(sound, { targetVol: 0, duration: ms });
 
-  await AudioTimeout.wait(ms);
+  try {
+    await AudioTimeout.wait(ms);
+  } catch (_) {
+    return;
+  }
 
-  if (sound.volume <= 0.01) {
+  if (!token || State.isCurrentFadeToken(sound, token)) {
     try {
       sound.stop();
     } catch (err) {
       // Sound may have been destroyed
     }
+    State.clearFadingSound(sound, token);
   }
 }
 
@@ -299,11 +345,14 @@ export function equalPowerCrossfade(soundOut, soundIn, duration, { targetVolIn: 
   const resolvedTargetVolIn = (typeof explicitTargetVolIn === 'number')
     ? explicitTargetVolIn
     : (soundIn._manager?.volume ?? 1.0);
+  const safeTargetVolIn = clampVolume(resolvedTargetVolIn, 1);
 
   if (!Number.isFinite(duration) || duration <= 0) {
+    State.clearFadingSound(soundOut);
+    State.clearFadingSound(soundIn);
     soundOut.volume = 0;
-    soundIn.volume = resolvedTargetVolIn;
-    return;
+    soundIn.volume = safeTargetVolIn;
+    return null;
   }
 
   cancelActiveFade(soundOut);
@@ -320,8 +369,13 @@ export function equalPowerCrossfade(soundOut, soundIn, duration, { targetVolIn: 
     return;
   }
 
-  const startVolOut = gainOut.value;
-  const targetVolIn = resolvedTargetVolIn;
+  let startVolOut = gainOut.value;
+  if (!Number.isFinite(startVolOut)) {
+    startVolOut = clampVolume(soundOut.volume, 1);
+    debug(`[AF] Recovered from NaN outgoing gain.value, using fallback: ${startVolOut}`);
+  }
+  startVolOut = clampVolume(startVolOut, 1);
+  const targetVolIn = safeTargetVolIn;
 
   const durationSec = duration / 1000;
 
@@ -343,14 +397,29 @@ export function equalPowerCrossfade(soundOut, soundIn, duration, { targetVolIn: 
 
   gainOut.cancelScheduledValues(contextOut.currentTime);
   gainIn.cancelScheduledValues(contextIn.currentTime);
+  State.clearFadingSound(soundOut);
+  State.clearFadingSound(soundIn);
 
   // Establish known starting values before scheduling curves (Web Audio API spec requirement).
   // After cancelScheduledValues, the gain value can be in an undefined state.
   gainOut.setValueAtTime(startVolOut, contextOut.currentTime);
   gainIn.setValueAtTime(0, contextIn.currentTime);
+  const outToken = State.startFade(soundOut, {
+    type: "crossfade-out",
+    duration,
+    targetVol: 0,
+  });
+  const inToken = State.startFade(soundIn, {
+    type: "crossfade-in",
+    duration,
+    targetVol: targetVolIn,
+  });
 
   gainOut.setValueCurveAtTime(curveOut, contextOut.currentTime, durationSec);
   gainIn.setValueCurveAtTime(curveIn, contextIn.currentTime, durationSec);
+  clearFadeTokenAfter(soundOut, outToken, duration, 500);
+  clearFadeTokenAfter(soundIn, inToken, duration, 500);
+  return { outToken, inToken };
 }
 
 /**
@@ -402,7 +471,7 @@ export function scheduleEndOfTrackFade(ps) {
     if (!State.getEndOfTrackFade(ps) || !sound.playing) return;
 
     State.clearEndOfTrackFade(ps);
-    debug(`[Fade] Starting end-of-track exponential fade-out for "${ps.name}"`);
+    debug(`[Fade] Starting end-of-track configured fade-out for "${ps.name}"`);
     advancedFade(sound, { targetVol: 0, duration: fadeMs });
   });
 }

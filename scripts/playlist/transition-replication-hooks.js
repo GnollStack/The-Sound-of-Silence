@@ -3,6 +3,9 @@
  * @description Replicates playlist skip, stop, and crossfade transitions to non-owner clients.
  */
 import {
+  prepareIncomingCrossfadeMedia,
+} from "../cross-fade.js";
+import {
   advancedFade,
   cancelActiveFade,
   equalPowerCrossfade,
@@ -13,6 +16,7 @@ import { State, cleanupPlaylistState } from "../state-manager.js";
 import {
   debug,
   MODULE_ID,
+  safeStop,
   shouldProcessAction,
   waitForMedia,
 } from "../utils.js";
@@ -103,11 +107,13 @@ export function registerTransitionReplicationHooks() {
         debug(
           `[Stop-Client] Fading out "${ps.name}" over ${dur}ms (replicated).`
         );
-        advancedFade(media, { targetVol: 0, duration: dur });
+        const token = advancedFade(media, { targetVol: 0, duration: dur });
         AudioTimeout.wait(dur + 10).then(() => {
+          if (token && !State.isCurrentFadeToken(media, token)) return;
           try {
             media.stop();
           } catch (_) { }
+          if (token) State.clearFadingSound(media, token);
         }).catch(() => { });
       } else {
         try {
@@ -146,7 +152,7 @@ export function registerTransitionReplicationHooks() {
 
     const [soundOut, soundIn] = await Promise.all([
       psOut ? waitForMedia(psOut) : Promise.resolve(null),
-      waitForMedia(psIn),
+      prepareIncomingCrossfadeMedia(psIn),
     ]);
 
     if (!soundIn) {
@@ -154,24 +160,23 @@ export function registerTransitionReplicationHooks() {
       return;
     }
 
-    State.markSoundAsFading(soundIn);
-    if (soundOut) State.markSoundAsFading(soundOut);
-
     if (!soundOut?.playing) {
       debug(`[Crossfade-Sync] Outgoing sound already stopped; snapping "${psIn.name}" to target volume.`);
       soundIn.volume = localTargetVolIn;
-      State.clearFadingSound(soundIn);
       State.clearPlaylistCrossfading(playlist);
       return;
     }
 
     debug(`[Crossfade-Sync] Applying equal-power crossfade "${psOut?.name}" -> "${psIn.name}" (${fadeMs}ms)`);
 
-    equalPowerCrossfade(soundOut, soundIn, fadeMs, { targetVolIn: localTargetVolIn });
+    const fadeTokens = equalPowerCrossfade(soundOut, soundIn, fadeMs, { targetVolIn: localTargetVolIn });
 
     AudioTimeout.wait(fadeMs + 50).then(() => {
-      State.clearFadingSound(soundIn);
-      if (soundOut) State.clearFadingSound(soundOut);
+      if (soundIn && fadeTokens?.inToken) State.clearFadingSound(soundIn, fadeTokens.inToken);
+      if (soundOut?.playing && (!fadeTokens?.outToken || State.isCurrentFadeToken(soundOut, fadeTokens.outToken))) {
+        safeStop(soundOut, "replicated crossfade completion");
+      }
+      if (soundOut && fadeTokens?.outToken) State.clearFadingSound(soundOut, fadeTokens.outToken);
       State.clearPlaylistCrossfading(playlist);
     });
   });

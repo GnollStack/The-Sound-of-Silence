@@ -914,10 +914,10 @@ async function _wrapPreparePlayingContext(wrapped, context, options) {
             playlistMode: _getSyntheticPlaylistMode(playlist),
         };
 
-        // Disable native volume slider if managed by normalization
+        // Non-GM clients cannot persist shared track mix while normalization owns the playlist.
         if (soundCtx.sos.normalizationEnabled && soundCtx.volume && !soundCtx.sos.personalVolumeEnabled) {
             soundCtx.volume.managed = true;
-            soundCtx.volume.disabled = true;
+            soundCtx.volume.disabled = !soundCtx.sos.isGM;
         }
     }
 
@@ -1616,7 +1616,7 @@ const _persistPersonalPlaylistVolumeChange = foundry.utils.debounce(async ({ pla
 
     debug(`[CurrentlyPlaying] Setting personal playlist volume for "${playlist.name}" to ${value}`);
     await Flags.setPersonalPlaylistVolume(playlist, value);
-    await Flags.setPersonalTrackVolumesForPlaylist(playlist, value);
+    await Flags.clearPersonalTrackVolumesForPlaylist(playlist);
 }, 75);
 
 function _attachPlaylistDirectoryWheelGuard(root) {

@@ -61,10 +61,10 @@ class StateManager {
         this._playWaiters = new WeakMap();
 
         /**
-         * Debounce flag to prevent multiple simultaneous crossfades on the same sound
-         * @type {WeakSet<Sound>}
+         * Tracks active SoS-owned fade/crossfade gain curves.
+         * @type {WeakMap<Sound, object>}
          */
-        this._fadingSounds = new WeakSet();
+        this._fadingSounds = new WeakMap();
 
         // ============================================
         // Loop Feature State
@@ -413,19 +413,55 @@ class StateManager {
     }
 
     /**
-         * Mark a sound as currently fading (for debouncing)
-         * Returns false if already fading (atomic check-and-set)
-         * @param {Sound} sound
-         * @returns {boolean} - true if successfully marked, false if already fading
-         */
-    markSoundAsFading(sound) {
+     * Start tracking an SoS-owned fade and return its ownership token.
+     * @param {Sound} sound
+     * @param {object} [metadata]
+     * @returns {object|null}
+     */
+    startFade(sound, metadata = {}) {
+        if (!sound) return null;
+        const token = {
+            ...metadata,
+            id: Symbol("sosFade"),
+            startedAt: Date.now(),
+        };
+        this._fadingSounds.set(sound, token);
+        debug(`[State] Started fade token (${token.type ?? "fade"})`);
+        return token;
+    }
+
+    /**
+     * Mark a sound as currently fading only if it is not already owned by a fade.
+     * Returns false if already fading; otherwise returns the new token.
+     * @param {Sound} sound
+     * @param {object} [metadata]
+     * @returns {object|false}
+     */
+    markSoundAsFading(sound, metadata = {}) {
         if (this._fadingSounds.has(sound)) {
             debug(`[State] Sound already marked as fading (debounce rejected)`);
             return false;
         }
-        this._fadingSounds.add(sound);
-        debug(`[State] Marked sound as fading (debounce active)`);
-        return true;
+        return this.startFade(sound, metadata);
+    }
+
+    /**
+     * Get the current fade token for a sound.
+     * @param {Sound} sound
+     * @returns {object|undefined}
+     */
+    getFadeToken(sound) {
+        return this._fadingSounds.get(sound);
+    }
+
+    /**
+     * Check whether a token still owns the sound's active fade.
+     * @param {Sound} sound
+     * @param {object} token
+     * @returns {boolean}
+     */
+    isCurrentFadeToken(sound, token) {
+        return !!token && this._fadingSounds.get(sound) === token;
     }
 
     /**
@@ -441,8 +477,9 @@ class StateManager {
      * Clear the fading marker for a sound
      * @param {Sound} sound
      */
-    clearFadingSound(sound) {
-        this._fadingSounds.delete(sound);
+    clearFadingSound(sound, token = null) {
+        if (token && this._fadingSounds.get(sound) !== token) return false;
+        return this._fadingSounds.delete(sound);
     }
 
     // ============================================

@@ -43,6 +43,7 @@ const FlagSchemas = {
     PLAYLIST_SOUND: {
         isSilenceGap: { type: Boolean, default: false },
         allowVolumeOverride: { type: Boolean, default: false },
+        normalizedVolumeOverride: { type: Number, default: null, min: 0, max: 1 },
         isProcedural: { type: Boolean, default: false },
         minDelay: { type: Number, default: 15, min: 0, max: 3600 },
         maxDelay: { type: Number, default: 60, min: 0, max: 3600 },
@@ -501,6 +502,15 @@ class FlagService {
 
         if (normEnabled && !hasOverride) {
             const normalizedVolume = this.getPlaylistFlag(playlist, "normalizedVolume");
+            const overrideSnapshot = this.getSoundFlag(ps, "normalizedVolumeOverride");
+            if (
+                overrideSnapshot !== null &&
+                typeof overrideSnapshot !== "undefined" &&
+                Number.isFinite(Number(overrideSnapshot)) &&
+                Math.abs(Number(overrideSnapshot) - Number(normalizedVolume)) < 0.0001
+            ) {
+                return ps.volume;
+            }
             return foundry.audio.AudioHelper.inputToVolume(normalizedVolume);
         }
         return ps.volume;
@@ -708,6 +718,28 @@ class FlagService {
         }
 
         await game.settings.set(MODULE_ID, "personalTrackVolumes", volumes);
+        return volumes;
+    }
+
+    /**
+     * Clear all local track-specific values for a playlist so those tracks
+     * fall back to the client's personal playlist volume.
+     * @param {Playlist} playlist Playlist document.
+     * @returns {Promise<Object<string, number>>}
+     */
+    async clearPersonalTrackVolumesForPlaylist(playlist) {
+        if (!playlist?.sounds) return this.getPersonalTrackVolumes();
+
+        const volumes = { ...this.getPersonalTrackVolumes() };
+        let changed = false;
+        for (const sound of playlist.sounds) {
+            const key = this.getPersonalTrackVolumeKey(sound);
+            if (!key || !Object.prototype.hasOwnProperty.call(volumes, key)) continue;
+            delete volumes[key];
+            changed = true;
+        }
+
+        if (changed) await game.settings.set(MODULE_ID, "personalTrackVolumes", volumes);
         return volumes;
     }
 

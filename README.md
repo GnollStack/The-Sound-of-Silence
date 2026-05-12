@@ -73,7 +73,7 @@ Seamlessly blend between consecutive tracks:
 - **Equal-power crossfades** — the same technique used in professional DAWs like Logic Pro and Ableton
 - **Configurable duration** — inherit from the playlist's fade-out setting or set a custom crossfade duration
 - **Exponential fade curves** — perceptually linear fading that sounds natural to human hearing
-- Works with manual track skips and automatic progression
+- Manual track skips and automatic progression use the same equal-power crossfade path
 - Synchronized across all connected clients
 
 ### Silence Gaps
@@ -91,11 +91,12 @@ Loop an entire playlist from the beginning when it reaches the end. Works in Seq
 ### Fade-In / Fade-Out
 
 - **Configurable fade-in** per playlist with four curve types: Logarithmic, Linear, S-Curve, and Steep
-- **Fade-out** uses exponential curves for perceptually linear volume reduction
+- **Fade-out** uses the configured fade-out curve; the default logarithmic curve sounds perceptually linear
 
 ### Volume Normalization
 
 Set a target volume for all tracks in a playlist. Individual sounds can opt out with a per-sound override flag.
+GMs can also make temporary per-track adjustments while normalization is on; changing the playlist volume resets those temporary adjustments back to the shared playlist target.
 
 ### Soundscape Mode
 
@@ -318,7 +319,7 @@ const api = game.modules.get("the-sound-of-silence").api;
 - `crossfadeToNext(playlist, fromSound)` — trigger manual crossfade
 - `startLoop(sound)` / `stopLoop(sound, options)` / `breakLoop(sound)`
 - `playSoundWithFadeIn(sound, overrideFadeInMs)` / `stopSoundWithFadeOut(sound, overrideFadeOutMs)`
-- `fade(sound, targetVolume, durationMs)` — exponential fade
+- `fade(sound, targetVolume, durationMs)` — configured-curve fade
 - `crossfade(soundOut, soundIn, durationMs)` — equal-power crossfade
 
 **State Queries:**

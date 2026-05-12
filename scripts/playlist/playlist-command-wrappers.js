@@ -3,11 +3,9 @@
  * @description Foundry Playlist and PlaylistSound command wrappers.
  */
 import {
-  advancedFade,
-  cancelActiveFade,
   fadeOutAndStop,
 } from "../audio-fader.js";
-import { cancelCrossfade, scheduleCrossfade } from "../cross-fade.js";
+import { performCrossfade, scheduleCrossfade } from "../cross-fade.js";
 import { Flags } from "../flag-service.js";
 import { scheduleLoopWithin } from "../internal-loop.js";
 import { PlaybackClock } from "../playback-clock.js";
@@ -45,6 +43,56 @@ async function handleTrackCompletion(playlistSound) {
     debug(`Injecting silent gap after "${playlistSound.name}" in "${playlist.name}".`);
     Silence.playSilence(playlist, playlistSound);
   }
+}
+
+function isSequentialOrShuffle(playlist) {
+  return [
+    CONST.PLAYLIST_MODES.SEQUENTIAL,
+    CONST.PLAYLIST_MODES.SHUFFLE,
+  ].includes(playlist?.mode);
+}
+
+function getCurrentCrossfadeSource(playlist, incomingSound = null) {
+  return playlist?.sounds?.find((s) =>
+    s.playing &&
+    s.id !== incomingSound?.id &&
+    !Flags.getSoundFlag(s, "isSilenceGap")
+  );
+}
+
+function getManualCrossfadeTarget(playlist, currentSound, soundId, direction) {
+  const currentId = soundId || currentSound?.id || null;
+  if (!currentId) return null;
+
+  const target = direction === -1
+    ? playlist._getPreviousSound(currentId)
+    : playlist._getNextSound(currentId);
+
+  if (!target || target.id === currentSound?.id) return null;
+  if (Flags.getSoundFlag(target, "isSilenceGap")) return null;
+  return target;
+}
+
+async function executeManualCrossfade(playlist, currentSound, incomingSound, reason) {
+  const pendingFade = State.getEndOfTrackFade(currentSound);
+  if (pendingFade) {
+    pendingFade.cancel();
+    State.clearEndOfTrackFade(currentSound);
+  }
+
+  await cleanupPlaylistState(playlist, {
+    cleanSilence: false,
+    cleanCrossfade: true,
+    cleanLoopers: true,
+    cleanSoundscape: false,
+    onlySound: currentSound,
+    allowFadeOut: true,
+  });
+
+  return performCrossfade(playlist, currentSound, {
+    incomingSound,
+    reason,
+  });
 }
 
 export function registerPlaylistCommandWrappers() {
@@ -218,30 +266,6 @@ export function registerPlaylistCommandWrappers() {
         return await wrapped.call(playlist, soundToPlay, ...args);
       }
 
-      const useCrossfade = Flags.getPlaybackMode(playlist).crossfade;
-      const fadeMs = Flags.getCrossfadeDuration(playlist);
-      const isSequentialOrShuffle = [
-        CONST.PLAYLIST_MODES.SEQUENTIAL,
-        CONST.PLAYLIST_MODES.SHUFFLE,
-      ].includes(playlist.mode);
-
-      if (useCrossfade && fadeMs > 0 && isSequentialOrShuffle) {
-        const currentlyPlaying = playlist.sounds.find(
-          (s) => s.playing && s.id !== soundToPlay.id
-        );
-        if (currentlyPlaying?.sound) {
-          debug(
-            `[CF-Skip] Detected skip from "${currentlyPlaying.name}" to "${soundToPlay.name}".`
-          );
-          cancelActiveFade(currentlyPlaying.sound);
-          advancedFade(currentlyPlaying.sound, {
-            targetVol: 0,
-            duration: fadeMs,
-          });
-          cancelCrossfade(playlist);
-        }
-      }
-
       if (
         State.hasSilenceState(playlist) &&
         !soundToPlay.getFlag(MODULE_ID, "isSilenceGap")
@@ -249,9 +273,22 @@ export function registerPlaylistCommandWrappers() {
         await cancelSilentGap(playlist);
       }
 
+      const useCrossfade = Flags.getPlaybackMode(playlist).crossfade;
+      const fadeMs = Flags.getCrossfadeDuration(playlist);
+
+      if (playlist.isOwner && useCrossfade && fadeMs > 0 && isSequentialOrShuffle(playlist)) {
+        const currentlyPlaying = getCurrentCrossfadeSource(playlist, soundToPlay);
+        if (currentlyPlaying?.sound) {
+          debug(
+            `[CF-Skip] Targeted crossfade from "${currentlyPlaying.name}" to "${soundToPlay.name}".`
+          );
+          return await executeManualCrossfade(playlist, currentlyPlaying, soundToPlay, "manual-select");
+        }
+      }
+
       return await wrapped.call(playlist, soundToPlay, ...args);
     },
-    "WRAPPER"
+    "MIXED"
   );
 }
 
@@ -261,11 +298,45 @@ export function registerPlaylistAdvanceWrappers() {
     "Playlist.prototype.playNext",
     async function (wrapped, ...args) {
       const playlist = this;
-      debug(`[playNext WRAPPER] Advancing playlist "${playlist.name}".`);
+      debug(`[playNext MIXED] Advancing playlist "${playlist.name}".`);
 
       if (Flags.getPlaybackMode(playlist).soundscape) {
         debug(`[Soundscape] playNext no-op for "${playlist.name}".`);
         return;
+      }
+
+      const useCrossfade = Flags.getPlaybackMode(this).crossfade;
+      const fadeMs = Flags.getCrossfadeDuration(this);
+
+      if (this.isOwner && useCrossfade && fadeMs > 0 && isSequentialOrShuffle(this)) {
+        const [soundId = null, options = {}] = args;
+        const direction = Number(options?.direction) === -1 ? -1 : 1;
+        const currentForCrossfade = getCurrentCrossfadeSource(this);
+        if (currentForCrossfade?.sound) {
+          const incomingSound = getManualCrossfadeTarget(
+            this,
+            currentForCrossfade,
+            soundId,
+            direction
+          );
+          const label = direction === -1 ? "prev" : "next";
+
+          if (incomingSound) {
+            debug(
+              `[CF-${label}] Manual ${label} true crossfade from "${currentForCrossfade.name}" to "${incomingSound.name}".`
+            );
+            return await executeManualCrossfade(
+              this,
+              currentForCrossfade,
+              incomingSound,
+              `manual-${label}`
+            );
+          }
+
+          debug(
+            `[CF-${label}] No distinct ${label} crossfade target for "${currentForCrossfade.name}"; falling back to native playNext.`
+          );
+        }
       }
 
       await cleanupPlaylistState(this, {
@@ -276,49 +347,9 @@ export function registerPlaylistAdvanceWrappers() {
         allowFadeOut: true,
       });
 
-      const useCrossfade = Flags.getPlaybackMode(this).crossfade;
-      const fadeMs = Flags.getCrossfadeDuration(this);
-      const isSequentialOrShuffle = [
-        CONST.PLAYLIST_MODES.SEQUENTIAL,
-        CONST.PLAYLIST_MODES.SHUFFLE,
-      ].includes(this.mode);
-
-      if (useCrossfade && fadeMs > 0 && isSequentialOrShuffle) {
-        const currentForFlag = this.sounds.find((s) => s.playing);
-        if (currentForFlag) {
-          if (PlaylistActionAuthority.isAuthorizedGM()) {
-            const payload = {
-              fromSoundId: currentForFlag.id,
-              fadeMs,
-              seq: getNextSequence(this.id),
-              ts: Date.now(),
-              gmId: game.user.id,
-            };
-            try {
-              await this.setFlag(MODULE_ID, "skipTransition", payload);
-            } catch (_) { }
-          }
-          if (currentForFlag.sound) {
-            const pendingFade = State.getEndOfTrackFade(currentForFlag);
-            if (pendingFade) {
-              pendingFade.cancel();
-              State.clearEndOfTrackFade(currentForFlag);
-            }
-            debug(
-              `[CF-Next] Fading out "${currentForFlag.name}" over ${fadeMs}ms (manual Next).`
-            );
-            cancelActiveFade(currentForFlag.sound);
-            advancedFade(currentForFlag.sound, {
-              targetVol: 0,
-              duration: fadeMs,
-            });
-          }
-        }
-      }
-
       return await wrapped(...args);
     },
-    "WRAPPER"
+    "MIXED"
   );
 
   libWrapper.register(

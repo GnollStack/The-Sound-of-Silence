@@ -282,7 +282,7 @@ export class LoopingSound {
         this.finalTransitionTimer = sound.schedule(() => {
           this.finalTransitionTimer = null;
           if (!sound.playing) return;
-          debug(`[LoopingSound] Starting final exponential fade-out for "${this.ps.name}"`);
+          debug(`[LoopingSound] Starting final configured fade-out for "${this.ps.name}"`);
           advancedFade(sound, { targetVol: 0, duration: fadeMs });
         }, fadeStartTime);
       } else {

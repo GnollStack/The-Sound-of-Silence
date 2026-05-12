@@ -331,7 +331,7 @@ class SoundOfSilenceAPI {
     // ============================================
 
     /**
-     * Apply an exponential fade to a sound
+     * Apply the configured fade curve to a sound
      * @param {Sound} sound - The Foundry Sound object
      * @param {number} targetVolume - Target volume (0-1)
      * @param {number} durationMs - Fade duration in milliseconds

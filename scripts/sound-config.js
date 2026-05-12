@@ -830,14 +830,19 @@ function _registerSoundConfigHooks() {
   
   // This receives the correct data from the _prepareContext wrapper.
   const normEnabled = data.sosPlaylistFlags?.volumeNormalizationEnabled ?? false;
+  const canTemporaryMix = !!(game.user?.isGM && app.document?.parent?.isOwner);
+  const normalizationNote = canTemporaryMix
+    ? "Volume follows the playlist by default. GM changes here are temporary until the playlist volume changes. Check Override Playlist Volume for a permanent per-track volume."
+    : "Volume is managed by the playlist. Ask a GM to adjust the playlist volume or enable Override Playlist Volume.";
 
   // Create and append the informational message.
-  const $infoMessage = $(`<p class="notes warning" style="flex-basis: 100%; text-align: center; margin-top: 4px;">Volume is managed by the playlist. To change, check Override Playlist Volume or disable normalization on the playlist.</p>`).hide();
+  const $infoMessage = $(`<p class="notes warning" style="flex-basis: 100%; text-align: center; margin-top: 4px;">${normalizationNote}</p>`).hide();
   $volumeGroup.append($infoMessage);
 
   function updateVolumeControls() {
     const isOverridden = $overrideCheckbox.is(':checked');
-    const shouldBeDisabled = normEnabled && !isOverridden;
+    const showNormalizationNote = normEnabled && !isOverridden;
+    const shouldBeDisabled = showNormalizationNote && !canTemporaryMix;
 
     // To robustly disable a custom element, we apply CSS to make it non-interactive and appear disabled.
     $rangePicker.css({
@@ -846,7 +851,7 @@ function _registerSoundConfigHooks() {
     });
 
     // Also toggle the informational message.
-    $infoMessage.toggle(shouldBeDisabled);
+    $infoMessage.toggle(showNormalizationNote);
   }
 
   // Set the initial state when the window opens.

@@ -46,6 +46,27 @@ function _applyPreMute(sound, ps, fadeInMs, targetVolume) {
   }
 }
 
+function _isSequentialOrShuffle(playlist) {
+  return [
+    CONST.PLAYLIST_MODES.SEQUENTIAL,
+    CONST.PLAYLIST_MODES.SHUFFLE,
+  ].includes(playlist?.mode);
+}
+
+function _shouldDeferSyncForCrossfade(ps) {
+  const playlist = ps?.parent;
+  if (!playlist || !_isSequentialOrShuffle(playlist)) return false;
+  if (!Flags.getPlaybackMode(playlist).crossfade) return false;
+  if (State.isPlaylistCrossfading(playlist)) return true;
+  if (!ps.playing || ps.sound?.playing) return false;
+
+  return playlist.sounds.some((sound) =>
+    sound.id !== ps.id &&
+    sound.playing &&
+    !Flags.getSoundFlag(sound, "isSilenceGap")
+  );
+}
+
 function _schedulePostPlayActions(ps, sound, { fromCrossfade = false } = {}) {
   const playlist = ps.parent;
   const isResume = Number.isFinite(ps.pausedTime);
@@ -160,6 +181,32 @@ export function registerSoundPlaybackWrappers() {
     "PlaylistSound.prototype.update",
     async function (wrapped, data, options = {}) {
       const hasVolumeChange = data.hasOwnProperty("volume");
+      const allowOverridePath = `flags.${MODULE_ID}.allowVolumeOverride`;
+      const temporaryOverridePath = `flags.${MODULE_ID}.normalizedVolumeOverride`;
+      const hasFlatAllowOverrideChange = Object.prototype.hasOwnProperty.call(
+        data,
+        allowOverridePath
+      );
+      const hasNestedAllowOverrideChange = foundry.utils.hasProperty(
+        data,
+        allowOverridePath
+      );
+      const hasAllowOverrideChange =
+        hasFlatAllowOverrideChange || hasNestedAllowOverrideChange;
+      const nextAllowOverride = hasAllowOverrideChange
+        ? Boolean(
+            hasFlatAllowOverrideChange
+              ? data[allowOverridePath]
+              : foundry.utils.getProperty(data, allowOverridePath)
+          )
+        : null;
+
+      if (hasAllowOverrideChange) {
+        data = {
+          ...data,
+          [temporaryOverridePath]: null,
+        };
+      }
 
       if (hasVolumeChange) {
         const playlist = this.parent;
@@ -169,11 +216,33 @@ export function registerSoundPlaybackWrappers() {
           "volumeNormalizationEnabled"
         );
         const hasOverride = Flags.getSoundFlag(this, "allowVolumeOverride");
+        const nextHasOverride = hasAllowOverrideChange
+          ? nextAllowOverride
+          : hasOverride;
 
-        if (normEnabled && !hasOverride) {
+        if (normEnabled && !nextHasOverride) {
           const isFromNormalization = options._fromNormalization;
 
           if (!isFromNormalization) {
+            if (game.user?.isGM && playlist?.isOwner) {
+              const normalizedVolume = Flags.getPlaylistFlag(
+                playlist,
+                "normalizedVolume"
+              );
+              debug(
+                `[Volume] Saving temporary normalized track volume for "${this.name}" until playlist volume changes`
+              );
+
+              return wrapped.call(
+                this,
+                {
+                  ...data,
+                  [temporaryOverridePath]: normalizedVolume,
+                },
+                options
+              );
+            }
+
             debug(
               `[Volume] Blocking manual volume change on "${this.name}" - normalization active`
             );
@@ -217,6 +286,10 @@ export function registerSoundPlaybackWrappers() {
         if (this.sound?.playing) {
           safeStop(this.sound, "soundscape procedural sync guard");
         }
+        return;
+      }
+      if (_shouldDeferSyncForCrossfade(this)) {
+        debug(`[Sync Guard] Blocked sync() for "${this.name}" - SoS crossfade owns playback`);
         return;
       }
       if (this.sound && State.isSoundFading(this.sound)) {
