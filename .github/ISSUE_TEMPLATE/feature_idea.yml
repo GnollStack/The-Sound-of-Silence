@@ -1,0 +1,66 @@
+name: Feature idea
+description: Suggest something The Sound of Silence should help you do at the table.
+title: "[Feature]: "
+labels:
+  - enhancement
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Feature ideas are welcome. Tell me what happened at your table; I may adapt, decline, or implement the idea myself.
+
+  - type: textarea
+    id: table-situation
+    attributes:
+      label: What happened at your table?
+      description: Describe the real game situation or rough spot behind the idea.
+      placeholder: |
+        During my sessions, I want to...
+        The hard part is...
+    validations:
+      required: true
+
+  - type: textarea
+    id: desired-outcome
+    attributes:
+      label: What do you wish would happen?
+      description: What should feel easier, better, or more reliable if this exists?
+    validations:
+      required: true
+
+  - type: textarea
+    id: feature-idea
+    attributes:
+      label: Feature idea
+      description: Describe the feature or behavior you have in mind.
+    validations:
+      required: true
+
+  - type: textarea
+    id: workaround
+    attributes:
+      label: Current workaround
+      description: How are you handling this today, if at all?
+
+  - type: textarea
+    id: examples
+    attributes:
+      label: Examples or references
+      description: Add screenshots, mockups, module examples, DAW examples, or table-use examples if useful.
+
+  - type: dropdown
+    id: impact
+    attributes:
+      label: Impact
+      description: How important is this for your table?
+      options:
+        - Would be nice
+        - I would use this often
+        - This would make prep or play much easier
+        - This is blocking something I want to run
+
+  - type: textarea
+    id: anything-else
+    attributes:
+      label: Anything else you want to say?
+      description: Use this space naturally if the form did not quite fit your idea.

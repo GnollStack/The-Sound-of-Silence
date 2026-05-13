@@ -1,0 +1,47 @@
+name: Localization idea
+description: Offer localization help, wording feedback, or translation notes.
+title: "[Localization]: "
+labels:
+  - localization
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Localization help and translation ideas are welcome by issue first. I do not have a public translation setup yet, so I will review notes here and fold useful wording in myself.
+
+  - type: input
+    id: language
+    attributes:
+      label: Language or locale
+      description: Name the language and locale if relevant.
+      placeholder: "Example: French (fr-FR)"
+    validations:
+      required: true
+
+  - type: textarea
+    id: offer
+    attributes:
+      label: What help are you offering?
+      description: Describe whether this is wording feedback, translation review, terminology help, or a broader localization offer.
+    validations:
+      required: true
+
+  - type: textarea
+    id: wording-context
+    attributes:
+      label: Wording or context notes
+      description: Explain any terms, tone, UI constraints, or cultural context that matter.
+    validations:
+      required: true
+
+  - type: textarea
+    id: samples
+    attributes:
+      label: Sample translations or suggested wording
+      description: Paste sample strings, terminology suggestions, or examples here.
+
+  - type: textarea
+    id: anything-else
+    attributes:
+      label: Anything else you want to add?
+      description: Use this space naturally if the form did not quite fit your localization note.
