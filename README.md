@@ -59,7 +59,7 @@
 ### Internal Loop Sequencer
 **Build intro → loop → outro structures inside a single track.**
 
-Up to 16 segments per track with draggable handles, color-coded zones, crossfade preview, and live break controls in the transport. Treat one MP3 like a multi-part composition — no editing required.
+Up to 16 segments per track with draggable handles, color-coded zones, crossfade preview, and live break controls in the transport. Treat one MP3 like a multi-part composition, no editing required.
 
 <img width="444" height="564" alt="Internal loop editor" src="https://github.com/user-attachments/assets/bdf30e8b-93ad-409e-9078-1293fca74c9e" />
 
@@ -70,7 +70,7 @@ Up to 16 segments per track with draggable handles, color-coded zones, crossfade
 ### Auto Crossfade
 **Seamless equal-power blends between consecutive tracks.**
 
-The same curve used in Logic Pro and Ableton — constant perceived power across the blend, no harsh cuts, no mid-fade dips. Inherit the playlist's fade-out time, or override per playlist.
+The same curve used in Logic Pro and Ableton, with constant perceived power across the blend, no harsh cuts, and no mid-fade dips. Inherit the playlist's fade-out time, or override per playlist.
 
 ▶ **[Watch demo (1 min)](https://youtu.be/7K72lde_jus)**
 
@@ -79,7 +79,7 @@ The same curve used in Logic Pro and Ableton — constant perceived power across
 ### Silence Gaps
 **Natural pauses between tracks, static or randomized.**
 
-Works in Sequential, Shuffle, and Simultaneous modes. Set a fixed gap, or a min/max range and let SoS pick — gives a playlist room to breathe instead of slamming track-to-track.
+Works in Sequential, Shuffle, and Simultaneous modes. Set a fixed gap, or a min/max range and let SoS pick. It gives a playlist room to breathe instead of slamming track-to-track.
 
 ▶ **[Watch demo (1 min)](https://youtu.be/qWQ8Ci46iiw)**
 
@@ -133,10 +133,10 @@ Soundscape is the 5th option in the playback-mode picker, alongside Soundboard /
 - **Procedural cadence** — Uniform Random, Fixed Cadence, or Natural (center-weighted) timing per sound.
 - **Startup mode** — Use Cadence, Stagger First Fire, or Immediate First Fire.
 - **Polyphony cap** — limit overlapping one-shots, with Independent, Linear, or Soft chance-scaling.
-- **Client-local timing** — each connected client runs its own procedural timer; ambience never feels perfectly synchronized.
-- **Audition** the full mix from the playlist's Preview control, or any procedural from its sound sheet — both local-only, neither affects live state.
+- **Client-local timing** — each connected client runs its own procedural timer, so ambience never feels perfectly synchronized.
+- **Audition** — test the full mix from the playlist's Preview control, or any procedural from its sound sheet. Both are local-only and neither affects live state.
 - **Soundboard control** — play or stop any sound individually; auto-stops the playlist when the last sound ends.
-- **Procedural Roster** — at-a-glance table in playlist config showing cadence, first-fire, play-chance, and pan per sound.
+- **Procedural Roster** — an at-a-glance table in playlist config showing cadence, first-fire, play-chance, and pan per sound.
 - GMs see a Fire Now bolt button on each procedural for client-local testing.
 
 </details>
@@ -150,7 +150,7 @@ Soundscape is the 5th option in the playback-mode picker, alongside Soundboard /
 - Fade-aware progress bars — gray fade-in/fade-out zones over the amber progress.
 - Loop control row stays visible across segment gaps and after Break.
 - Soundscape group strips with caret, polyphony meter, group Stop button, and compact ~22px procedural rows.
-- Height-clamped panel (`clamp(200px, 40vh, 480px)`) with a thin amber scrollbar — playlist directory stays reachable.
+- Height-clamped panel (`clamp(200px, 40vh, 480px)`) with a thin amber scrollbar, so the playlist directory stays reachable.
 - Scroll-safe playback updates preserve directory scroll position during track advances.
 
 </details>
@@ -227,7 +227,7 @@ Segment 3  03:00–04:45   Phase 2    loop ∞
 Segment 4  04:45–06:00   Victory    loop 1×, play through
 ```
 
-Intro plays once, jumps to Phase 1. Click *break* when the boss enters Phase 2. Break again on defeat — victory plays once and the track ends.
+Intro plays once, jumps to Phase 1. Click *break* when the boss enters Phase 2. Break again on defeat, and victory plays once before the track ends.
 
 </details>
 
