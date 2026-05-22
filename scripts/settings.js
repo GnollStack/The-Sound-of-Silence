@@ -30,6 +30,24 @@ export function registerSettings({
     default: false,
   });
 
+  game.settings.register(MODULE_ID, "enableMcpDiagnostics", {
+    name: "Enable MCP Diagnostics",
+    hint: "Allow GM-only, allowlisted diagnostics through the Foundry MCP Bridge. Requires Enable Debug Logging on this client.",
+    scope: "world",
+    config: true,
+    type: Boolean,
+    default: false,
+  });
+
+  game.settings.register(MODULE_ID, "enableMcpPlaybackAutomation", {
+    name: "Enable MCP Playback Automation",
+    hint: "Allow GM-only MCP diagnostics to create temporary SoS playback fixtures and run mutating playlist automation. Requires MCP Diagnostics and per-call confirmation.",
+    scope: "world",
+    config: true,
+    type: Boolean,
+    default: false,
+  });
+
   game.settings.register(MODULE_ID, "personalPlaylistVolumeEnabled", {
     name: "Use Personal Audio Mix",
     hint: "For players, replace shared volume controls with client-local Track and Playlist Volume controls.",
@@ -61,6 +79,15 @@ export function registerSettings({
     type: Object,
     default: {},
     onChange: applyPersonalMix,
+  });
+
+  game.settings.register(MODULE_ID, "soundscapeProceduralSyncEnabled", {
+    name: "Sync Soundscape Procedural Events",
+    hint: "Follow GM-authored soundscape one-shot timing and playback recipes. Disable to use local procedural ambience timing on this client.",
+    scope: "client",
+    config: true,
+    type: Boolean,
+    default: true,
   });
 
   game.settings.register(MODULE_ID, "shufflePattern", {

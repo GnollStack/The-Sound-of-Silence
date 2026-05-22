@@ -6,10 +6,9 @@
  *   - Procedural one-shots (isProcedural=true) fire on local, randomized timers
  *     with optional volume variance, stereo pan, and play-chance.
  *
- * Critical architectural rule: individual one-shot fires are purely CLIENT-LOCAL.
- * Every connected client runs its own RNG, so fire timings diverge per client.
- * Only the playlist-level `playing` state and the `soundscapeMode` flag sync
- * across the wire (via normal Foundry document replication).
+ * Procedural one-shot fires are GM-authored and socket-synced by default.
+ * Players may opt out client-side; opted-out clients keep the older local RNG
+ * behavior while still following replicated playlist/sound document state.
  */
 
 import { Flags } from "./flag-service.js";
@@ -28,6 +27,36 @@ import { advancedFade, fadeOutAndStop } from "./audio-fader.js";
 const AudioTimeout = foundry.audio.AudioTimeout;
 const RETRY_BACKOFF_MS = 250;
 const DEFAULT_FADE_MS = 500;
+const SYNCED_FIRE_ACTION = "soundscape-procedural-fire";
+const SYNCED_FIRE_LEAD_MS = 600;
+const SYNCED_FIRE_LATE_MS = 1000;
+const SYNCED_EVENT_HISTORY_LIMIT = 20;
+
+export function isSoundscapeProceduralSyncEnabled() {
+    try {
+        return game.settings?.get(MODULE_ID, "soundscapeProceduralSyncEnabled") !== false;
+    } catch (_) {
+        return true;
+    }
+}
+
+function _getSocketId() {
+    return game.socket?.id ?? game.socket?.socket?.id ?? null;
+}
+
+function _clamp01(value, fallback = 0) {
+    const n = Number(value);
+    if (!Number.isFinite(n)) return fallback;
+    return Math.max(0, Math.min(1, n));
+}
+
+function _mapToObject(map) {
+    return Object.fromEntries(Array.from(map ?? []));
+}
+
+function _limitHistory(list) {
+    while (list.length > SYNCED_EVENT_HISTORY_LIMIT) list.shift();
+}
 
 function _notifySoundscapeUi(playlist, reason, soundId = null) {
     State.notifyStateChanged({
@@ -89,6 +118,12 @@ export class SoundscapeEngine {
 
         /** @type {Set<string>} ids of configured bed sounds in this playlist */
         this.bedSoundIds = new Set();
+
+        this.syncedFireSeq = 0;
+        this.processedSyncedEventIds = new Set();
+        this.lastSyncedSeqBySound = new Map();
+        this.recentSyncedEvents = [];
+        this.missedSyncedEvents = [];
     }
 
     /**
@@ -97,6 +132,23 @@ export class SoundscapeEngine {
      */
     get maxPolyphony() {
         return Flags.getPlaylistFlag(this.playlist, "soundscapeMaxPolyphony") ?? 4;
+    }
+
+    get soundscapeSyncEnabled() {
+        return isSoundscapeProceduralSyncEnabled();
+    }
+
+    get syncMode() {
+        if (!this.soundscapeSyncEnabled) return "local";
+        return game.user?.isGM ? "authority" : "synced";
+    }
+
+    _shouldArmLocalProcedurals() {
+        return this.syncMode !== "synced";
+    }
+
+    _shouldEmitSyncedFires() {
+        return this.syncMode === "authority";
     }
 
     /**
@@ -144,8 +196,10 @@ export class SoundscapeEngine {
         // Only arm procedurals whose document is currently marked playing —
         // playAll flips them all on, individual playSound leaves them off.
         // Users add/remove procedurals later via the per-sound play/stop buttons.
-        for (const ps of procedurals) {
-            if (ps.playing) this._armOneShot(ps, { initial: true });
+        if (this._shouldArmLocalProcedurals()) {
+            for (const ps of procedurals) {
+                if (ps.playing) this._armOneShot(ps, { initial: true });
+            }
         }
 
         Hooks.callAll(`${MODULE_ID}.soundscapeStart`, {
@@ -317,7 +371,204 @@ export class SoundscapeEngine {
             return false;
         }
 
-        ensureAudioContext();
+        const synced = this._shouldEmitSyncedFires();
+        const recipe = this._createFireRecipe(ps, { synced });
+        if (synced) this._emitSyncedFire(recipe);
+        return this._playOneShotRecipe(ps, recipe, {
+            rearmAfter: true,
+            source: synced ? "authority" : "local",
+        });
+    }
+
+    _createFireRecipe(ps, { synced = false } = {}) {
+        const baseVol = Flags.resolveSharedTargetVolume(ps);
+        const variancePct = Flags.resolveProceduralField(ps, "volumeVariance") ?? 0;
+        let sharedTargetVol = baseVol;
+        if (variancePct > 0) {
+            const offset = (Math.random() * 2 - 1) * variancePct;
+            sharedTargetVol = _clamp01(baseVol * (1 + offset), baseVol);
+        }
+        const varianceFactor = baseVol > 0 ? sharedTargetVol / baseVol : 1;
+        const randomPan = Flags.resolveProceduralField(ps, "randomPan");
+        const panValue = randomPan ? Math.max(-1, Math.min(1, Math.random() * 2 - 1)) : null;
+        const now = Date.now();
+        const seq = synced ? this.syncedFireSeq + 1 : null;
+        if (synced) this.syncedFireSeq = seq;
+
+        return {
+            action: SYNCED_FIRE_ACTION,
+            playlistId: this.playlist.id,
+            soundId: ps.id,
+            seq,
+            eventId: synced ? `${this.playlist.id}:${ps.id}:${seq}:${game.user?.id ?? "gm"}:${now}` : null,
+            startAtMs: synced ? now + SYNCED_FIRE_LEAD_MS : now,
+            leadMs: synced ? SYNCED_FIRE_LEAD_MS : 0,
+            sharedTargetVol,
+            varianceFactor: Number.isFinite(varianceFactor) ? varianceFactor : 1,
+            panValue,
+            fadeInMs: _resolveFadeInMs(this.playlist),
+            gmId: game.user?.id ?? null,
+        };
+    }
+
+    _normalizeFireRecipe(recipe, ps) {
+        const baseVol = Flags.resolveSharedTargetVolume(ps);
+        const sharedTargetVol = _clamp01(recipe?.sharedTargetVol, baseVol);
+        const variance = Number(recipe?.varianceFactor);
+        const startAt = Number(recipe?.startAtMs);
+        const lead = Number(recipe?.leadMs);
+        const seq = Number(recipe?.seq);
+        const pan = Number(recipe?.panValue);
+        const fadeIn = Number(recipe?.fadeInMs);
+        return {
+            action: SYNCED_FIRE_ACTION,
+            playlistId: recipe?.playlistId ?? this.playlist.id,
+            soundId: recipe?.soundId ?? ps.id,
+            seq: Number.isFinite(seq) ? seq : null,
+            eventId: recipe?.eventId ? String(recipe.eventId) : null,
+            startAtMs: Number.isFinite(startAt) ? startAt : Date.now(),
+            leadMs: Number.isFinite(lead) ? lead : 0,
+            sharedTargetVol,
+            varianceFactor: Number.isFinite(variance)
+                ? variance
+                : (baseVol > 0 ? sharedTargetVol / baseVol : 1),
+            panValue: Number.isFinite(pan) ? Math.max(-1, Math.min(1, pan)) : null,
+            fadeInMs: Number.isFinite(fadeIn) ? Math.max(0, fadeIn) : _resolveFadeInMs(this.playlist),
+            gmId: recipe?.gmId ?? null,
+        };
+    }
+
+    _summarizeFireRecipe(recipe, extra = {}) {
+        const startAtMs = Number(recipe?.startAtMs);
+        const now = Date.now();
+        return {
+            timeMs: now,
+            playlistId: recipe?.playlistId ?? this.playlist.id,
+            soundId: recipe?.soundId ?? null,
+            seq: Number.isFinite(Number(recipe?.seq)) ? Number(recipe.seq) : null,
+            eventId: recipe?.eventId ?? null,
+            startAtMs: Number.isFinite(startAtMs) ? startAtMs : null,
+            receivedDeltaMs: Number.isFinite(startAtMs) ? now - startAtMs : null,
+            leadMs: Number.isFinite(Number(recipe?.leadMs)) ? Number(recipe.leadMs) : null,
+            sharedTargetVol: Number.isFinite(Number(recipe?.sharedTargetVol)) ? Number(recipe.sharedTargetVol) : null,
+            varianceFactor: Number.isFinite(Number(recipe?.varianceFactor)) ? Number(recipe.varianceFactor) : null,
+            panValue: Number.isFinite(Number(recipe?.panValue)) ? Number(recipe.panValue) : null,
+            fadeInMs: Number.isFinite(Number(recipe?.fadeInMs)) ? Number(recipe.fadeInMs) : null,
+            gmId: recipe?.gmId ?? null,
+            ...extra,
+        };
+    }
+
+    _recordSyncedEvent(recipe, extra = {}) {
+        const entry = this._summarizeFireRecipe(recipe, extra);
+        if (entry.eventId) {
+            const index = this.recentSyncedEvents.findIndex((event) => event.eventId === entry.eventId);
+            if (index >= 0) {
+                this.recentSyncedEvents[index] = {
+                    ...this.recentSyncedEvents[index],
+                    ...entry,
+                };
+            } else {
+                this.recentSyncedEvents.push(entry);
+            }
+        } else {
+            this.recentSyncedEvents.push(entry);
+        }
+        _limitHistory(this.recentSyncedEvents);
+    }
+
+    _recordMissedSyncedEvent(recipe, reason, extra = {}) {
+        this.missedSyncedEvents.push(this._summarizeFireRecipe(recipe, {
+            reason,
+            ...extra,
+        }));
+        _limitHistory(this.missedSyncedEvents);
+    }
+
+    _rememberSyncedEvent(recipe) {
+        if (!recipe?.eventId) return;
+        this.processedSyncedEventIds.add(recipe.eventId);
+        while (this.processedSyncedEventIds.size > SYNCED_EVENT_HISTORY_LIMIT * 4) {
+            const first = this.processedSyncedEventIds.values().next().value;
+            this.processedSyncedEventIds.delete(first);
+        }
+        if (Number.isFinite(Number(recipe.seq))) {
+            const previous = this.lastSyncedSeqBySound.get(recipe.soundId) ?? 0;
+            this.lastSyncedSeqBySound.set(recipe.soundId, Math.max(previous, Number(recipe.seq)));
+        }
+    }
+
+    _emitSyncedFire(recipe) {
+        if (!recipe?.eventId) return;
+        this._recordSyncedEvent(recipe, { source: "authority", status: "emitted" });
+        game.socket?.emit(`module.${MODULE_ID}`, {
+            ...recipe,
+            senderSocketId: _getSocketId(),
+        });
+    }
+
+    _isAudioLockedForSyncedFire() {
+        const audio = game.audio ?? null;
+        if (!audio) return "no-audio";
+        if (audio.locked === true || audio.unlocked === false) return "audio-locked";
+        const ctx = audio.environment ?? audio.music ?? audio.interface ?? null;
+        if (!ctx) return "no-audio-context";
+        if (ctx.state === "closed") return "audio-context-closed";
+        return null;
+    }
+
+    async executeSyncedFire(recipe = {}) {
+        if (this.isDestroyed) return false;
+        if (!this.soundscapeSyncEnabled) return false;
+        if (String(recipe.playlistId ?? "") !== String(this.playlist.id)) return false;
+
+        const ps = this.playlist.sounds.get(recipe.soundId);
+        if (!ps || !Flags.getSoundFlag(ps, "isProcedural")) return false;
+
+        const normalized = this._normalizeFireRecipe(recipe, ps);
+        if (!normalized.eventId) {
+            this._recordMissedSyncedEvent(normalized, "missing-event-id");
+            return false;
+        }
+        if (this.processedSyncedEventIds.has(normalized.eventId)) return false;
+
+        const previousSeq = this.lastSyncedSeqBySound.get(normalized.soundId) ?? 0;
+        if (Number.isFinite(Number(normalized.seq)) && normalized.seq <= previousSeq) {
+            this._recordMissedSyncedEvent(normalized, "stale-sequence");
+            return false;
+        }
+        this._rememberSyncedEvent(normalized);
+
+        if (!ps.playing) {
+            this._recordMissedSyncedEvent(normalized, "inactive-document");
+            return false;
+        }
+
+        const lateByMs = Date.now() - normalized.startAtMs;
+        if (lateByMs > SYNCED_FIRE_LATE_MS) {
+            this._recordMissedSyncedEvent(normalized, "late", { lateByMs });
+            return false;
+        }
+
+        this._recordSyncedEvent(normalized, { source: "synced", status: "received" });
+        return this._playOneShotRecipe(ps, normalized, {
+            rearmAfter: false,
+            source: "synced",
+        });
+    }
+
+    async _playOneShotRecipe(ps, recipe = {}, { rearmAfter = true, source = "local" } = {}) {
+        const normalized = this._normalizeFireRecipe(recipe, ps);
+        const isSyncedEvent = Boolean(normalized.eventId);
+        const canRearm = () => rearmAfter && this._shouldArmLocalProcedurals();
+
+        if (this._getOccupiedPolyphony() >= this.maxPolyphony) {
+            if (isSyncedEvent) this._recordMissedSyncedEvent(normalized, "polyphony");
+            if (canRearm() && !this.isDestroyed && ps.playing) {
+                this._armOneShot(ps, { minimumDelayMs: RETRY_BACKOFF_MS });
+            }
+            return false;
+        }
 
         let reservationActive = true;
         this._reserveOneShot(ps.id);
@@ -327,16 +578,34 @@ export class SoundscapeEngine {
             this._releaseOneShotReservation(ps.id);
         };
 
-        // Compute target volume with random variance.
-        const baseVol = Flags.resolveSharedTargetVolume(ps);
-        const variancePct = Flags.resolveProceduralField(ps, "volumeVariance") ?? 0;
-        let sharedTargetVol = baseVol;
-        if (variancePct > 0) {
-            const offset = (Math.random() * 2 - 1) * variancePct;
-            sharedTargetVol = Math.max(0, Math.min(1, baseVol * (1 + offset)));
+        const waitMs = Math.max(0, normalized.startAtMs - Date.now());
+        if (waitMs > 0) await AudioTimeout.wait(waitMs);
+
+        if (this.isDestroyed || !ps.playing) {
+            releaseReservation();
+            if (isSyncedEvent) this._recordMissedSyncedEvent(normalized, "aborted-before-load");
+            return false;
         }
-        const varianceFactor = baseVol > 0 ? sharedTargetVol / baseVol : 1;
-        const targetVol = Flags.resolveTargetVolume(ps, { sharedVolume: sharedTargetVol });
+
+        if (isSyncedEvent && Date.now() - normalized.startAtMs > SYNCED_FIRE_LATE_MS) {
+            releaseReservation();
+            this._recordMissedSyncedEvent(normalized, "late-after-wait", {
+                lateByMs: Date.now() - normalized.startAtMs,
+            });
+            return false;
+        }
+
+        const audioBlocker = source === "synced" ? this._isAudioLockedForSyncedFire() : null;
+        if (audioBlocker) {
+            releaseReservation();
+            this._recordMissedSyncedEvent(normalized, audioBlocker);
+            return false;
+        }
+
+        ensureAudioContext();
+        const targetVol = Flags.resolveTargetVolume(ps, {
+            sharedVolume: normalized.sharedTargetVol,
+        });
 
         let sound;
         try {
@@ -346,32 +615,40 @@ export class SoundscapeEngine {
             await sound.load();
         } catch (err) {
             releaseReservation();
+            if (isSyncedEvent) this._recordMissedSyncedEvent(normalized, "load-failed", {
+                message: err?.message ?? null,
+            });
             error(`[Soundscape] Failed to load "${ps.name}":`, err);
-            if (!this.isDestroyed && ps.playing) this._armOneShot(ps, { minimumDelayMs: RETRY_BACKOFF_MS });
+            if (canRearm() && !this.isDestroyed && ps.playing) {
+                this._armOneShot(ps, { minimumDelayMs: RETRY_BACKOFF_MS });
+            }
             return false;
         }
 
         if (this.isDestroyed || !ps.playing) {
             releaseReservation();
             safeStop(sound, "soundscape fire aborted");
+            if (isSyncedEvent) this._recordMissedSyncedEvent(normalized, "aborted-after-load");
             return false;
         }
 
-        // Attach panner BEFORE play so the audio graph is complete at first sample.
-        const randomPan = Flags.resolveProceduralField(ps, "randomPan");
-        if (randomPan) {
-            this._attachPanner(sound, Math.random() * 2 - 1);
+        if (Number.isFinite(normalized.panValue)) {
+            this._attachPanner(sound, normalized.panValue);
         }
 
         sound._sosProceduralId = ps.id;
+        sound._sosProceduralEventId = normalized.eventId;
         this.activeOneShots.add(sound);
-        this.oneShotSharedTargetVolumes.set(sound, { soundId: ps.id, varianceFactor });
+        this.oneShotSharedTargetVolumes.set(sound, {
+            soundId: ps.id,
+            varianceFactor: normalized.varianceFactor,
+            eventId: normalized.eventId,
+        });
         this._incrementActiveCount(ps.id);
         releaseReservation();
         _notifySoundscapeUi(this.playlist, "soundscape-one-shot-active", ps.id);
 
-        const fadeInMs = _resolveFadeInMs(this.playlist);
-        const useFadeIn = fadeInMs > 0;
+        const useFadeIn = normalized.fadeInMs > 0;
         try {
             await sound.play({
                 loop: false,
@@ -379,14 +656,12 @@ export class SoundscapeEngine {
                 _sosProceduralOneShot: true,
             });
             if (useFadeIn) {
-                // Cap the fade at half the clip length so short one-shots
-                // still reach full volume before they end.
                 const maxFade = Number.isFinite(sound.duration) && sound.duration > 0
-                    ? Math.max(50, sound.duration * 500)  // half-duration in ms
-                    : fadeInMs;
+                    ? Math.max(50, sound.duration * 500)
+                    : normalized.fadeInMs;
                 advancedFade(sound, {
                     targetVol,
-                    duration: Math.min(fadeInMs, maxFade),
+                    duration: Math.min(normalized.fadeInMs, maxFade),
                 });
             }
         } catch (err) {
@@ -396,7 +671,12 @@ export class SoundscapeEngine {
             this._decrementActiveCount(ps.id);
             this._detachPanner(sound);
             _notifySoundscapeUi(this.playlist, "soundscape-one-shot-play-failed", ps.id);
-            if (!this.isDestroyed && ps.playing) this._armOneShot(ps, { minimumDelayMs: RETRY_BACKOFF_MS });
+            if (isSyncedEvent) this._recordMissedSyncedEvent(normalized, "play-failed", {
+                message: err?.message ?? null,
+            });
+            if (canRearm() && !this.isDestroyed && ps.playing) {
+                this._armOneShot(ps, { minimumDelayMs: RETRY_BACKOFF_MS });
+            }
             return false;
         }
 
@@ -407,10 +687,18 @@ export class SoundscapeEngine {
             this._decrementActiveCount(ps.id);
             this._detachPanner(sound);
             _notifySoundscapeUi(this.playlist, "soundscape-one-shot-aborted", ps.id);
+            if (isSyncedEvent) this._recordMissedSyncedEvent(normalized, "aborted-after-play");
             return false;
         }
 
-        // Cleanup when the sound ends naturally (or just past its duration).
+        if (isSyncedEvent) {
+            this._recordSyncedEvent(normalized, {
+                source,
+                status: "played",
+                targetVolume: Number(targetVol.toFixed(3)),
+            });
+        }
+
         let cleanedUp = false;
         const cleanup = () => {
             if (cleanedUp) return;
@@ -421,9 +709,7 @@ export class SoundscapeEngine {
             this._detachPanner(sound);
             if (sound.playing) safeStop(sound, "soundscape fire cleanup");
             _notifySoundscapeUi(this.playlist, "soundscape-one-shot-cleanup", ps.id);
-            // Only re-arm if the procedural is still active on the document.
-            // User-initiated stop (playing: false) must not resurrect its timer.
-            if (!this.isDestroyed && ps.playing) {
+            if (canRearm() && !this.isDestroyed && ps.playing) {
                 const safeMinimumDelayMs =
                     Number.isFinite(sound.duration) && sound.duration > 0.05
                         ? 0
@@ -436,15 +722,18 @@ export class SoundscapeEngine {
             sound.addEventListener("end", cleanup, { once: true });
             sound.addEventListener("stop", cleanup, { once: true });
         } catch (err) {
-            // Fallback to duration-based scheduling.
-            const waitMs = Number.isFinite(sound.duration)
+            const waitForEndMs = Number.isFinite(sound.duration)
                 ? sound.duration * 1000 + 100
                 : 3000;
-            AudioTimeout.wait(waitMs).then(cleanup);
+            AudioTimeout.wait(waitForEndMs).then(cleanup);
         }
 
         debug(`[Soundscape] Fired "${ps.name}"`, {
+            source,
+            eventId: normalized.eventId,
             targetVolume: Number(targetVol.toFixed(3)),
+            panValue: normalized.panValue,
+            varianceFactor: Number(normalized.varianceFactor.toFixed(3)),
             playing: !!sound.playing,
             loaded: !!sound.loaded,
             volume: Number((sound.volume ?? 0).toFixed(3)),
@@ -457,6 +746,8 @@ export class SoundscapeEngine {
             playlist: this.playlist,
             sound: ps,
             volume: targetVol,
+            recipe: normalized,
+            source,
         });
         return true;
     }
@@ -638,8 +929,8 @@ export class SoundscapeEngine {
 
     /**
      * Fire a procedural one-shot immediately, cancelling any armed timer.
-     * Client-local: no replication. GM uses this for testing from the
-     * Currently Playing panel.
+     * When procedural sync is enabled on the GM this emits the same recipe to
+     * synced clients; opted-out clients continue their local timers.
      * @param {string} soundId
      * @returns {Promise<boolean>} true if a fire was initiated
      */
@@ -671,6 +962,7 @@ export class SoundscapeEngine {
     armProceduralSound(ps) {
         if (this.isDestroyed || !this.isStarted) return;
         if (!ps || !Flags.getSoundFlag(ps, "isProcedural")) return;
+        if (!this._shouldArmLocalProcedurals()) return;
         if (this.oneShotTimers.has(ps.id)) return;
         this._armOneShot(ps, { initial: true });
     }
@@ -686,15 +978,20 @@ export class SoundscapeEngine {
         for (const ps of this.playlist.sounds) {
             if (!Flags.getSoundFlag(ps, "isProcedural")) continue;
 
-            if (ps.playing) {
-                this.armProceduralSound(ps);
-                continue;
-            }
-
             const hasRuntimeState =
                 this.oneShotTimers.has(ps.id) ||
                 this.isOneShotActive(ps.id) ||
                 this.isOneShotPending(ps.id);
+
+            if (ps.playing) {
+                if (this._shouldArmLocalProcedurals()) {
+                    this.armProceduralSound(ps);
+                } else if (hasRuntimeState) {
+                    this.disarmProceduralSound(ps);
+                }
+                continue;
+            }
+
             if (hasRuntimeState) this.disarmProceduralSound(ps);
         }
     }
@@ -737,10 +1034,19 @@ export class SoundscapeEngine {
     getDiagnostics() {
         return {
             active: this.isStarted && !this.isDestroyed,
+            soundscapeSyncEnabled: this.soundscapeSyncEnabled,
+            syncMode: this.syncMode,
             bedCount: this.bedSoundIds.size,
+            bedSoundIds: Array.from(this.bedSoundIds),
             armedOneShots: this.oneShotTimers.size,
+            armedOneShotIds: Array.from(this.oneShotTimers.keys()),
             activeOneShots: this.activeOneShots.size,
+            activeOneShotCounts: _mapToObject(this.activeOneShotCounts),
             pendingOneShots: this.pendingOneShotTotal,
+            pendingOneShotCounts: _mapToObject(this.pendingOneShotCounts),
+            recentSyncedEvents: this.recentSyncedEvents.slice(-SYNCED_EVENT_HISTORY_LIMIT),
+            missedSyncedEvents: this.missedSyncedEvents.slice(-SYNCED_EVENT_HISTORY_LIMIT),
+            polyphony: this.getPolyphony(),
         };
     }
 
@@ -852,4 +1158,22 @@ export function isSoundscapeActive(playlist) {
     if (!playlist) return false;
     const engine = State.getSoundscapeEngine(playlist);
     return !!(engine && engine.isStarted && !engine.isDestroyed);
+}
+
+/**
+ * Handle a transient GM-authored procedural fire recipe received over the
+ * module socket. This is intentionally not persisted to world documents.
+ * @param {Object} data
+ * @returns {Promise<boolean>}
+ */
+export async function handleSoundscapeProceduralFire(data = {}) {
+    if (!isSoundscapeProceduralSyncEnabled()) return false;
+    const playlist = game.playlists?.get?.(data.playlistId);
+    if (!playlist || !Flags.getPlaybackMode(playlist).soundscape) return false;
+
+    let engine = State.getSoundscapeEngine(playlist);
+    if (!engine || engine.isDestroyed) {
+        engine = await startSoundscape(playlist);
+    }
+    return engine?.executeSyncedFire?.(data) ?? false;
 }

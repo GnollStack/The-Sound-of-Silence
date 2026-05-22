@@ -166,6 +166,7 @@ class ExhaustiveShuffle {
 
             // Invalidate our module's cache AND Foundry's cache to force a new cycle.
             state.currentCycle = [];
+            state.playedThisCycle.clear();
             delete playlist._playbackOrder;
         }
     }

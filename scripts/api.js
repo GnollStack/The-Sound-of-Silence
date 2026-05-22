@@ -16,8 +16,11 @@ import {
     startSoundscape,
     stopSoundscape,
     isSoundscapeActive,
+    handleSoundscapeProceduralFire,
+    isSoundscapeProceduralSyncEnabled,
 } from "./procedural-ambience.js";
 import { Silence } from "./silence.js";
+import { createSoundOfSilenceDiagnostics } from "./diagnostics.js";
 import { toSec, formatTime, info, debug, getSequenceSnapshot, MODULE_ID } from "./utils.js";
 import { State, cleanupPlaylistState } from "./state-manager.js";
 import { Integrations } from "./integrations.js";
@@ -49,6 +52,12 @@ class SoundOfSilenceAPI {
          * @returns {string}
          */
         this.formatTime = formatTime;
+
+        /**
+         * Safe MCP-facing diagnostics surface.
+         * @type {{version: number, actions: object, getAvailability: Function}}
+         */
+        this.diagnostics = createSoundOfSilenceDiagnostics(this);
     }
 
     /**
@@ -802,13 +811,97 @@ class SoundOfSilenceAPI {
         return volumes;
     }
 
-    _gatherLocalDiagnostics() {
+    _getClientInstanceId() {
+        if (!this._clientInstanceId) {
+            this._clientInstanceId = foundry.utils?.randomID?.(16) ?? String(Date.now());
+        }
+        return this._clientInstanceId;
+    }
+
+    _getSocketId() {
+        return game.socket?.id ?? game.socket?.socket?.id ?? null;
+    }
+
+    _isDiagnosticsRequestIdValid(requestId) {
+        return typeof requestId === "string" &&
+            /^[A-Za-z0-9_-]{8,128}$/.test(requestId.trim());
+    }
+
+    _isRemoteDiagnosticsGateOpen() {
+        try {
+            return Boolean(game.settings?.get(this.ID, "debug")) &&
+                Boolean(game.settings?.get(this.ID, "enableMcpDiagnostics"));
+        } catch (_) {
+            return false;
+        }
+    }
+
+    _resolveActiveGMSocketSender(senderId) {
+        if (typeof senderId !== "string" || !senderId.trim()) return null;
+        const sender = game.users?.get?.(senderId.trim());
+        if (!sender?.isGM || sender.active === false) return null;
+        return sender;
+    }
+
+    _getAudioPreflight() {
+        const audio = game.audio ?? null;
+        const contexts = {};
+        for (const name of ["music", "environment", "interface"]) {
+            const ctx = audio?.[name];
+            contexts[name] = {
+                available: Boolean(ctx),
+                state: typeof ctx?.state === "string" ? ctx.state : null,
+                sampleRate: Number.isFinite(Number(ctx?.sampleRate)) ? Number(ctx.sampleRate) : null,
+                currentTime: Number.isFinite(Number(ctx?.currentTime)) ? Number(ctx.currentTime) : null,
+            };
+        }
+
+        return {
+            available: Boolean(audio),
+            locked: typeof audio?.locked === "boolean" ? audio.locked : null,
+            unlocked: typeof audio?.unlocked === "boolean" ? audio.unlocked : null,
+            contexts,
+        };
+    }
+
+    _getPlaylistDocumentSnapshots({ playlistIds = null } = {}) {
+        const ids = Array.isArray(playlistIds) ? new Set(playlistIds.map((id) => String(id))) : null;
+        if (ids && ids.size === 0) return [];
+
+        return Array.from(game.playlists ?? [])
+            .filter((playlist) => !ids || ids.has(String(playlist.id)))
+            .map((playlist) => ({
+                id: playlist.id,
+                name: playlist.name,
+                mode: playlist.mode,
+                playing: Boolean(playlist.playing),
+                sounds: Array.from(playlist.sounds ?? []).map((sound) => ({
+                    id: sound.id,
+                    name: sound.name,
+                    playing: Boolean(sound.playing),
+                    pausedTime: Number.isFinite(Number(sound.pausedTime)) ? Number(sound.pausedTime) : null,
+                    repeat: Boolean(sound.repeat),
+                    volume: Number.isFinite(Number(sound.volume)) ? Number(sound.volume) : null,
+                    hasMedia: Boolean(sound.sound),
+                    mediaPlaying: Boolean(sound.sound?.playing),
+                    isSilenceGap: Boolean(Flags.getSoundFlag(sound, "isSilenceGap")),
+                    isProcedural: Boolean(Flags.getSoundFlag(sound, "isProcedural")),
+                    hasLoopWithin: Boolean(Flags.getLoopConfig(sound)?.enabled),
+                })),
+            }));
+    }
+
+    _gatherLocalDiagnostics(options = {}) {
         const base = this.inspectAll();
 
         // Per-playing-sound audio state — the critical data inspectAll() doesn't include
         const playingSounds = [];
+        let soundDocumentsWithMedia = 0;
+        let playingMediaObjects = 0;
         for (const playlist of game.playlists) {
             for (const ps of playlist.sounds) {
+                if (ps.sound) soundDocumentsWithMedia += 1;
+                if (ps.sound?.playing) playingMediaObjects += 1;
                 if (!ps.sound?.playing) continue;
                 const sound = ps.sound;
                 playingSounds.push({
@@ -868,14 +961,22 @@ class SoundOfSilenceAPI {
         const personalPlaylistVolumeEnabled = Flags.isPersonalAudioMixEnabled();
         const personalPlaylistVolumes = Flags.getPersonalPlaylistVolumes();
         const personalTrackVolumes = Flags.getPersonalTrackVolumes();
+        const audio = {
+            ...this._getAudioPreflight(),
+            soundDocumentsWithMedia,
+            playingMediaObjects,
+        };
 
         return {
             ...base,
             playingSounds,
+            audio,
+            playlistDocuments: this._getPlaylistDocumentSnapshots({ playlistIds: options.playlistIds }),
             audioContexts,
             coreAudioVolumes,
             playbackClocks,
             soundscapes,
+            soundscapeProceduralSyncEnabled: isSoundscapeProceduralSyncEnabled(),
             personalAudioMix: {
                 enabled: personalPlaylistVolumeEnabled,
                 playlistVolumes: personalPlaylistVolumes,
@@ -891,8 +992,197 @@ class SoundOfSilenceAPI {
                 userId: game.user.id,
                 userName: game.user.name,
                 isGM: game.user.isGM,
+                clientInstanceId: this._getClientInstanceId(),
+                socketId: this._getSocketId(),
                 timestamp: Date.now(),
             },
+        };
+    }
+
+    _normalizeClientDiagnosticsOptions({ timeoutMs = 3000, includeSelf = true, playlistIds = null } = {}) {
+        const timeout = Number(timeoutMs);
+        const normalizedPlaylistIds = Array.isArray(playlistIds)
+            ? playlistIds.map((id) => String(id)).filter(Boolean)
+            : null;
+        return {
+            timeoutMs: Number.isFinite(timeout)
+                ? Math.max(500, Math.min(Math.floor(timeout), 10000))
+                : 3000,
+            includeSelf: includeSelf !== false,
+            playlistIds: normalizedPlaylistIds,
+        };
+    }
+
+    _filterCollectedDiagnostics(diagnostics, playlistIds = null) {
+        if (!diagnostics || !Array.isArray(playlistIds)) return diagnostics;
+
+        const ids = new Set(playlistIds.map((id) => String(id)));
+        const filterPlaylists = (playlists) => {
+            if (!Array.isArray(playlists)) return playlists;
+            if (ids.size === 0) return [];
+            return playlists.filter((playlist) => ids.has(String(playlist?.id)));
+        };
+        const filterPlaylistVolumeMap = (volumes) => {
+            if (!volumes || typeof volumes !== "object") return volumes;
+            if (ids.size === 0) return {};
+            return Object.fromEntries(Object.entries(volumes)
+                .filter(([playlistId]) => ids.has(String(playlistId))));
+        };
+        const filterTrackVolumeMap = (volumes) => {
+            if (!volumes || typeof volumes !== "object") return volumes;
+            if (ids.size === 0) return {};
+            return Object.fromEntries(Object.entries(volumes)
+                .filter(([key]) => {
+                    const match = String(key).match(/^Playlist\.([^.]+)\./);
+                    return match ? ids.has(match[1]) : false;
+                }));
+        };
+
+        const filteredPlaylistDocuments = filterPlaylists(diagnostics.playlistDocuments);
+        const filtered = {
+            ...diagnostics,
+            playlistDocuments: filteredPlaylistDocuments,
+        };
+
+        if (diagnostics.documents && Array.isArray(diagnostics.documents.playlists)) {
+            filtered.documents = {
+                ...diagnostics.documents,
+                playlists: filterPlaylists(diagnostics.documents.playlists),
+            };
+        }
+
+        if (diagnostics.personalAudioMix) {
+            const trackVolumes = filterTrackVolumeMap(diagnostics.personalAudioMix.trackVolumes);
+            filtered.personalAudioMix = {
+                ...diagnostics.personalAudioMix,
+                playlistVolumes: filterPlaylistVolumeMap(diagnostics.personalAudioMix.playlistVolumes),
+                trackVolumes,
+                trackOverrideCount: trackVolumes && typeof trackVolumes === "object"
+                    ? Object.keys(trackVolumes).length
+                    : diagnostics.personalAudioMix.trackOverrideCount,
+            };
+        }
+
+        if (diagnostics.personalPlaylistVolume) {
+            filtered.personalPlaylistVolume = {
+                ...diagnostics.personalPlaylistVolume,
+                volumes: filterPlaylistVolumeMap(diagnostics.personalPlaylistVolume.volumes),
+            };
+        }
+
+        if (Array.isArray(diagnostics.soundscapes)) {
+            filtered.soundscapes = ids.size === 0
+                ? []
+                : diagnostics.soundscapes.filter((snapshot) => ids.has(String(snapshot?.playlistId)));
+        }
+
+        if (diagnostics.sequences && typeof diagnostics.sequences === "object") {
+            const allowedSequenceKeys = new Set();
+            for (const playlistId of ids) allowedSequenceKeys.add(`pl:${playlistId}`);
+            for (const playlist of filteredPlaylistDocuments ?? []) {
+                for (const sound of playlist.sounds ?? []) {
+                    if (sound?.id) allowedSequenceKeys.add(`snd:${sound.id}`);
+                }
+            }
+            filtered.sequences = Object.fromEntries(Object.entries(diagnostics.sequences)
+                .filter(([key]) => allowedSequenceKeys.has(String(key))));
+        }
+
+        return filtered;
+    }
+
+    _summarizeCollectedClients(clients) {
+        return clients.map((diagnostics) => ({
+            userId: diagnostics.client?.userId ?? null,
+            userName: diagnostics.client?.userName ?? null,
+            isGM: Boolean(diagnostics.client?.isGM),
+            clientInstanceId: diagnostics.client?.clientInstanceId ?? null,
+            socketId: diagnostics.client?.socketId ?? null,
+            audioLocked: diagnostics.audio?.locked ?? null,
+            runningAudioContexts: Object.values(diagnostics.audio?.contexts ?? {})
+                .filter((context) => context?.state === "running").length,
+            playingMediaObjects: Number(diagnostics.audio?.playingMediaObjects ?? diagnostics.playingSounds?.length ?? 0),
+            playingSounds: Number(diagnostics.playingSounds?.length ?? 0),
+        }));
+    }
+
+    /**
+     * Collect diagnostic snapshots from connected clients and return JSON.
+     * GM-only. Sockets are used for diagnostics collection only.
+     * @param {{timeoutMs?: number, includeSelf?: boolean}} [options]
+     * @returns {Promise<Object>} JSON-safe collection result
+     */
+    async collectClientDiagnostics(options = {}) {
+        if (!game.user.isGM) {
+            throw new Error("Only the GM can collect client diagnostics.");
+        }
+
+        const { timeoutMs, includeSelf, playlistIds } = this._normalizeClientDiagnosticsOptions(options);
+        const requestId = foundry.utils.randomID();
+        const senderClientId = this._getClientInstanceId();
+        const clients = [];
+        const seenClients = new Set();
+
+        const addDiagnostics = (diagnostics) => {
+            if (!diagnostics?.client) return;
+            const filteredDiagnostics = this._filterCollectedDiagnostics(diagnostics, playlistIds);
+            const key = filteredDiagnostics.client.clientInstanceId ||
+                filteredDiagnostics.client.socketId ||
+                `${filteredDiagnostics.client.userId ?? "unknown"}:${filteredDiagnostics.client.timestamp ?? clients.length}`;
+            if (seenClients.has(key)) return;
+            seenClients.add(key);
+            clients.push(filteredDiagnostics);
+        };
+
+        if (includeSelf) addDiagnostics(this._gatherLocalDiagnostics({ playlistIds }));
+
+        const handler = (data) => {
+            if (data?.action !== "diagnostics-response" || data.requestId !== requestId) return;
+            addDiagnostics(data.diagnostics);
+        };
+
+        game.socket.on(`module.${this.ID}`, handler);
+        game.socket.emit(`module.${this.ID}`, {
+            action: "diagnostics-request",
+            requestId,
+            senderId: game.user.id,
+            senderClientId,
+            options: {
+                playlistIds,
+            },
+        });
+
+        debug(`[Remote Diagnostics] Request ${requestId} sent, waiting ${timeoutMs}ms for responses...`);
+
+        try {
+            await new Promise(r => setTimeout(r, timeoutMs));
+        } finally {
+            game.socket.off(`module.${this.ID}`, handler);
+        }
+
+        const activeUsers = Array.from(game.users ?? []).filter((user) => user.active).map((user) => ({
+            id: user.id,
+            name: user.name,
+            isGM: Boolean(user.isGM),
+        }));
+        const activeNonGmUsers = activeUsers.filter((user) => !user.isGM);
+        const respondedUserIds = new Set(clients.map((client) => client.client?.userId).filter(Boolean));
+        const missingActiveUsers = activeUsers.filter((user) => !respondedUserIds.has(user.id));
+
+        debug(`[Remote Diagnostics] Received ${clients.length} response(s) for ${requestId}`);
+
+        return {
+            success: true,
+            requestId,
+            timeoutMs,
+            includeSelf,
+            playlistIds,
+            responded: clients.length,
+            activeUsers,
+            activeNonGmUsers,
+            missingActiveUsers,
+            clientSummary: this._summarizeCollectedClients(clients),
+            clients,
         };
     }
 
@@ -910,37 +1200,9 @@ class SoundOfSilenceAPI {
             return;
         }
 
-        const requestId = foundry.utils.randomID();
-        const responses = [];
-
-        // Collect own state immediately
-        responses.push(this._gatherLocalDiagnostics());
-
-        // Listen for responses from other clients
-        const handler = (data) => {
-            if (data.action === "diagnostics-response" && data.requestId === requestId) {
-                responses.push(data.diagnostics);
-            }
-        };
-        game.socket.on(`module.${this.ID}`, handler);
-
-        // Broadcast request to all other clients
-        game.socket.emit(`module.${this.ID}`, {
-            action: "diagnostics-request",
-            requestId,
-            senderId: game.user.id,
-        });
-
-        debug("[Remote Diagnostics] Request sent, waiting for responses...");
-
-        // Wait for responses (3 seconds)
-        await new Promise(r => setTimeout(r, 3000));
-        game.socket.off(`module.${this.ID}`, handler);
-
-        debug(`[Remote Diagnostics] Received ${responses.length} response(s)`);
-
-        // Render the comparison dialog
-        this._renderRemoteDiagnostics(responses);
+        const result = await this.collectClientDiagnostics({ timeoutMs: 3000, includeSelf: true });
+        this._renderRemoteDiagnostics(result.clients);
+        return result;
     }
 
     /**
@@ -950,14 +1212,79 @@ class SoundOfSilenceAPI {
      * @private
      */
     _handleSocketMessage(data) {
+        if (data.action === "soundscape-procedural-fire") {
+            if (data.senderSocketId && data.senderSocketId === this._getSocketId()) {
+                return;
+            }
+            handleSoundscapeProceduralFire(data).catch((err) => {
+                debug("[Soundscape Sync] Failed to process procedural fire:", err?.message);
+            });
+            return;
+        }
+
+        if (data.action === "diagnostics-client-setting-request") {
+            this._handleDiagnosticsClientSettingRequest(data).catch((err) => {
+                debug("[Remote Diagnostics] Failed to apply client setting request:", err?.message);
+            });
+            return;
+        }
+
         if (data.action === "diagnostics-request") {
+            if (data.senderClientId && data.senderClientId === this._getClientInstanceId()) {
+                return;
+            }
+            if (!this._isDiagnosticsRequestIdValid(data.requestId)) return;
+            if (!this._isRemoteDiagnosticsGateOpen()) return;
+            if (!this._resolveActiveGMSocketSender(data.senderId)) return;
+
             debug("[Remote Diagnostics] Received request, sending local state...");
             game.socket.emit(`module.${this.ID}`, {
                 action: "diagnostics-response",
                 requestId: data.requestId,
-                diagnostics: this._gatherLocalDiagnostics(),
+                diagnostics: this._gatherLocalDiagnostics(data.options ?? {}),
             });
         }
+    }
+
+    async _handleDiagnosticsClientSettingRequest(data) {
+        const sender = game.users?.get?.(data.senderUserId);
+        const requestId = data.requestId;
+        const targetUserId = data.targetUserId ? String(data.targetUserId) : null;
+        if (!sender?.isGM || sender.active === false) return;
+        if (targetUserId && targetUserId !== String(game.user?.id)) return;
+
+        const diagnosticsEnabled = Boolean(game.settings?.get(this.ID, "enableMcpDiagnostics"));
+        const automationEnabled = Boolean(game.settings?.get(this.ID, "enableMcpPlaybackAutomation"));
+        const allowed = data.key === "soundscapeProceduralSyncEnabled" && typeof data.value === "boolean";
+        let success = false;
+        let errorMessage = null;
+        let value = null;
+
+        try {
+            if (!diagnosticsEnabled || !automationEnabled) {
+                throw new Error("diagnostics automation gates are closed");
+            }
+            if (!allowed) {
+                throw new Error("client setting request is not allowlisted");
+            }
+            await game.settings.set(this.ID, data.key, data.value);
+            value = game.settings.get(this.ID, data.key);
+            success = true;
+        } catch (err) {
+            errorMessage = err?.message ?? String(err);
+        }
+
+        game.socket?.emit(`module.${this.ID}`, {
+            action: "diagnostics-client-setting-response",
+            requestId,
+            userId: game.user?.id ?? null,
+            userName: game.user?.name ?? null,
+            clientInstanceId: this._getClientInstanceId(),
+            key: data.key ?? null,
+            value,
+            success,
+            error: errorMessage,
+        });
     }
 
     /**

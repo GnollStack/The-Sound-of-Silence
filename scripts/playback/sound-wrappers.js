@@ -89,7 +89,8 @@ function _schedulePostPlayActions(ps, sound, { fromCrossfade = false } = {}) {
     scheduleLoopWithin(ps);
   }
 
-  const fadeInMs = Flags.getPlaylistFlag(playlist, "fadeIn");
+  const fadeInOverride = typeof ps?._sos_fadeInOverride === "number" ? ps._sos_fadeInOverride : null;
+  const fadeInMs = fadeInOverride ?? Flags.getPlaylistFlag(playlist, "fadeIn");
   if (fadeInMs > 0 && !ps?.getFlag(MODULE_ID, "isSilenceGap") && !fromCrossfade) {
     const targetVolume = Flags.resolveTargetVolume(ps);
     applyFadeIn(playlist, ps, { targetVolume }).catch((err) => {

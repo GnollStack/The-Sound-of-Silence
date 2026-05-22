@@ -322,6 +322,18 @@ function cleanupOldSequences() {
     }
 }
 
+function clearSequence(key) {
+    ACTION_SEQUENCES.delete(key);
+}
+
+function clearPlaylistSequences(playlist) {
+    if (!playlist) return;
+    clearSequence(`pl:${playlist.id}`);
+    for (const sound of Array.from(playlist.sounds ?? [])) {
+        clearSequence(`snd:${sound.id}`);
+    }
+}
+
 // Periodic cleanup runs via setInterval (not AudioTimeout, which requires
 // game.audio to be initialized). The interval is cleared if the page unloads.
 let _sequenceCleanupInterval = null;
@@ -338,10 +350,14 @@ export function registerSequenceCleanupHooks() {
         }, { once: true });
     }
 
-    // Clean up when playlists are deleted.
+    // Clean up when playlists or sounds are deleted.
     Hooks.on("deletePlaylist", (playlist) => {
-        ACTION_SEQUENCES.delete(`pl:${playlist.id}`);
+        clearPlaylistSequences(playlist);
         debug(`[Sequence Cleanup] Cleared sequences for deleted playlist: ${playlist.name}`);
+    });
+    Hooks.on("deletePlaylistSound", (sound) => {
+        clearSequence(`snd:${sound.id}`);
+        debug(`[Sequence Cleanup] Cleared sequence for deleted sound: ${sound.name}`);
     });
 }
 

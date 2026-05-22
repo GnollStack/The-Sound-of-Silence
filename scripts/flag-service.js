@@ -245,7 +245,51 @@ class FlagService {
      */
     getLoopConfig(sound) {
         const rawFlags = sound.getFlag(MODULE_ID, "loopWithin") ?? {};
-        const migrated = this._migrateLegacyLoopFlags(rawFlags);
+        return this.validateLoopConfig(rawFlags);
+    }
+
+    /**
+     * Validate playlist flags without reading or writing a Foundry document.
+     * Used by diagnostics and tests.
+     * @param {object} input Candidate flag data
+     * @returns {object} Complete sanitized playlist flags
+     */
+    validatePlaylistFlags(input = {}) {
+        const source = (input && typeof input === "object" && !Array.isArray(input)) ? input : {};
+        const flags = {};
+        for (const key in FlagSchemas.PLAYLIST) {
+            flags[key] = this._validate(source[key], FlagSchemas.PLAYLIST[key]);
+        }
+        return foundry.utils.duplicate(flags);
+    }
+
+    /**
+     * Validate playlist sound flags without reading or writing a Foundry document.
+     * Used by diagnostics and tests.
+     * @param {object} input Candidate flag data
+     * @returns {object} Complete sanitized PlaylistSound flags
+     */
+    validateSoundFlags(input = {}) {
+        const source = (input && typeof input === "object" && !Array.isArray(input)) ? input : {};
+        const flags = {};
+        for (const key in FlagSchemas.PLAYLIST_SOUND) {
+            if (key === "loopWithin") {
+                flags[key] = this.validateLoopConfig(source[key] ?? {});
+            } else {
+                flags[key] = this._validate(source[key], FlagSchemas.PLAYLIST_SOUND[key]);
+            }
+        }
+        return foundry.utils.duplicate(flags);
+    }
+
+    /**
+     * Validate loop configuration without reading or writing a Foundry document.
+     * @param {object} input Candidate loopWithin data
+     * @returns {object} Complete sanitized loop config with startSec/endSec
+     */
+    validateLoopConfig(input = {}) {
+        const source = (input && typeof input === "object" && !Array.isArray(input)) ? input : {};
+        const migrated = this._migrateLegacyLoopFlags(source);
         const validatedConfig = this._validate(migrated, FlagSchemas.PLAYLIST_SOUND.loopWithin);
 
         // Validate each segment individually
@@ -257,15 +301,27 @@ class FlagService {
                 loopCount: this._validateNumber(seg.loopCount, 0, 0), // min: 0
                 skipToNext: typeof seg.skipToNext === "boolean" ? seg.skipToNext : false
             };
-            
+
             // Add runtime-processed values for convenience
             validated.startSec = toSec(validated.start);
             validated.endSec = toSec(validated.end);
-            
+
             return validated;
         });
 
-        return validatedConfig;
+        return foundry.utils.duplicate(validatedConfig);
+    }
+
+    getPlaylistFlagKeys() {
+        return Object.keys(FlagSchemas.PLAYLIST);
+    }
+
+    getSoundFlagKeys() {
+        return Object.keys(FlagSchemas.PLAYLIST_SOUND);
+    }
+
+    getLoopConfigKeys() {
+        return Object.keys(FlagSchemas.PLAYLIST_SOUND.loopWithin.schema);
     }
 
     /**

@@ -32,6 +32,7 @@ export class LoopingSound {
     this.isCrossfading = false;
     this.activeLoopSegment = null;
     this.loopsCompleted = 0;
+    this._metricsLoopActive = false;
 
     this.mainSchedule = null;
     this.handoffTimer = null;
@@ -51,6 +52,18 @@ export class LoopingSound {
     if (this.isCrossfading === isCrossfading) return;
     this.isCrossfading = isCrossfading;
     State.notifyStateChanged();
+  }
+
+  _recordLoopSessionEnd({ completed = true } = {}) {
+    if (!this._metricsLoopActive) return;
+    State.recordLoopEnd({ completed });
+    this._metricsLoopActive = false;
+  }
+
+  _unregisterIfCurrent() {
+    if (State.getActiveLooper(this.ps) === this) {
+      State.clearActiveLooper(this.ps);
+    }
   }
 
   get activeSound() {
@@ -328,6 +341,7 @@ export class LoopingSound {
       // Mark as destroyed so no further operations occur
       this._setActiveLoopSegment(null);
       this.isDestroyed = true;
+      this._unregisterIfCurrent();
       State.notifyStateChanged();
 
       // Clear all sound references - the active sound will continue playing via ps.sound
@@ -359,6 +373,7 @@ export class LoopingSound {
       segmentIndex: this.config.segments.indexOf(segment)
     });
     State.recordLoopStart();
+    this._metricsLoopActive = true;
 
     // Start the first crossfade loop immediately.
     this._armCrossfadeLoop();
@@ -488,7 +503,7 @@ export class LoopingSound {
       totalIterations: this.loopsCompleted,
       hasNextSegment: !isLastSegment
     });
-    State.recordLoopEnd();
+    this._recordLoopSessionEnd({ completed: true });
 
     if (!shouldSkip) {
       // If this was the final loop segment, the looper's job is over. It will now retire and
@@ -651,6 +666,7 @@ export class LoopingSound {
     // Mark as destroyed immediately to prevent any further loop scheduling
     this._setActiveLoopSegment(null);
     this.isDestroyed = true;
+    this._unregisterIfCurrent();
     State.notifyStateChanged();
 
     const isCrossfadeEnabled = Flags.getPlaybackMode(playlist).crossfade;
@@ -761,6 +777,7 @@ export class LoopingSound {
   }
 
   _endCurrentLoopSegment() {
+    this._recordLoopSessionEnd({ completed: false });
     this._setActiveLoopSegment(null);
     this._setCrossfading(false);
     this.loopsCompleted = 0;
@@ -816,6 +833,7 @@ export class LoopingSound {
     }
 
     // Clear the active segment
+    this._recordLoopSessionEnd({ completed: false });
     this._setActiveLoopSegment(null);
     this._setCrossfading(false);
     this.loopsCompleted = 0;
@@ -949,6 +967,7 @@ export class LoopingSound {
     if (this.soundA && this.soundA !== activeSound) this.soundA._manager = null;
     if (this.soundB && this.soundB !== activeSound) this.soundB._manager = null;
 
+    this._recordLoopSessionEnd({ completed: false });
     this._setActiveLoopSegment(null);
     this._setCrossfading(false);
     this.loopsCompleted = 0;
@@ -959,6 +978,7 @@ export class LoopingSound {
     this.handoffTimer = null;
     this.finalTransitionTimer = null;
     this.isDestroyed = true;
+    this._unregisterIfCurrent();
     this.soundA = null;
     this.soundB = null;
 
@@ -968,6 +988,7 @@ export class LoopingSound {
   destroy(allowFadeOut = false) {
     if (this.isDestroyed) return;
     this.isDestroyed = true;
+    this._unregisterIfCurrent();
 
     safeCancelTimer(this.mainSchedule, `LoopingSound main schedule for "${this.ps?.name}"`);
     safeCancelTimer(this.loopCrossfadeTimer, `LoopingSound crossfade timer for "${this.ps?.name}"`);
@@ -988,6 +1009,7 @@ export class LoopingSound {
     // --- Explicitly break references ---
     if (this.soundA) this.soundA._manager = null;
     if (this.soundB) this.soundB._manager = null;
+    this._recordLoopSessionEnd({ completed: false });
     this._setActiveLoopSegment(null);
     this.finalTransitionTimer = null;
     this.soundA = null;

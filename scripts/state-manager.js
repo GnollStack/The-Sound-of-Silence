@@ -170,9 +170,9 @@ class StateManager {
     /**
      * Record a loop session end
      */
-    recordLoopEnd() {
+    recordLoopEnd({ completed = true } = {}) {
         this._metrics.loops.activeSessions = Math.max(0, this._metrics.loops.activeSessions - 1);
-        this._metrics.loops.completedSessions++;
+        if (completed) this._metrics.loops.completedSessions++;
     }
 
     /**
@@ -535,7 +535,8 @@ class StateManager {
      * @returns {boolean}
      */
     hasActiveLooper(sound) {
-        return !!this.getActiveLooper(sound);
+        const looper = this.getActiveLooper(sound);
+        return !!looper && !looper.isDestroyed && !looper.loopingDisabled;
     }
 
     // ============================================
@@ -732,13 +733,14 @@ class StateManager {
         const activeLoops = [];
         for (const sound of playlist.sounds) {
             const looper = this.getActiveLooper(sound);
-            if (looper) {
+            if (looper && !looper.isDestroyed) {
                 activeLoops.push({
                     soundName: sound.name,
                     soundId: sound.id,
                     activeSegment: looper.activeLoopSegment,
                     loopsCompleted: looper.loopsCompleted,
                     isCrossfading: looper.isCrossfading,
+                    loopingDisabled: !!looper.loopingDisabled,
                     isDestroyed: looper.isDestroyed
                 });
             }

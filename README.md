@@ -12,7 +12,7 @@
 
 *For GMs who want music to help tell a story.*
 
-[Features](#what-you-get) · [Quick Start](#quick-start) · [Preview](#preview) · [Installation](#installation) · [Use It For](#use-it-for) · [Compatibility](#compatibility) · [API](#developer-api) · [Community](#community) · [Contributing](#contributing) · [Support](#support-development) · [License](#license-permissions)
+[Features](#what-you-get) · [Quick Start](#quick-start) · [Preview](#preview) · [Installation](#installation) · [Use It For](#use-it-for) · [Compatibility](#compatibility) · [API](#developer-api) · [Community](#community) · [Contributing](#contributing) · [AI Use](#ai-use) · [Support](#support-development) · [License](#license-permissions)
 
 </div>
 
@@ -88,7 +88,7 @@ Works in Sequential, Shuffle, and Simultaneous modes. Set a fixed gap, or a min/
 ### Soundscape Mode
 **Procedural ambience that runs itself.**
 
-Bed tracks loop while procedural one-shots fire on client-local timers. Configure cadence (Uniform / Fixed / Natural), polyphony caps, pan, and play-chance per sound. Audition the whole mix before committing.
+Bed tracks loop while procedural one-shots are GM-authored and synced to players by default. Configure cadence (Uniform / Fixed / Natural), polyphony caps, pan, and play-chance per sound; players can opt out to use local procedural timing when needed.
 
 <img width="373" height="563" alt="Soundscape procedural roster and preview controls" src="https://github.com/user-attachments/assets/239080e1-500f-4753-963e-def61ae4ce47" />
 
@@ -102,6 +102,7 @@ Bed tracks loop while procedural one-shots fire on client-local timers. Configur
 - Loop preview plays full loops or just the transition points; volume slider opens at the sound's configured volume.
 - Live controls in the Currently Playing panel — break, skip prev/next segment, disable all loops.
 - Between-segment skipping works from the current playback position, even after pressing Break.
+- Finite loop retirement clears runtime state so API inspection does not report destroyed loopers as active.
 
 </details>
 
@@ -133,11 +134,12 @@ Soundscape is the 5th option in the playback-mode picker, alongside Soundboard /
 - **Procedural cadence** — Uniform Random, Fixed Cadence, or Natural (center-weighted) timing per sound.
 - **Startup mode** — Use Cadence, Stagger First Fire, or Immediate First Fire.
 - **Polyphony cap** — limit overlapping one-shots, with Independent, Linear, or Soft chance-scaling.
-- **Client-local timing** — each connected client runs its own procedural timer, so ambience never feels perfectly synchronized.
+- **Synced procedural fires** - the GM client chooses each live one-shot recipe and synced players play that same sound, sequence, pan, variance, fade-in, and scheduled start.
+- **Client opt-out** - players can disable synced procedural events for local procedural RNG while beds and document playback state remain synced.
 - **Audition** — test the full mix from the playlist's Preview control, or any procedural from its sound sheet. Both are local-only and neither affects live state.
 - **Soundboard control** — play or stop any sound individually; auto-stops the playlist when the last sound ends.
 - **Procedural Roster** — an at-a-glance table in playlist config showing cadence, first-fire, play-chance, and pan per sound.
-- GMs see a Fire Now bolt button on each procedural for client-local testing.
+- GMs see a Fire Now bolt button on each procedural; in a live soundscape it emits the same synced fire recipe, while preview and audition remain local-only.
 
 </details>
 
@@ -178,6 +180,20 @@ game.modules.get('the-sound-of-silence').api.requestClientDiagnostics()
 ```
 
 After 3 seconds a dialog shows per-sound gain, fade status, AudioContext state, dedup sequence numbers, playback-clock drift, and core audio volume. Red highlights stuck gains and suspended contexts; amber highlights active fades.
+
+For MCP-based diagnostics, enable both **Enable Debug Logging** and **Enable MCP Diagnostics**, then use the Foundry MCP Bridge generic action tool:
+
+```javascript
+call-module-debug-action({
+  moduleId: "the-sound-of-silence",
+  action: "getStatus",
+  args: {}
+})
+```
+
+These diagnostics intentionally ship with the module, but are disabled by default and require explicit GM-side settings before use. Available read-only actions are allowlisted under `game.modules.get("the-sound-of-silence").api.diagnostics.actions`: `getStatus`, `parseText`, `validateText`, `openWindow`, `collectClientDiagnostics`, and `runSmokeTests`. They are GM-only, JSON-safe, and never create world documents. `collectClientDiagnostics` can be filtered with `playlistIds` to keep remote payloads compact. `getStatus` includes an audio preflight snapshot; `audio.locked: true` or zero available audio contexts means live media tests such as crossfade cannot prove real playback until the GM client unlocks Foundry audio.
+
+Dedicated test worlds can also enable **Enable MCP Playback Automation**. Mutating automation actions require that setting plus `confirmMutation: true` in the call args. The allowlisted mutating actions are `controlPlayback`, `runPlaybackAutomation`, `runClientSyncAutomation`, and `cleanupPlaybackFixtures`; fixture cleanup only touches SoS MCP fixture playlists with the expected marker flag and `SoS MCP Test -` name prefix. Automation fixtures prefer known playable world audio paths when available and fall back to generated WAV data URIs. `runPlaybackAutomation` includes shuffle-pattern checks for exhaustive, weighted-random, and round-robin ordering, custom fade checks for all configured curve types, loop retirement cleanup, and advanced soundscape checks for procedural one-shots, polyphony caps, default inheritance, panners, and bed cleanup. `runClientSyncAutomation` requires active non-GM clients by default and compares their remote snapshots against GM-driven playback actions, including crossfade, stop, loop break/disable/segment-skip replication, and soundscape start/stop, bed-only, procedural-fire, arm/disarm, opt-out, and cleanup scenarios. Live-media checks are reported as inconclusive, not failed, when a target client has locked audio, no running audio context, or no live media object.
 
 > [!WARNING]
 > If the GM owns the playlist, sets Foundry's Music Volume to exact `0`, and backgrounds the tab, the browser audio clock can stall. Use `0.01` or mute the tab/OS instead.
@@ -441,6 +457,20 @@ I am not generally accepting unsolicited code PRs for features, refactors, archi
 - **Translations and docs** — typo fixes, wording suggestions, and localization ideas are welcome by issue first. I do not have a public translation setup yet, so I will fold useful wording in myself.
 
 Submitted ideas may be adapted, declined, or implemented by GnollStack. Any accepted contribution or submitted project material may be released under the same EULA as the rest of the module.
+
+---
+
+<a id="ai-use"></a>
+
+## AI-Assisted Development
+
+This module is developed and maintained with the help of AI-assisted tools for coding, debugging, documentation, and testing.
+
+I care about the quality, behavior, performance, security, and long-term maintainability of this module, and I take full responsibility for what ships. AI assistance does not replace review, testing, debugging, or security and design judgment.
+
+AI is used here as a tool under my direction to make Foundry better and allow for long term mod support while still having a life outside of building and maintaining my free and premium modules.
+
+If you are uncomfortable using software developed with AI-assisted tooling, this module is not for you.
 
 ---
 
