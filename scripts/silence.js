@@ -10,7 +10,7 @@ import { Flags } from "./flag-service.js";
 import { State } from "./state-manager.js";
 import { maybeLoopPlaylist } from "./playlist-loop.js";
 
-// Make the V13 AudioTimeout class available in this file.
+// Make Foundry's AudioTimeout class available in this file.
 const AudioTimeout = foundry.audio.AudioTimeout;
 
 const FLAG_KEY = "isSilenceGap";
@@ -257,7 +257,7 @@ export const Silence = {
     });
 
     return new Promise(resolve => {
-      // Use the V13+ AudioTimeout for precise, audio-context-synchronized timing.
+      // Use AudioTimeout for precise, audio-context-synchronized timing.
       const timer = new AudioTimeout(gapMs);
 
       const state = {

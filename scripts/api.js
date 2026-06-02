@@ -1254,14 +1254,13 @@ class SoundOfSilenceAPI {
         if (targetUserId && targetUserId !== String(game.user?.id)) return;
 
         const diagnosticsEnabled = Boolean(game.settings?.get(this.ID, "enableMcpDiagnostics"));
-        const automationEnabled = Boolean(game.settings?.get(this.ID, "enableMcpPlaybackAutomation"));
         const allowed = data.key === "soundscapeProceduralSyncEnabled" && typeof data.value === "boolean";
         let success = false;
         let errorMessage = null;
         let value = null;
 
         try {
-            if (!diagnosticsEnabled || !automationEnabled) {
+            if (!diagnosticsEnabled) {
                 throw new Error("diagnostics automation gates are closed");
             }
             if (!allowed) {

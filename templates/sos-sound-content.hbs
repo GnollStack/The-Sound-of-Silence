@@ -52,7 +52,19 @@
         <label class="ellipsis">{{ name }}</label>
     </div>
     {{/unless}}
-    <div class="sos-progress-bar">
+    <div class="sos-progress-bar {{#if sos.showSegmentedProgress}}sos-progress-bar--is-segmented{{/if}}">
+        {{#if sos.showSegmentedProgress}}
+        <div class="sos-progress-bar--segmented">
+            <div class="sos-progress-track-fill" style="width: {{ sos.loopTrackProgressPct }}%"></div>
+            {{#each sos.loopSegments}}
+            <div class="sos-progress-segment {{#if isCurrent}}is-current{{/if}} {{#if isPast}}is-past{{/if}}"
+                 style="left: {{ startPct }}%; width: {{ widthPct }}%; --sos-loop-segment-color: {{ color }}; --sos-loop-segment-soft-color: {{ softColor }}; --sos-loop-segment-fill-color: {{ fillColor }};">
+                <div class="sos-progress-segment-fill" style="width: {{ fillPct }}%"></div>
+            </div>
+            {{/each}}
+            <div class="sos-progress-playhead" style="left: {{ sos.loopTrackProgressPct }}%"></div>
+        </div>
+        {{else}}
         <div class="sos-progress-fade sos-progress-fade-in"
              style="left: 0%; width: {{ sos.fadeInPct }}%"
              {{#unless sos.showFadeInZone}}hidden{{/unless}}
@@ -62,6 +74,7 @@
              {{#unless sos.showFadeOutZone}}hidden{{/unless}}
              {{#if sos.fadeOutLabel}}data-tooltip="{{ sos.fadeOutLabel }}"{{/if}}></div>
         <div class="sos-progress-fill" style="width: {{ sos.progressPct }}%"></div>
+        {{/if}}
     </div>
 </div>
 
@@ -144,6 +157,42 @@
                 aria-label="{{ localize "PLAYLIST.SoundStop" }}"></button>
     </div>
 </div>
+
+{{#if sos.showSegBand}}
+<div class="sos-seg-band {{#unless sos.isGM}}sos-disabled{{/unless}}" data-sound-id="{{ id }}">
+    <span class="sos-seg-band-label">
+        <i class="fa-solid fa-repeat" inert></i>
+        <span class="sos-seg-band-count">
+            <span class="current">{{ sos.loopCurrentSegIdx1 }}</span><span class="sep">/</span><span class="total">{{ sos.loopTotalSegments }}</span>
+        </span>
+    </span>
+    <button type="button" class="sos-seg-band-btn" data-sos-action="loopPrev"
+            data-sound-id="{{ id }}" {{#unless sos.canSkipPrev}}disabled{{else}}{{#unless sos.isGM}}disabled{{/unless}}{{/unless}}
+            data-tooltip="Previous Segment"
+            aria-label="Previous Segment">
+        <i class="fa-solid fa-backward-step"></i>
+    </button>
+    <button type="button" class="sos-seg-band-btn" data-sos-action="loopNext"
+            data-sound-id="{{ id }}" {{#unless sos.canSkipNext}}disabled{{else}}{{#unless sos.isGM}}disabled{{/unless}}{{/unless}}
+            data-tooltip="Next Segment"
+            aria-label="Next Segment">
+        <i class="fa-solid fa-forward-step"></i>
+    </button>
+    <div class="sos-seg-band-spacer"></div>
+    <button type="button" class="sos-seg-band-btn" data-sos-action="loopBreak"
+            data-sound-id="{{ id }}" {{#unless sos.canBreakLoop}}disabled{{else}}{{#unless sos.isGM}}disabled{{/unless}}{{/unless}}
+            data-tooltip="Break Loop"
+            aria-label="Break Loop">
+        <i class="fa-solid fa-eject"></i>
+    </button>
+    <button type="button" class="sos-seg-band-btn" data-sos-action="loopDisable"
+            data-sound-id="{{ id }}" {{#unless sos.canDisableLoops}}disabled{{else}}{{#unless sos.isGM}}disabled{{/unless}}{{/unless}}
+            data-tooltip="Disable Loops"
+            aria-label="Disable Loops">
+        <i class="fa-solid fa-ban"></i>
+    </button>
+</div>
+{{/if}}
 
 {{#if sos.showPersonalTrackVolume}}
 <div class="sos-personal-mix-badge"
@@ -247,36 +296,6 @@
         </range-picker>
     </div>
     {{/if}}
-</div>
-{{/if}}
-
-{{#if sos.showLoopControls}}
-<div class="sos-loop-controls-row {{#unless sos.isGM}}sos-disabled{{/unless}}" data-sound-id="{{ id }}">
-    <i class="fa-solid fa-repeat sos-loop-icon" inert></i>
-    <span class="sos-controls-label">SEG</span>
-    <div class="sos-loop-spacer"></div>
-    <div class="sos-button-group">
-        <button type="button" class="sos-transport-btn sos-loop-ctrl" data-sos-action="loopPrev"
-                data-sound-id="{{ id }}" {{#unless sos.canSkipPrev}}disabled{{else}}{{#unless sos.isGM}}disabled{{/unless}}{{/unless}}
-                data-tooltip="Previous Segment">
-            <i class="fa-solid fa-backward-step"></i>
-        </button>
-        <button type="button" class="sos-transport-btn sos-loop-ctrl" data-sos-action="loopNext"
-                data-sound-id="{{ id }}" {{#unless sos.canSkipNext}}disabled{{else}}{{#unless sos.isGM}}disabled{{/unless}}{{/unless}}
-                data-tooltip="Next Segment">
-            <i class="fa-solid fa-forward-step"></i>
-        </button>
-        <button type="button" class="sos-transport-btn sos-loop-ctrl" data-sos-action="loopBreak"
-                data-sound-id="{{ id }}" {{#unless sos.canBreakLoop}}disabled{{else}}{{#unless sos.isGM}}disabled{{/unless}}{{/unless}}
-                data-tooltip="Break Loop">
-            <i class="fa-solid fa-eject"></i>
-        </button>
-        <button type="button" class="sos-transport-btn sos-loop-ctrl" data-sos-action="loopDisable"
-                data-sound-id="{{ id }}" {{#unless sos.canDisableLoops}}disabled{{else}}{{#unless sos.isGM}}disabled{{/unless}}{{/unless}}
-                data-tooltip="Disable Loops">
-            <i class="fa-solid fa-ban"></i>
-        </button>
-    </div>
 </div>
 {{/if}}
 {{/if}}

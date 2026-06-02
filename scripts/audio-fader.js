@@ -237,7 +237,7 @@ export function cancelActiveFade(sound) {
  * Fades a sound using the globally configured curve type.
  * Executed on the audio thread for precise, glitch-free fading.
  *
- * @param {Sound} sound The V13 Sound object.
+ * @param {Sound} sound The Foundry Sound object.
  * @param {object} options
  * @param {number} options.targetVol The final volume (0 to 1).
  * @param {number} options.duration The duration of the fade in milliseconds.

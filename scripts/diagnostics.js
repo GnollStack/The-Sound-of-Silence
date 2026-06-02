@@ -5,8 +5,11 @@
 import { Flags } from "./flag-service.js";
 import { Integrations } from "./integrations.js";
 import {
+  FIXTURE_FLAG,
+  FIXTURE_PREFIX,
   createPlaybackAutomation,
   getClientSyncAutomationScenarios,
+  getPlaybackFixtureCounts,
   getPlaybackAutomationActionNames,
   getPlaybackAutomationControlOperations,
   getPlaybackAutomationScenarios,
@@ -18,49 +21,102 @@ import {
   toSec,
 } from "./utils.js";
 
-const ACTION_NAMES = [
+const READ_ONLY_ACTIONS = [
   "getStatus",
+  "validateSettings",
+  "validateAssets",
+  "collectClientDiagnostics",
+  "runSmokeTests",
+  "openWindow",
   "parseText",
   "validateText",
-  "openWindow",
-  "runSmokeTests",
-  "collectClientDiagnostics",
+  "refreshClient",
+];
+
+const MUTATING_ACTIONS = [
+  "runAutomation",
+  "cleanupFixtures",
   ...getPlaybackAutomationActionNames(),
 ];
 
+const ACTION_NAMES = [...READ_ONLY_ACTIONS, ...MUTATING_ACTIONS];
+
+const SETTINGS_SCHEMA = Object.freeze({
+  debug: { type: "boolean" },
+  debugCurrentlyPlayingTimestamps: { type: "boolean" },
+  enableMcpDiagnostics: { type: "boolean" },
+  personalPlaylistVolumeEnabled: { type: "boolean" },
+  personalPlaylistVolumes: { type: "object" },
+  personalTrackVolumes: { type: "object" },
+  soundscapeProceduralSyncEnabled: { type: "boolean" },
+  shufflePattern: {
+    type: "string",
+    choices: ["foundry-default", "exhaustive", "weighted-random", "round-robin"],
+  },
+  fadeInCurveType: { type: "string", choices: ["logarithmic", "linear", "s-curve", "steep"] },
+  fadeOutCurveType: { type: "string", choices: ["logarithmic", "linear", "s-curve", "steep"] },
+});
+
+const MODULE_ASSETS = Object.freeze([
+  "module.json",
+  "README.md",
+  "scripts/main.js",
+  "scripts/api.js",
+  "scripts/settings.js",
+  "scripts/diagnostics.js",
+  "scripts/diagnostics-playback-automation.js",
+  "scripts/flag-service.js",
+  "templates/diagnostics.hbs",
+  "templates/remote-diagnostics.hbs",
+  "styles/diagnostics.css",
+]);
+
 const VALIDATION_KINDS = ["playlistFlags", "soundFlags", "loopConfig"];
 const TIME_PATTERN = /^\d{1,3}:\d{2}(?:\.\d{1,3})?$/;
+const SOCKET_CHANNEL = `module.${MODULE_ID}`;
 
 export function createSoundOfSilenceDiagnostics(api) {
   const playbackAutomation = createPlaybackAutomation(api);
   const actions = {
     getStatus: (args = {}) => withGate("getStatus", (availability) => getStatus(api, args, availability)),
-    parseText: (args = {}) => withGate("parseText", () => parseText(args)),
-    validateText: (args = {}) => withGate("validateText", () => validateText(args)),
-    openWindow: (args = {}) => withGate("openWindow", () => openWindow(api, args)),
-    runSmokeTests: (args = {}) => withGate("runSmokeTests", () => runSmokeTests(api, args)),
+    validateSettings: (args = {}) => withGate("validateSettings", () => validateSettings(args)),
+    validateAssets: (args = {}) => withGate("validateAssets", () => validateAssets(args)),
     collectClientDiagnostics: (args = {}) => withGate("collectClientDiagnostics", () =>
       api.collectClientDiagnostics(args)
     ),
-    controlPlayback: (args = {}) => withPlaybackAutomationGate("controlPlayback", args, () =>
+    runSmokeTests: (args = {}) => withGate("runSmokeTests", () => runSmokeTests(api, args)),
+    openWindow: (args = {}) => withGate("openWindow", () => openWindow(api, args)),
+    parseText: (args = {}) => withGate("parseText", () => parseText(args)),
+    validateText: (args = {}) => withGate("validateText", () => validateText(args)),
+    refreshClient: (args = {}) => withRefreshGate("refreshClient", args, () => refreshClient(args)),
+    runAutomation: (args = {}) => withMutationGate("runAutomation", args, () =>
+      playbackAutomation.runAutomation(args)
+    ),
+    cleanupFixtures: (args = {}) => withMutationGate("cleanupFixtures", args, () =>
+      playbackAutomation.cleanupFixtures(args)
+    ),
+    controlPlayback: (args = {}) => withMutationGate("controlPlayback", args, () =>
       playbackAutomation.controlPlayback(args)
     ),
-    runPlaybackAutomation: (args = {}) => withPlaybackAutomationGate("runPlaybackAutomation", args, () =>
+    runPlaybackAutomation: (args = {}) => withMutationGate("runPlaybackAutomation", args, () =>
       playbackAutomation.runPlaybackAutomation(args)
     ),
-    runClientSyncAutomation: (args = {}) => withPlaybackAutomationGate("runClientSyncAutomation", args, () =>
+    runClientSyncAutomation: (args = {}) => withMutationGate("runClientSyncAutomation", args, () =>
       playbackAutomation.runClientSyncAutomation(args)
     ),
-    cleanupPlaybackFixtures: (args = {}) => withPlaybackAutomationGate("cleanupPlaybackFixtures", args, () =>
+    cleanupPlaybackFixtures: (args = {}) => withMutationGate("cleanupPlaybackFixtures", args, () =>
       playbackAutomation.cleanupPlaybackFixtures(args)
     ),
   };
 
   return {
-    version: 2,
+    version: 1,
+    socketChannel: SOCKET_CHANNEL,
     actions,
     getAvailability,
-    getPlaybackAutomationAvailability,
+    getMutationAvailability,
+    getPlaybackAutomationAvailability: getMutationAvailability,
+    getRefreshAvailability,
   };
 }
 
@@ -74,48 +130,60 @@ function withGate(action, fn) {
   return fn(availability);
 }
 
-function withPlaybackAutomationGate(action, args, fn) {
-  const availability = getPlaybackAutomationAvailability(args);
+function withMutationGate(action, args, fn) {
+  const availability = getMutationAvailability(args);
   if (!availability.available) {
     throw new Error(
-      `${MODULE_ID} playback automation is unavailable for "${action}": ${availability.reason}`
+      `${MODULE_ID} mutating diagnostics are unavailable for "${action}": ${availability.reason}`
+    );
+  }
+  return fn(availability);
+}
+
+function withRefreshGate(action, args, fn) {
+  const availability = getRefreshAvailability(args);
+  if (!availability.available) {
+    throw new Error(
+      `${MODULE_ID} client refresh diagnostics are unavailable for "${action}": ${availability.reason}`
     );
   }
   return fn(availability);
 }
 
 function getAvailability() {
-  const isGM = Boolean(game.user?.isGM);
-  const activeUser = game.user?.active !== false;
-  const debugEnabled = getSetting("debug", false);
-  const mcpEnabled = getSetting("enableMcpDiagnostics", false);
+  const activeGMUser = Boolean(game.user?.isGM && game.user?.active !== false);
+  const debugLogging = getSetting("debug", false) === true;
+  const enableMcpDiagnostics = getSetting("enableMcpDiagnostics", false) === true;
+  const mutationEnabled = enableMcpDiagnostics;
+  const refreshEnabled = activeGMUser && debugLogging && enableMcpDiagnostics;
   const missing = [];
 
-  if (!isGM || !activeUser) missing.push("active GM user");
-  if (!debugEnabled) missing.push("Enable Debug Logging setting");
-  if (!mcpEnabled) missing.push("Enable MCP Diagnostics setting");
+  if (!activeGMUser) missing.push("active GM user");
+  if (!debugLogging) missing.push("Enable Debug Logging setting");
+  if (!enableMcpDiagnostics) missing.push("Enable MCP Diagnostics setting");
 
   return {
     available: missing.length === 0,
     reason: missing.length ? `Missing ${missing.join(", ")}` : "Available",
     gates: {
-      activeGMUser: isGM && activeUser,
-      debugEnabled,
-      enableMcpDiagnostics: mcpEnabled,
+      activeGMUser,
+      debugLogging,
+      enableMcpDiagnostics,
+      mutationEnabled,
+      refreshEnabled,
     },
   };
 }
 
-function getPlaybackAutomationAvailability(args = {}) {
+function getMutationAvailability(args = {}) {
   const base = getAvailability();
-  const automationEnabled = getSetting("enableMcpPlaybackAutomation", false);
+  const mutationEnabled = base.gates.enableMcpDiagnostics === true;
   const mutationConfirmed = args.confirmMutation === true;
   const missing = [];
 
   if (!base.gates.activeGMUser) missing.push("active GM user");
-  if (!base.gates.debugEnabled) missing.push("Enable Debug Logging setting");
+  if (!base.gates.debugLogging) missing.push("Enable Debug Logging setting");
   if (!base.gates.enableMcpDiagnostics) missing.push("Enable MCP Diagnostics setting");
-  if (!automationEnabled) missing.push("Enable MCP Playback Automation setting");
   if (!mutationConfirmed) missing.push("confirmMutation: true");
 
   return {
@@ -123,23 +191,43 @@ function getPlaybackAutomationAvailability(args = {}) {
     reason: missing.length ? `Missing ${missing.join(", ")}` : "Available",
     gates: {
       ...base.gates,
-      enableMcpPlaybackAutomation: automationEnabled,
+      mutationEnabled,
       mutationConfirmed,
+    },
+  };
+}
+
+function getRefreshAvailability(args = {}) {
+  const base = getAvailability();
+  const refreshConfirmed = args.confirmRefresh === true;
+  const missing = [];
+
+  if (!base.gates.activeGMUser) missing.push("active GM user");
+  if (!base.gates.debugLogging) missing.push("Enable Debug Logging setting");
+  if (!base.gates.enableMcpDiagnostics) missing.push("Enable MCP Diagnostics setting");
+  if (!refreshConfirmed) missing.push("confirmRefresh: true");
+
+  return {
+    available: missing.length === 0,
+    reason: missing.length ? `Missing ${missing.join(", ")}` : "Available",
+    gates: {
+      ...base.gates,
+      refreshConfirmed,
     },
   };
 }
 
 function getPlaybackAutomationStatus() {
   const base = getAvailability();
-  const automationEnabled = getSetting("enableMcpPlaybackAutomation", false);
+  const automationEnabled = base.gates.enableMcpDiagnostics === true;
   return {
     configured: base.available && automationEnabled,
     confirmMutationRequired: true,
     gates: {
       ...base.gates,
-      enableMcpPlaybackAutomation: automationEnabled,
+      mutationEnabled: automationEnabled,
     },
-    actions: getPlaybackAutomationActionNames(),
+    actions: [...MUTATING_ACTIONS],
     controlOperations: getPlaybackAutomationControlOperations(),
     scenarios: getPlaybackAutomationScenarios(),
     clientSyncScenarios: getClientSyncAutomationScenarios(),
@@ -152,6 +240,55 @@ function getSetting(key, fallback = null) {
   } catch (_) {
     return fallback;
   }
+}
+
+function readSetting(key) {
+  try {
+    return game.settings?.get(MODULE_ID, key);
+  } catch (err) {
+    return {
+      error: err instanceof Error ? err.message : String(err),
+    };
+  }
+}
+
+function getSettingsSnapshot() {
+  return Object.fromEntries(
+    Object.keys(SETTINGS_SCHEMA).map((key) => [key, readSetting(key)])
+  );
+}
+
+function summarizeRuntime() {
+  return {
+    foundry: {
+      version: game.version ?? null,
+      release: game.release?.display ?? game.release?.version ?? null,
+    },
+    system: {
+      id: game.system?.id ?? null,
+      title: game.system?.title ?? null,
+      version: game.system?.version ?? null,
+    },
+    world: {
+      id: game.world?.id ?? null,
+      title: game.world?.title ?? null,
+    },
+    user: {
+      id: game.user?.id ?? null,
+      name: game.user?.name ?? null,
+      isGM: Boolean(game.user?.isGM),
+      active: game.user?.active !== false,
+    },
+    scene: {
+      id: canvas?.scene?.id ?? null,
+      name: canvas?.scene?.name ?? null,
+      ready: Boolean(canvas?.ready),
+    },
+  };
+}
+
+function issue(code, message, data = {}) {
+  return { code, message, ...data };
 }
 
 function getStatus(api, _args, availability) {
@@ -171,16 +308,29 @@ function getStatus(api, _args, availability) {
       version: modulePackage?.version ?? modulePackage?.manifest?.version ?? null,
     },
     diagnostics: {
+      version: 1,
       available: availability.available,
       gates: availability.gates,
       availableActions: [...ACTION_NAMES],
+      readOnlyActions: [...READ_ONLY_ACTIONS],
+      mutatingActions: [...MUTATING_ACTIONS],
       bridge: "call-module-debug-action",
+      fixturePrefix: FIXTURE_PREFIX,
+      fixtureFlag: FIXTURE_FLAG,
+      mutation: {
+        confirmMutationRequired: true,
+        gates: getMutationAvailability({ confirmMutation: false }).gates,
+      },
+      refresh: {
+        confirmRefreshRequired: true,
+        gates: getRefreshAvailability({ confirmRefresh: false }).gates,
+      },
       playbackAutomation: getPlaybackAutomationStatus(),
     },
+    runtime: summarizeRuntime(),
     settings: {
       debug: getSetting("debug", false),
       enableMcpDiagnostics: getSetting("enableMcpDiagnostics", false),
-      enableMcpPlaybackAutomation: getSetting("enableMcpPlaybackAutomation", false),
       debugCurrentlyPlayingTimestamps: getSetting("debugCurrentlyPlayingTimestamps", false),
       personalPlaylistVolumeEnabled: getSetting("personalPlaylistVolumeEnabled", false),
       soundscapeProceduralSyncEnabled: getSetting("soundscapeProceduralSyncEnabled", true),
@@ -215,9 +365,11 @@ function getStatus(api, _args, availability) {
       journals: Number(game.journal?.size ?? game.journal?.length ?? 0),
       compendiumPacks: Number(game.packs?.size ?? game.packs?.length ?? 0),
     },
+    fixtures: getPlaybackFixtureCounts(),
     integrations: Integrations.diagnostics(),
     audio: getAudioSnapshot(playlists),
     playback: api.inspectAll(),
+    publicApiKeys: Object.keys(modulePackage?.api ?? {}).sort(),
   };
 }
 
@@ -381,6 +533,96 @@ async function openWindow(api, args) {
   return {
     success: false,
     error: `Unsupported window mode "${mode}". Supported modes: local, remote.`,
+  };
+}
+
+async function validateSettings(_args = {}) {
+  const settings = getSettingsSnapshot();
+  const errors = [];
+  const warnings = [];
+
+  for (const [key, schema] of Object.entries(SETTINGS_SCHEMA)) {
+    const value = settings[key];
+    if (value && typeof value === "object" && "error" in value) {
+      errors.push(issue("setting-read-error", `Could not read setting "${key}".`, { key, value }));
+      continue;
+    }
+
+    if (schema.type === "boolean" && typeof value !== "boolean") {
+      errors.push(issue("invalid-boolean-setting", `Setting "${key}" must be a boolean.`, { key, value }));
+    } else if (schema.type === "string" && typeof value !== "string") {
+      errors.push(issue("invalid-string-setting", `Setting "${key}" must be a string.`, { key, value }));
+    } else if (schema.type === "object" && !isPlainObject(value)) {
+      errors.push(issue("invalid-object-setting", `Setting "${key}" must be an object.`, { key, value }));
+    }
+
+    if (schema.choices && !schema.choices.includes(value)) {
+      errors.push(issue(
+        "invalid-choice-setting",
+        `Setting "${key}" must be one of: ${schema.choices.join(", ")}.`,
+        { key, value }
+      ));
+    }
+  }
+
+  if (settings.enableMcpDiagnostics === true) {
+    warnings.push(issue(
+      "mutating-diagnostics-enabled",
+      "Enable MCP Diagnostics is on; it also unlocks confirmed MCP automation. Disable it during normal play.",
+      { key: "enableMcpDiagnostics" }
+    ));
+  }
+
+  return {
+    success: errors.length === 0,
+    checked: Object.keys(SETTINGS_SCHEMA).length,
+    errors,
+    warnings,
+    settings,
+  };
+}
+
+async function validateAssets(args = {}) {
+  const maxChecks = Math.max(1, Math.min(Number(args.maxChecks) || MODULE_ASSETS.length, MODULE_ASSETS.length));
+  const checkedAssets = [];
+  const errors = [];
+
+  for (const path of MODULE_ASSETS.slice(0, maxChecks)) {
+    const url = `modules/${MODULE_ID}/${path}`;
+    let ok = false;
+    let status = null;
+    try {
+      const response = await fetch(url, { method: "GET", cache: "no-store" });
+      ok = response.ok;
+      status = response.status;
+    } catch (err) {
+      errors.push(issue("asset-fetch-error", `Could not fetch ${path}.`, {
+        path,
+        error: err instanceof Error ? err.message : String(err),
+      }));
+    }
+
+    checkedAssets.push({ path, ok, status });
+    if (!ok && status !== null) {
+      errors.push(issue("asset-missing", `Asset ${path} returned HTTP ${status}.`, { path, status }));
+    }
+  }
+
+  return {
+    success: errors.length === 0,
+    checked: checkedAssets.length,
+    assets: checkedAssets,
+    errors,
+  };
+}
+
+async function refreshClient(args = {}) {
+  const delayMs = Math.max(0, Math.min(Number(args.delayMs) || 250, 5000));
+  window.setTimeout(() => window.location.reload(), delayMs);
+  return {
+    success: true,
+    initiated: true,
+    delayMs,
   };
 }
 

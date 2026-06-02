@@ -5,7 +5,7 @@
  * enriches the render context with module state (loops, normalization, crossfade),
  * and handles module-specific event delegation.
  */
-import { MODULE_ID, debug, toSec } from "./utils.js";
+import { MODULE_ID, SEGMENT_COLORS, debug, toSec } from "./utils.js";
 import { Flags } from "./flag-service.js";
 import { PlaybackClock } from "./playback-clock.js";
 import { State } from "./state-manager.js";
@@ -323,6 +323,131 @@ function _getSoundPlaybackPosition(ps) {
 
 function _getSoundProgressPct(ps) {
     return _getSoundPlaybackPosition(ps).progressPct;
+}
+
+function _getLoopSegmentBoundarySeconds(segment, numericKey, textKey) {
+    const direct = Number(segment?.[numericKey]);
+    if (Number.isFinite(direct) && direct >= 0) return direct;
+
+    const parsed = toSec(segment?.[textKey]);
+    return Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
+}
+
+function _isSameLoopSegment(a, b) {
+    if (!a || !b) return false;
+    if (a === b) return true;
+    if (a.start != null && b.start != null && a.start === b.start) return true;
+
+    const aStart = _getLoopSegmentBoundarySeconds(a, "startSec", "start");
+    const bStart = _getLoopSegmentBoundarySeconds(b, "startSec", "start");
+    const aEnd = _getLoopSegmentBoundarySeconds(a, "endSec", "end");
+    const bEnd = _getLoopSegmentBoundarySeconds(b, "endSec", "end");
+    return aStart != null && bStart != null && aStart === bStart && aEnd === bEnd;
+}
+
+function _getCurrentLoopSegmentIndex(segments, looper, currentTime) {
+    if (!Array.isArray(segments) || !segments.length) return null;
+
+    const activeSegment = looper?.activeLoopSegment;
+    if (activeSegment) {
+        const activeIndex = segments.findIndex((segment) => _isSameLoopSegment(segment, activeSegment));
+        if (activeIndex >= 0) return activeIndex;
+    }
+
+    const time = Number(currentTime);
+    if (!Number.isFinite(time)) return 0;
+
+    const containingIndex = segments.findIndex((segment) => {
+        const start = _getLoopSegmentBoundarySeconds(segment, "startSec", "start");
+        const end = _getLoopSegmentBoundarySeconds(segment, "endSec", "end");
+        if (start == null || end == null || end <= start) return false;
+        return time >= start && time <= end;
+    });
+    if (containingIndex >= 0) return containingIndex;
+
+    const nextIndex = segments.findIndex((segment) => {
+        const start = _getLoopSegmentBoundarySeconds(segment, "startSec", "start");
+        return start != null && start > time;
+    });
+    if (nextIndex >= 0) return nextIndex;
+
+    return segments.length - 1;
+}
+
+function _getLoopTimelineDuration(segments, playbackPosition) {
+    const playbackDuration = Number(playbackPosition?.duration);
+    if (Number.isFinite(playbackDuration) && playbackDuration > 0) return playbackDuration;
+
+    let maxEnd = 0;
+    for (const segment of segments ?? []) {
+        const end = _getLoopSegmentBoundarySeconds(segment, "endSec", "end");
+        if (end != null && end > maxEnd) maxEnd = end;
+    }
+    return maxEnd > 0 ? maxEnd : null;
+}
+
+function _buildCurrentlyPlayingLoopUi(loopConfig, looper, playbackPosition) {
+    const segments = Array.isArray(loopConfig?.segments) ? loopConfig.segments : [];
+    const hasLiveLooper = !!looper && !looper.isDestroyed;
+    const loopControlsVisible = !!(
+        loopConfig?.enabled &&
+        loopConfig?.active &&
+        segments.length &&
+        hasLiveLooper &&
+        !looper.loopingDisabled
+    );
+    const timelineDuration = _getLoopTimelineDuration(segments, playbackPosition);
+    const showSegmentedProgress = !!(loopControlsVisible && timelineDuration);
+
+    const canUseLoopMenu = hasLiveLooper && !looper.isCrossfading && !looper.loopingDisabled;
+    const hasActiveSegment = looper?.activeLoopSegment?.start != null;
+    const currentIndex = loopControlsVisible
+        ? _getCurrentLoopSegmentIndex(segments, looper, playbackPosition?.currentTime)
+        : null;
+    const currentTime = Number(playbackPosition?.currentTime);
+    const trackProgressPct = _clampPercent(Number(playbackPosition?.progressPct)).toFixed(2);
+
+    return {
+        showLoopControls: loopControlsVisible,
+        showSegmentedProgress,
+        showSegBand: loopControlsVisible,
+        loopCurrentSegIdx1: currentIndex == null ? 0 : currentIndex + 1,
+        loopTotalSegments: segments.length,
+        loopTrackProgressPct: trackProgressPct,
+        loopSegments: showSegmentedProgress
+            ? segments.map((segment, index) => {
+                const start = _getLoopSegmentBoundarySeconds(segment, "startSec", "start") ?? 0;
+                const end = _getLoopSegmentBoundarySeconds(segment, "endSec", "end");
+                const duration = end != null && end > start ? end - start : null;
+                const isCurrent = index === currentIndex;
+                const isPast = currentIndex != null && index < currentIndex;
+                const startPct = _clampPercent((start / timelineDuration) * 100);
+                const endPct = duration
+                    ? _clampPercent((end / timelineDuration) * 100)
+                    : startPct;
+                const color = SEGMENT_COLORS[index % SEGMENT_COLORS.length] ?? "#ee9b3a";
+                const fillPct = isPast
+                    ? 100
+                    : (isCurrent && duration && Number.isFinite(currentTime)
+                        ? _clampPercent(((currentTime - start) / duration) * 100)
+                        : 0);
+                return {
+                    isCurrent,
+                    isPast,
+                    color,
+                    softColor: `${color}55`,
+                    fillColor: `${color}cc`,
+                    startPct: startPct.toFixed(2),
+                    widthPct: Math.max(0, endPct - startPct).toFixed(2),
+                    fillPct: fillPct.toFixed(2),
+                };
+            })
+            : [],
+        canSkipPrev: canUseLoopMenu && looper?.getSkippableSegmentIndex?.(-1) != null,
+        canSkipNext: canUseLoopMenu && looper?.getSkippableSegmentIndex?.(1) != null,
+        canBreakLoop: canUseLoopMenu && hasActiveSegment,
+        canDisableLoops: hasLiveLooper && !looper.loopingDisabled,
+    };
 }
 
 function _normalizeCurrentlyPlayingControls(soundCtx, ps) {
@@ -847,6 +972,8 @@ async function _wrapPreparePlayingContext(wrapped, context, options) {
             }
         }
 
+        const loopUi = _buildCurrentlyPlayingLoopUi(loopConfig, looper, playbackPosition);
+
         soundCtx.sos = {
             // Playlist identity
             playlistName: playlist.name,
@@ -860,29 +987,7 @@ async function _wrapPreparePlayingContext(wrapped, context, options) {
             // Loop state
             loopEnabled: loopConfig.enabled,
             loopActive: loopConfig.active,
-            showLoopControls: !!(
-                loopConfig.enabled &&
-                loopConfig.active &&
-                loopConfig.segments?.length &&
-                looper &&
-                !looper.isDestroyed &&
-                !looper.loopingDisabled
-            ),
-            ...(() => {
-                const activeStart = looper?.activeLoopSegment?.start;
-                const hasActiveSegment = activeStart != null;
-                const canUseLoopMenu = !!looper && !looper.isDestroyed && !looper.isCrossfading && !looper.loopingDisabled;
-                const canUseActiveSegment =
-                    canUseLoopMenu &&
-                    hasActiveSegment &&
-                    !looper.isDestroyed;
-                return {
-                    canSkipPrev: canUseLoopMenu && looper?.getSkippableSegmentIndex?.(-1) != null,
-                    canSkipNext: canUseLoopMenu && looper?.getSkippableSegmentIndex?.(1) != null,
-                    canBreakLoop: canUseActiveSegment,
-                    canDisableLoops: !!looper && !looper.isDestroyed && !looper.loopingDisabled,
-                };
-            })(),
+            ...loopUi,
 
             // Procedural one-shot state
             isProcedural,
@@ -987,7 +1092,7 @@ function _sortCurrentlyPlayingContexts(soundContexts, playlistOrder) {
 
 function _hasCurrentlyPlayingReadouts(app = ui.playlists) {
     return _getCurrentlyPlayingSections(app).some((section) =>
-        !!section.querySelector(".sos-progress-fill, .sos-procedural-eta, .sos-soundscape-strip")
+        !!section.querySelector(".sos-progress-fill, .sos-progress-bar--segmented, .sos-procedural-eta, .sos-soundscape-strip")
     );
 }
 
@@ -1136,7 +1241,8 @@ function _updateProgressBars(app) {
         const rows = section.querySelectorAll(".sound[data-playlist-id][data-sound-id]");
         for (const row of rows) {
             const fill = row.querySelector(".sos-progress-fill");
-            if (!fill) continue;
+            const segmentedBar = row.querySelector(".sos-progress-bar--segmented");
+            if (!fill && !segmentedBar) continue;
 
             const playlist = game.playlists.get(row.dataset.playlistId);
             const sound = playlist?.sounds.get(row.dataset.soundId);
@@ -1146,20 +1252,32 @@ function _updateProgressBars(app) {
             const beforeRow = _getRowTimestampDebug(row);
             const position = _getSoundPlaybackPosition(sound);
             _debugTimestamp("tick-before", sound, position, row, { beforeRow });
-            fill.style.width = `${position.progressPct.toFixed(2)}%`;
+            if (fill) {
+                fill.style.width = `${position.progressPct.toFixed(2)}%`;
 
-            const fadeZones = _getSoundFadeZones(playlist, sound, position.duration);
-            _updateProgressFadeZone(row.querySelector(".sos-progress-fade-in"), {
-                show: fadeZones.showFadeInZone,
-                widthPct: fadeZones.fadeInPct,
-                label: fadeZones.fadeInLabel,
-            });
-            _updateProgressFadeZone(row.querySelector(".sos-progress-fade-out"), {
-                show: fadeZones.showFadeOutZone,
-                leftPct: fadeZones.fadeOutStartPct,
-                widthPct: fadeZones.fadeOutPct,
-                label: fadeZones.fadeOutLabel,
-            });
+                const fadeZones = _getSoundFadeZones(playlist, sound, position.duration);
+                _updateProgressFadeZone(row.querySelector(".sos-progress-fade-in"), {
+                    show: fadeZones.showFadeInZone,
+                    widthPct: fadeZones.fadeInPct,
+                    label: fadeZones.fadeInLabel,
+                });
+                _updateProgressFadeZone(row.querySelector(".sos-progress-fade-out"), {
+                    show: fadeZones.showFadeOutZone,
+                    leftPct: fadeZones.fadeOutStartPct,
+                    widthPct: fadeZones.fadeOutPct,
+                    label: fadeZones.fadeOutLabel,
+                });
+            }
+
+            if (segmentedBar) {
+                const loopUi = _buildCurrentlyPlayingLoopUi(
+                    Flags.getLoopConfig(sound),
+                    State.getActiveLooper(sound),
+                    position
+                );
+                _updateSegmentedProgressBar(segmentedBar, loopUi);
+                _updateSegBand(row.querySelector(".sos-seg-band"), loopUi);
+            }
 
             const currentEl = row.querySelector(".sound-timer .sos-current");
             if (currentEl) currentEl.textContent = _formatCurrentlyPlayingTime(position.currentTime);
@@ -1173,6 +1291,67 @@ function _updateProgressBars(app) {
     }
 
     return foundProgressRow;
+}
+
+function _updateSegmentedProgressBar(bar, loopUi) {
+    if (!bar || !loopUi?.showSegmentedProgress) return;
+
+    const trackFill = bar.querySelector(".sos-progress-track-fill");
+    if (trackFill) trackFill.style.width = `${loopUi.loopTrackProgressPct ?? "0.00"}%`;
+
+    const playhead = bar.querySelector(".sos-progress-playhead");
+    if (playhead) playhead.style.left = `${loopUi.loopTrackProgressPct ?? "0.00"}%`;
+
+    const segmentEls = Array.from(bar.querySelectorAll(".sos-progress-segment"));
+    if (segmentEls.length !== loopUi.loopSegments.length) return;
+
+    for (const [index, segmentEl] of segmentEls.entries()) {
+        const segment = loopUi.loopSegments[index];
+        segmentEl.classList.toggle("is-current", !!segment?.isCurrent);
+        segmentEl.classList.toggle("is-past", !!segment?.isPast);
+        segmentEl.style.left = `${segment?.startPct ?? "0.00"}%`;
+        segmentEl.style.width = `${segment?.widthPct ?? "0.00"}%`;
+        segmentEl.style.setProperty("--sos-loop-segment-color", segment?.color ?? "#ee9b3a");
+        segmentEl.style.setProperty("--sos-loop-segment-soft-color", segment?.softColor ?? "rgba(238, 155, 58, 0.33)");
+        segmentEl.style.setProperty("--sos-loop-segment-fill-color", segment?.fillColor ?? "rgba(238, 155, 58, 0.8)");
+
+        const fill = segmentEl.querySelector(".sos-progress-segment-fill");
+        if (fill) fill.style.width = `${segment?.fillPct ?? "0.00"}%`;
+    }
+}
+
+function _setButtonDisabled(button, disabled) {
+    if (!button) return;
+    button.disabled = !!disabled;
+    button.classList.toggle("disabled", !!disabled);
+}
+
+function _updateSegBand(band, loopUi) {
+    if (!band || !loopUi?.showSegBand) return;
+
+    const currentEl = band.querySelector(".sos-seg-band-count .current");
+    if (currentEl) currentEl.textContent = String(loopUi.loopCurrentSegIdx1 || 0);
+
+    const totalEl = band.querySelector(".sos-seg-band-count .total");
+    if (totalEl) totalEl.textContent = String(loopUi.loopTotalSegments || 0);
+
+    const disabledForUser = !game.user?.isGM;
+    _setButtonDisabled(
+        band.querySelector('[data-sos-action="loopPrev"]'),
+        disabledForUser || !loopUi.canSkipPrev
+    );
+    _setButtonDisabled(
+        band.querySelector('[data-sos-action="loopNext"]'),
+        disabledForUser || !loopUi.canSkipNext
+    );
+    _setButtonDisabled(
+        band.querySelector('[data-sos-action="loopBreak"]'),
+        disabledForUser || !loopUi.canBreakLoop
+    );
+    _setButtonDisabled(
+        band.querySelector('[data-sos-action="loopDisable"]'),
+        disabledForUser || !loopUi.canDisableLoops
+    );
 }
 
 function _updateProgressFadeZone(element, { show, leftPct = "0.00", widthPct = "0.00", label = "" } = {}) {

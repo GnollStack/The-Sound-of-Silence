@@ -14,7 +14,7 @@ export function registerSettings({
 
   game.settings.register(MODULE_ID, "debug", {
     name: "Enable Debug Logging",
-    hint: "Log silence timing and playlist actions to the console.",
+    hint: "Advanced troubleshooting logs for Sound of Silence. Leave this disabled unless you are intentionally debugging or testing this module.",
     scope: "client",
     config: true,
     type: Boolean,
@@ -32,16 +32,7 @@ export function registerSettings({
 
   game.settings.register(MODULE_ID, "enableMcpDiagnostics", {
     name: "Enable MCP Diagnostics",
-    hint: "Allow GM-only, allowlisted diagnostics through the Foundry MCP Bridge. Requires Enable Debug Logging on this client.",
-    scope: "world",
-    config: true,
-    type: Boolean,
-    default: false,
-  });
-
-  game.settings.register(MODULE_ID, "enableMcpPlaybackAutomation", {
-    name: "Enable MCP Playback Automation",
-    hint: "Allow GM-only MCP diagnostics to create temporary SoS playback fixtures and run mutating playlist automation. Requires MCP Diagnostics and per-call confirmation.",
+    hint: "Advanced GM-only diagnostics for Foundry MCP Bridge workflows, including confirmed test automation. Leave this disabled during normal play unless you are intentionally debugging or testing this module.",
     scope: "world",
     config: true,
     type: Boolean,

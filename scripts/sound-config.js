@@ -67,6 +67,47 @@ function formatProceduralNumber(value, digits = 1) {
   return Number.isInteger(value) ? `${value}` : value.toFixed(digits);
 }
 
+function isPlainObject(value) {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function setModuleFlagsOnFormData(formDataObject, moduleFlags) {
+  formDataObject.flags = {
+    ...(isPlainObject(formDataObject.flags) ? formDataObject.flags : {}),
+    [MODULE_ID]: moduleFlags,
+  };
+}
+
+function assignKnownSoundFlag(target, fieldName, value) {
+  const loopFlags = target[LOOP_KEY] ?? {};
+  switch (fieldName) {
+    case "allowVolumeOverride":
+    case "isProcedural":
+    case "minDelay":
+    case "maxDelay":
+    case "timingMode":
+    case "initialFireMode":
+    case "volumeVariance":
+    case "randomPan":
+    case "playChance":
+      target[fieldName] = value;
+      break;
+    case `${LOOP_KEY}.enabled`:
+      loopFlags.enabled = value;
+      target[LOOP_KEY] = loopFlags;
+      break;
+    case `${LOOP_KEY}.active`:
+      loopFlags.active = value;
+      target[LOOP_KEY] = loopFlags;
+      break;
+    case `${LOOP_KEY}.startFromBeginning`:
+      loopFlags.startFromBeginning = value;
+      target[LOOP_KEY] = loopFlags;
+      break;
+    default:
+      break;
+  }
+}
 
 
 // =========================================================================
@@ -136,7 +177,7 @@ export function registerSoundConfigWrappers() {
           } else {
             // Catches ...loopWithin.enabled, ...allowVolumeOverride, etc.
             const fieldName = key.substring(modulePath.length + 1);
-            foundry.utils.setProperty(otherFlags, fieldName, value);
+            assignKnownSoundFlag(otherFlags, fieldName, value);
           }
         }
 
@@ -261,7 +302,7 @@ export function registerSoundConfigWrappers() {
         }
 
         // 4. Set the single, clean, nested structure back
-        foundry.utils.setProperty(formData.object, modulePath, finalFlags);
+        setModuleFlagsOnFormData(formData.object, finalFlags);
         debug(`%c[SoS Debug] 5. FINAL formData.object:`, 'background-color: #00dd00; color: black; font-weight: bold;', foundry.utils.deepClone(formData.object));
 
       } catch (err) {
@@ -273,7 +314,7 @@ export function registerSoundConfigWrappers() {
             for (const key of Object.keys(formData.object)) {
               if (key.startsWith(modulePath)) delete formData.object[key];
             }
-            foundry.utils.setProperty(formData.object, modulePath, existingFlags);
+            setModuleFlagsOnFormData(formData.object, existingFlags);
           } else { throw new Error("No previous flags available"); }
         } catch (recoveryErr) {
           error("[SoundConfig] Recovery Level 1 failed:", recoveryErr);
@@ -282,7 +323,7 @@ export function registerSoundConfigWrappers() {
             for (const key of Object.keys(formData.object)) {
               if (key.startsWith(modulePath)) delete formData.object[key];
             }
-            foundry.utils.setProperty(formData.object, modulePath, {
+            setModuleFlagsOnFormData(formData.object, {
               allowVolumeOverride: false,
               [LOOP_KEY]: foundry.utils.duplicate(DEFAULTS)
             });

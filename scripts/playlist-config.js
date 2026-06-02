@@ -79,6 +79,17 @@ const PROCEDURAL_INITIAL_FIRE_OPTIONS = {
   immediate: "Immediate First Fire",
 };
 
+function isPlainObject(value) {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function setModuleFlagsOnFormData(formDataObject, moduleFlags) {
+  formDataObject.flags = {
+    ...(isPlainObject(formDataObject.flags) ? formDataObject.flags : {}),
+    [MODULE_ID]: moduleFlags,
+  };
+}
+
 const PLAY_CHANCE_SCALING_OPTIONS = {
   independent: "Independent",
   scaled: "Linear by Polyphony",
@@ -109,16 +120,16 @@ function formatProceduralCadenceSummary(min, max, timingMode) {
 export function registerPlaylistSheetWrappers() {
   if (!wrappersRegistered) {
     wrappersRegistered = true;
-    _registerV13Wrappers();
+    _registerDocumentSheetV2Wrappers();
   }
   _registerPlaylistConfigHooks();
 }
 
 /**
- * Registers wrappers for Foundry v13+ (DocumentSheetV2).
+ * Registers wrappers for Foundry v14+ DocumentSheetV2.
  */
-function _registerV13Wrappers() {
-  debug("Registering V13 PlaylistConfig wrappers");
+function _registerDocumentSheetV2Wrappers() {
+  debug("Registering V14+ PlaylistConfig wrappers");
 
   // Supply module data to the template context. Also inject a synthetic
   // "soundscape" entry into the mode <select> so Soundscape appears as a 5th
@@ -243,7 +254,7 @@ function _registerV13Wrappers() {
       }
 
       // 5. Inject our perfectly structured, clean object back into the formData.
-      foundry.utils.setProperty(formData.object, basePath, cleanFlags);
+      setModuleFlagsOnFormData(formData.object, cleanFlags);
 
       // Finally, call the original wrapped function with the now-sanitized data.
       return wrapped.call(this, event, form, formData);

@@ -20,7 +20,7 @@ let hooksRegistered = false;
 
 function _getOverrideFlag(configOverrides, key) {
     if (!configOverrides?.flags) return undefined;
-    return foundry.utils.getProperty(configOverrides.flags, key);
+    return configOverrides.flags?.[MODULE_ID]?.[key];
 }
 
 function _resolveFadeOutMs(playlist, configOverrides = null) {

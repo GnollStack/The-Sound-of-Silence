@@ -194,11 +194,12 @@ export function registerSoundPlaybackWrappers() {
       );
       const hasAllowOverrideChange =
         hasFlatAllowOverrideChange || hasNestedAllowOverrideChange;
+      const nestedModuleFlags = data?.flags?.[MODULE_ID];
       const nextAllowOverride = hasAllowOverrideChange
         ? Boolean(
             hasFlatAllowOverrideChange
               ? data[allowOverridePath]
-              : foundry.utils.getProperty(data, allowOverridePath)
+              : nestedModuleFlags?.allowVolumeOverride
           )
         : null;
 

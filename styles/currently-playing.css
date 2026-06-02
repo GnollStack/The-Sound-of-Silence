@@ -477,80 +477,6 @@ body.theme-light .sos-proc-hover:hover .proc-name {
   pointer-events: none;
 }
 
-/* Row 5: Loop controls */
-.sos-loop-controls-row {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  padding: var(--sos-space-sm) 6px;
-  background: linear-gradient(
-    to bottom,
-    rgba(0, 0, 0, 0.08),
-    rgba(0, 0, 0, 0.12)
-  );
-  border-top: 1px solid var(--sos-border-light);
-}
-
-.sos-controls-label {
-  font-size: var(--sos-text-xs);
-  font-weight: 600;
-  color: var(--sos-text-label);
-  text-transform: uppercase;
-  letter-spacing: 0.4px;
-  white-space: nowrap;
-  margin-right: var(--sos-space-sm);
-}
-
-.sos-loop-controls-row.sos-disabled .sos-controls-label {
-  opacity: 0.3;
-  filter: grayscale(100%);
-}
-
-.sos-button-group {
-  display: flex;
-  gap: var(--sos-space-xs);
-  flex: 1;
-  justify-content: flex-end;
-}
-
-.sos-loop-ctrl {
-  padding: var(--sos-space-xs) var(--sos-space-md);
-  background: var(--sos-btn-bg);
-  border: 1px solid var(--sos-border-medium);
-  border-radius: var(--sos-radius-sm);
-  color: var(--sos-text-primary);
-  cursor: pointer;
-  transition: all 0.15s ease;
-  min-width: 24px;
-  height: var(--sos-button-height-sm);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  box-shadow: var(--sos-btn-inset-shadow), var(--sos-shadow-sm);
-  text-shadow: var(--sos-btn-text-shadow);
-}
-
-.sos-loop-ctrl i {
-  font-size: 10px;
-  pointer-events: none;
-}
-
-.sos-loop-ctrl:hover:not(.disabled):not([disabled]) {
-  background: var(--sos-btn-hover-bg);
-  border-color: var(--sos-hover-glow);
-  box-shadow: var(--sos-shadow-glow), var(--sos-btn-inset-shadow);
-}
-
-.sos-loop-ctrl.disabled,
-.sos-loop-ctrl[disabled] {
-  opacity: 0.3;
-  cursor: not-allowed;
-  background: var(--sos-disabled-bg);
-  border-color: var(--sos-border-light);
-  box-shadow: none;
-  filter: grayscale(100%);
-}
-
 /* Hide the old loop toggle in Currently Playing (now in transport row) */
 .currently-playing .sos-loop-toggle {
   display: none !important;
@@ -670,6 +596,13 @@ body.theme-light .currently-playing .sos-now-playing.sos-progress-card {
   border-radius: 2px;
 }
 
+.currently-playing .sos-progress-card .sos-progress-bar.sos-progress-bar--is-segmented {
+  height: 5px;
+  overflow: hidden;
+  background: rgba(0, 0, 0, 0.46);
+  border-radius: 1px;
+}
+
 .currently-playing .sos-progress-card .sos-progress-fill {
   position: absolute;
   inset: 0 auto 0 0;
@@ -678,6 +611,78 @@ body.theme-light .currently-playing .sos-now-playing.sos-progress-card {
   background: var(--sos-checkbox-accent);
   border-radius: 2px;
   transition: width 0.5s linear;
+}
+
+.currently-playing .sos-progress-card .sos-progress-bar--segmented {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  border-radius: 1px;
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.45);
+}
+
+.currently-playing .sos-progress-card .sos-progress-track-fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  z-index: 1;
+  width: 0;
+  height: 100%;
+  background: linear-gradient(
+    to right,
+    rgba(238, 155, 58, 0.12),
+    rgba(238, 155, 58, 0.26)
+  );
+  transition: width 0.5s linear;
+}
+
+.currently-playing .sos-progress-card .sos-progress-segment {
+  position: absolute;
+  top: 0;
+  z-index: 2;
+  height: 100%;
+  overflow: hidden;
+  background: var(--sos-loop-segment-soft-color, rgba(238, 155, 58, 0.33));
+  border: 0.5px solid rgba(0, 0, 0, 0.38);
+  border-radius: 1px;
+  box-sizing: border-box;
+}
+
+.currently-playing .sos-progress-card .sos-progress-segment.is-current {
+  z-index: 3;
+  border-color: var(--sos-loop-segment-color, rgba(238, 155, 58, 0.8));
+  box-shadow: 0 0 4px var(--sos-loop-segment-color, #ee9b3a);
+}
+
+.currently-playing .sos-progress-card .sos-progress-segment-fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 0;
+  height: 100%;
+  background: var(--sos-loop-segment-fill-color, rgba(238, 155, 58, 0.8));
+  transition: width 0.5s linear;
+}
+
+.currently-playing .sos-progress-card .sos-progress-segment.is-current .sos-progress-segment-fill {
+  background: linear-gradient(
+    to right,
+    var(--sos-loop-segment-fill-color, rgba(238, 155, 58, 0.8)),
+    var(--sos-loop-segment-color, #ee9b3a)
+  );
+  box-shadow: 0 0 5px var(--sos-loop-segment-color, #ee9b3a);
+}
+
+.currently-playing .sos-progress-card .sos-progress-playhead {
+  position: absolute;
+  top: -1px;
+  bottom: -1px;
+  z-index: 4;
+  width: 2px;
+  margin-left: -1px;
+  background: var(--sos-amber-bright, #f5b14a);
+  border-radius: 1px;
+  box-shadow: 0 0 4px rgba(238, 155, 58, 0.75);
+  transition: left 0.5s linear;
 }
 
 .currently-playing .sos-progress-card .sos-progress-fade {
@@ -719,8 +724,7 @@ body.theme-light .currently-playing .sos-now-playing.sos-progress-card {
 }
 
 .currently-playing .sos-progress-card .sos-transport-controls,
-.currently-playing .sos-progress-card .sos-playback-group,
-.currently-playing .sos-progress-card .sos-button-group {
+.currently-playing .sos-progress-card .sos-playback-group {
   display: flex;
   align-items: center;
   gap: 2px;
@@ -732,8 +736,7 @@ body.theme-light .currently-playing .sos-now-playing.sos-progress-card {
   justify-content: flex-start;
 }
 
-.currently-playing .sos-progress-card .sos-transport-spacer,
-.currently-playing .sos-progress-card .sos-loop-spacer {
+.currently-playing .sos-progress-card .sos-transport-spacer {
   flex: 1 1 auto;
   min-width: 0;
 }
@@ -745,8 +748,7 @@ body.theme-light .currently-playing .sos-now-playing.sos-progress-card {
   border-left: 1px solid var(--sos-border-light);
 }
 
-.currently-playing .sos-progress-card .sos-transport-btn,
-.currently-playing .sos-progress-card .sos-loop-ctrl {
+.currently-playing .sos-progress-card .sos-transport-btn {
   box-sizing: border-box;
   flex: 0 0 var(--sos-button-height-md);
   width: var(--sos-button-height-md);
@@ -768,14 +770,12 @@ body.theme-light .currently-playing .sos-now-playing.sos-progress-card {
   text-shadow: var(--sos-btn-text-shadow);
 }
 
-.currently-playing .sos-progress-card .sos-transport-btn i,
-.currently-playing .sos-progress-card .sos-loop-ctrl i {
+.currently-playing .sos-progress-card .sos-transport-btn i {
   font-size: var(--sos-text-sm);
   pointer-events: none;
 }
 
-.currently-playing .sos-progress-card .sos-transport-btn:hover:not(.disabled):not([disabled]),
-.currently-playing .sos-progress-card .sos-loop-ctrl:hover:not(.disabled):not([disabled]) {
+.currently-playing .sos-progress-card .sos-transport-btn:hover:not(.disabled):not([disabled]) {
   background: var(--sos-btn-hover-bg);
   border-color: var(--sos-active-border);
   box-shadow: var(--sos-btn-inset-shadow), var(--sos-shadow-glow);
@@ -784,9 +784,7 @@ body.theme-light .currently-playing .sos-now-playing.sos-progress-card {
 }
 
 .currently-playing .sos-progress-card .sos-transport-btn.disabled,
-.currently-playing .sos-progress-card .sos-transport-btn[disabled],
-.currently-playing .sos-progress-card .sos-loop-ctrl.disabled,
-.currently-playing .sos-progress-card .sos-loop-ctrl[disabled] {
+.currently-playing .sos-progress-card .sos-transport-btn[disabled] {
   opacity: 0.32;
   cursor: not-allowed;
   background: var(--sos-btn-bg);
@@ -996,40 +994,132 @@ body.theme-light .currently-playing .sos-now-playing.sos-progress-card {
   width: 100%;
 }
 
-.currently-playing .sos-progress-card .sos-loop-controls-row {
+.currently-playing .sos-progress-card .sos-seg-band {
   display: flex;
   align-items: center;
+  gap: 2px;
+  padding: 2px 8px 3px;
+  background: rgba(238, 155, 58, 0.06);
+  border-top: 1px solid rgba(238, 155, 58, 0.22);
+  border-bottom: 1px solid rgba(238, 155, 58, 0.1);
+}
+
+.currently-playing .sos-progress-card .sos-seg-band-label {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
   gap: 3px;
-  padding: 4px 7px;
-  border-top: 1px solid var(--sos-border-light);
-  background: var(--sos-bg-elevated);
+  margin-right: 2px;
+  color: var(--sos-amber-bright, #f5b14a);
+  font-size: 9.5px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
 }
 
-body.theme-light .currently-playing .sos-progress-card .sos-loop-controls-row {
-  background: var(--sos-bg-elevated);
-}
-
-.currently-playing .sos-progress-card .sos-loop-controls-row .sos-loop-icon {
-  flex: 0 0 auto;
-  font-size: var(--sos-text-xs);
+.currently-playing .sos-progress-card .sos-seg-band-label > i {
   color: var(--sos-checkbox-accent);
+  font-size: 9px;
 }
 
-.currently-playing .sos-progress-card .sos-loop-controls-row .sos-controls-label {
-  flex: 0 0 auto;
-  margin-right: 0;
-  font-size: var(--sos-text-xs);
-  font-weight: 600;
+.currently-playing .sos-progress-card .sos-seg-band-count .sep,
+.currently-playing .sos-progress-card .sos-seg-band-count .total {
+  opacity: 0.5;
+  font-weight: 400;
+}
+
+.currently-playing .sos-progress-card .sos-seg-band-spacer {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.currently-playing .sos-progress-card .sos-seg-band-btn {
+  display: flex;
+  flex: 0 0 15px;
+  align-items: center;
+  justify-content: center;
+  width: 15px;
+  min-width: 15px;
+  height: 15px;
+  padding: 0;
   color: var(--sos-checkbox-accent);
-  text-transform: uppercase;
-  letter-spacing: 0;
-  white-space: nowrap;
+  background: transparent;
+  border: none;
+  border-radius: 2px;
+  box-shadow: none;
+  cursor: pointer;
+  transition: all 0.1s ease;
 }
 
-.currently-playing .sos-progress-card .sos-loop-controls-row.sos-disabled .sos-loop-icon,
-.currently-playing .sos-progress-card .sos-loop-controls-row.sos-disabled .sos-controls-label {
-  opacity: 0.32;
+.currently-playing .sos-progress-card .sos-seg-band-btn > i {
+  font-size: 9px;
+  pointer-events: none;
+}
+
+.currently-playing .sos-progress-card .sos-seg-band-btn:hover:not(.disabled):not([disabled]) {
+  color: var(--sos-amber-bright, #f5b14a);
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.currently-playing .sos-progress-card .sos-seg-band-btn.disabled,
+.currently-playing .sos-progress-card .sos-seg-band-btn[disabled] {
+  color: #7a6a5a;
+  opacity: 0.4;
+  background: transparent;
+  cursor: not-allowed;
+}
+
+.currently-playing .sos-progress-card .sos-seg-band-btn.disabled:hover,
+.currently-playing .sos-progress-card .sos-seg-band-btn[disabled]:hover {
+  color: #7a6a5a;
+  background: transparent;
+}
+
+.currently-playing .sos-progress-card .sos-seg-band.sos-disabled .sos-seg-band-label {
+  opacity: 0.45;
   filter: grayscale(100%);
+}
+
+body.theme-light .currently-playing .sos-progress-card .sos-seg-band {
+  background: rgba(238, 155, 58, 0.08);
+  border-top-color: rgba(200, 140, 40, 0.28);
+  border-bottom-color: rgba(200, 140, 40, 0.14);
+}
+
+body.theme-light .currently-playing .sos-progress-card .sos-seg-band-btn[disabled],
+body.theme-light .currently-playing .sos-progress-card .sos-seg-band-btn.disabled {
+  color: #8d7d6b;
+}
+
+body.theme-light .currently-playing .sos-progress-card .sos-seg-band-btn[disabled]:hover,
+body.theme-light .currently-playing .sos-progress-card .sos-seg-band-btn.disabled:hover {
+  color: #8d7d6b;
+}
+
+/* Hide the legacy bottom loop row if an older cached template is still present. */
+.currently-playing .sos-progress-card .sos-loop-controls-row {
+  display: none !important;
+}
+
+body.theme-light .currently-playing .sos-progress-card .sos-progress-segment {
+  background: var(--sos-loop-segment-soft-color, rgba(238, 155, 58, 0.25));
+  border-color: rgba(0, 0, 0, 0.18);
+}
+
+body.theme-light .currently-playing .sos-progress-card .sos-progress-segment.is-current {
+  border-color: rgba(200, 140, 40, 0.65);
+}
+
+body.theme-light .currently-playing .sos-progress-card .sos-progress-segment-fill {
+  background: var(--sos-loop-segment-fill-color, rgba(200, 140, 40, 0.65));
+}
+
+body.theme-light .currently-playing .sos-progress-card .sos-progress-segment.is-current .sos-progress-segment-fill {
+  background: linear-gradient(
+    to right,
+    var(--sos-loop-segment-fill-color, rgba(200, 140, 40, 0.65)),
+    var(--sos-loop-segment-color, #ee9b3a)
+  );
+  box-shadow: 0 0 4px var(--sos-loop-segment-color, #ee9b3a);
 }
 
 /* ========================================================= */

@@ -36,11 +36,16 @@ export function registerPlaybackDocumentHooks() {
       foundry.utils.hasProperty(changes ?? {}, `flags.${MODULE_ID}.${PlaybackClock.FLAG_KEY}`);
     if (!relevant) return;
 
+    const flatSoundscapeFlagKey = `flags.${MODULE_ID}.soundscapeMode`;
+    const soundscapeFlag = Object.prototype.hasOwnProperty.call(changes ?? {}, flatSoundscapeFlagKey)
+      ? changes[flatSoundscapeFlagKey]
+      : changes?.flags?.[MODULE_ID]?.soundscapeMode;
+
     debugPlaybackTrace("updatePlaylist", playlist, {
       user: game.users.get(userId)?.name ?? userId,
       playing: changes.playing,
       mode: changes.mode,
-      soundscapeFlag: foundry.utils.getProperty(changes, `flags.${MODULE_ID}.soundscapeMode`),
+      soundscapeFlag,
       sounds: soundUpdates,
       options,
     });

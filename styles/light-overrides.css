@@ -87,9 +87,8 @@ body.theme-light .sos-track-header label {
   color: #666;
 }
 
-/* Volume rows and loop controls */
-body.theme-light .sos-volume-row,
-body.theme-light .sos-loop-controls-row {
+/* Volume rows */
+body.theme-light .sos-volume-row {
   background: linear-gradient(
     to bottom,
     rgba(0, 0, 0, 0.02),

@@ -9,9 +9,9 @@ import { Silence } from "./silence.js";
 import { State } from "./state-manager.js";
 import { MODULE_ID } from "./utils.js";
 
-const FIXTURE_FLAG = "mcpAutomationFixture";
-const FIXTURE_FOLDER_NAME = "SoS MCP Automation Fixtures";
-const FIXTURE_PLAYLIST_PREFIX = "SoS MCP Test -";
+export const FIXTURE_FLAG = "mcpAutomationFixture";
+export const FIXTURE_PREFIX = "SoS MCP Test -";
+const FIXTURE_FOLDER_NAME = `${FIXTURE_PREFIX}Automation Fixtures`;
 const DEFAULT_WAIT_MS = 250;
 const AUDIO_PATH_RE = /\.(?:flac|m4a|mp3|ogg|wav)(?:[?#].*)?$/i;
 
@@ -54,6 +54,8 @@ const CLIENT_SYNC_SCENARIOS = [
 
 export function createPlaybackAutomation(api) {
   return {
+    runAutomation: (args = {}) => runAutomation(api, args),
+    cleanupFixtures: (args = {}) => cleanupFixtures(api, args),
     controlPlayback: (args = {}) => controlPlayback(api, args),
     runPlaybackAutomation: (args = {}) => runPlaybackAutomation(api, args),
     runClientSyncAutomation: (args = {}) => runClientSyncAutomation(api, args),
@@ -75,6 +77,33 @@ export function getPlaybackAutomationScenarios() {
 
 export function getClientSyncAutomationScenarios() {
   return ["all", ...CLIENT_SYNC_SCENARIOS];
+}
+
+export function getPlaybackFixtureCounts(runId = null) {
+  const playlists = getFixturePlaylists(runId);
+  const folders = collectionToArray(game.folders).filter((folder) => isFixtureFolder(folder));
+  return {
+    runId,
+    playlists: playlists.length,
+    playlistSounds: playlists.reduce(
+      (total, playlist) => total + Number(playlist.sounds?.size ?? playlist.sounds?.length ?? 0),
+      0
+    ),
+    folders: folders.length,
+    fixturePrefix: FIXTURE_PREFIX,
+    fixtureFlag: FIXTURE_FLAG,
+  };
+}
+
+async function runAutomation(api, args = {}) {
+  const mode = String(args.mode ?? "playback").trim();
+  if (mode === "playback") return runPlaybackAutomation(api, args);
+  if (mode === "clientSync") return runClientSyncAutomation(api, args);
+  throw new Error('mode must be "playback" or "clientSync".');
+}
+
+async function cleanupFixtures(api, args = {}) {
+  return cleanupPlaybackFixtures(api, args);
 }
 
 async function controlPlayback(api, args) {
@@ -119,13 +148,18 @@ async function controlPlayback(api, args) {
 
 async function runPlaybackAutomation(api, args) {
   const requestedScenario = normalizeChoice(args.scenario ?? "all", getPlaybackAutomationScenarios(), "scenario");
-  const leaveFixtures = args.leaveFixtures === true;
+  const cleanupAfter = args.cleanupAfter !== false && args.leaveFixtures !== true;
+  const cleanupBefore = args.cleanupBefore !== false;
   const runId = String(args.runId || foundry.utils.randomID(8));
   const scenarioNames = requestedScenario === "all" ? SCENARIOS : [requestedScenario];
   const beforeCounts = getWorldDocumentCounts();
   const results = [];
   const createdPlaylistIds = [];
+  let beforeCleanup = { skipped: true, playlistsDeleted: 0, foldersDeleted: 0 };
 
+  if (cleanupBefore) {
+    beforeCleanup = await cleanupPlaybackFixtures(api, { runId, stopFirst: true });
+  }
   await stopAllPlaylists(api);
 
   for (const scenario of scenarioNames) {
@@ -136,7 +170,7 @@ async function runPlaybackAutomation(api, args) {
   }
 
   let cleanup = { skipped: true, playlistsDeleted: 0, foldersDeleted: 0 };
-  if (!leaveFixtures) {
+  if (cleanupAfter) {
     cleanup = await cleanupPlaybackFixtures(api, { runId, stopFirst: true });
   }
 
@@ -151,7 +185,9 @@ async function runPlaybackAutomation(api, args) {
     failed: failed.length,
     results,
     createdPlaylistIds,
+    beforeCleanup,
     cleanup,
+    remainingFixtures: getPlaybackFixtureCounts(runId),
     documentCounts: {
       before: beforeCounts,
       after: afterCounts,
@@ -168,12 +204,17 @@ async function runClientSyncAutomation(api, args = {}) {
   );
   const expectedNonGmCount = normalizeCount(args.expectedNonGmCount, 1);
   const timeoutMs = normalizeTimeout(args.timeoutMs, 3000, 500, 10000);
-  const leaveFixtures = args.leaveFixtures === true;
+  const cleanupAfter = args.cleanupAfter !== false && args.leaveFixtures !== true;
+  const cleanupBefore = args.cleanupBefore !== false;
   const runId = String(args.runId || foundry.utils.randomID(8));
   const beforeCounts = getWorldDocumentCounts();
   const results = [];
   const createdPlaylistIds = [];
+  let beforeCleanup = { skipped: true, playlistsDeleted: 0, foldersDeleted: 0 };
 
+  if (cleanupBefore) {
+    beforeCleanup = await cleanupPlaybackFixtures(api, { runId, stopFirst: true });
+  }
   await stopAllPlaylists(api);
 
   const preflight = await collectSyncDiagnostics(api, { timeoutMs, playlistIds: [] });
@@ -191,9 +232,9 @@ async function runClientSyncAutomation(api, args = {}) {
       }], { skippedScenarios: skipped }));
     }
 
-    const cleanup = leaveFixtures
-      ? { skipped: true, playlistsDeleted: 0, foldersDeleted: 0 }
-      : await cleanupPlaybackFixtures(api, { runId, stopFirst: true });
+    const cleanup = cleanupAfter
+      ? await cleanupPlaybackFixtures(api, { runId, stopFirst: true })
+      : { skipped: true, playlistsDeleted: 0, foldersDeleted: 0 };
     return finalizeClientSyncRun({
       runId,
       scenarioNames,
@@ -202,6 +243,7 @@ async function runClientSyncAutomation(api, args = {}) {
       beforeCounts,
       results,
       createdPlaylistIds,
+      beforeCleanup,
       cleanup,
       preflight,
     });
@@ -216,7 +258,7 @@ async function runClientSyncAutomation(api, args = {}) {
   }
 
   let cleanup = { skipped: true, playlistsDeleted: 0, foldersDeleted: 0 };
-  if (!leaveFixtures) {
+  if (cleanupAfter) {
     cleanup = await cleanupPlaybackFixtures(api, { runId, stopFirst: true });
   }
 
@@ -228,6 +270,7 @@ async function runClientSyncAutomation(api, args = {}) {
     beforeCounts,
     results,
     createdPlaylistIds,
+    beforeCleanup,
     cleanup,
     preflight,
   });
@@ -241,6 +284,7 @@ function finalizeClientSyncRun({
   beforeCounts,
   results,
   createdPlaylistIds,
+  beforeCleanup,
   cleanup,
   preflight,
 }) {
@@ -257,7 +301,9 @@ function finalizeClientSyncRun({
     inconclusive,
     results,
     createdPlaylistIds,
+    beforeCleanup,
     cleanup,
+    remainingFixtures: getPlaybackFixtureCounts(runId),
     preflight: summarizeCollection(preflight),
     documentCounts: {
       before: beforeCounts,
@@ -1643,6 +1689,7 @@ function summarizeCollection(collection) {
 async function cleanupPlaybackFixtures(api, args = {}) {
   const runId = typeof args.runId === "string" && args.runId.trim() ? args.runId.trim() : null;
   const stopFirst = args.stopFirst !== false;
+  const beforeCounts = getWorldDocumentCounts();
   const playlists = getFixturePlaylists(runId);
   let playlistsDeleted = 0;
   let foldersDeleted = 0;
@@ -1684,25 +1731,31 @@ async function cleanupPlaybackFixtures(api, args = {}) {
     runId,
     playlistsDeleted,
     foldersDeleted,
+    documentCounts: {
+      before: beforeCounts,
+      after: getWorldDocumentCounts(),
+    },
+    remainingFixtures: getPlaybackFixtureCounts(runId),
   };
 }
 
 async function createFixturePlaylist(runId, scenario, { mode, fade = 1, flags = {}, sounds = [] } = {}) {
   const folder = await ensureFixtureFolder();
+  const fixtureName = `${FIXTURE_PREFIX}${scenario} ${runId}`;
   const playlist = await Playlist.create({
-    name: `${FIXTURE_PLAYLIST_PREFIX}${scenario} ${runId}`,
+    name: fixtureName,
     mode,
     fade,
     folder: folder?.id ?? null,
     flags: {
       [MODULE_ID]: {
         ...flags,
-        [FIXTURE_FLAG]: {
+        [FIXTURE_FLAG]: createFixtureMarker({
           kind: "playlist",
           runId,
           scenario,
-          createdAt: Date.now(),
-        },
+          fixtureName,
+        }),
       },
     },
   });
@@ -1789,12 +1842,12 @@ function fixtureSound(name, {
     flags: {
       [MODULE_ID]: {
         ...flags,
-        [FIXTURE_FLAG]: {
+        [FIXTURE_FLAG]: createFixtureMarker({
           kind: "sound",
           runId,
           scenario,
-          createdAt: Date.now(),
-        },
+          fixtureName: name,
+        }),
       },
     },
   };
@@ -1883,10 +1936,10 @@ async function ensureFixtureFolder() {
       type: "Playlist",
       flags: {
         [MODULE_ID]: {
-          [FIXTURE_FLAG]: {
+          [FIXTURE_FLAG]: createFixtureMarker({
             kind: "folder",
-            createdAt: Date.now(),
-          },
+            fixtureName: FIXTURE_FOLDER_NAME,
+          }),
         },
       },
     });
@@ -1904,7 +1957,14 @@ function getFixtureFolder() {
 }
 
 function isFixtureFolder(folder) {
-  return Boolean(folder?.getFlag?.(MODULE_ID, FIXTURE_FLAG));
+  const marker = folder?.getFlag?.(MODULE_ID, FIXTURE_FLAG);
+  const fixtureName = String(marker?.fixtureName ?? "");
+  return Boolean(
+    marker?.kind === "folder" &&
+    isCurrentWorldFixtureMarker(marker) &&
+    String(folder?.name ?? "").startsWith(FIXTURE_PREFIX) &&
+    fixtureName.startsWith(FIXTURE_PREFIX)
+  );
 }
 
 function getFixturePlaylists(runId = null) {
@@ -1914,9 +1974,27 @@ function getFixturePlaylists(runId = null) {
 function isFixturePlaylist(playlist, runId = null) {
   const marker = playlist?.getFlag?.(MODULE_ID, FIXTURE_FLAG);
   if (!marker || marker.kind !== "playlist") return false;
-  if (!String(playlist.name ?? "").startsWith(FIXTURE_PLAYLIST_PREFIX)) return false;
+  if (!isCurrentWorldFixtureMarker(marker)) return false;
+  if (!String(playlist.name ?? "").startsWith(FIXTURE_PREFIX)) return false;
+  if (!String(marker.fixtureName ?? "").startsWith(FIXTURE_PREFIX)) return false;
   if (runId && marker.runId !== runId) return false;
   return true;
+}
+
+function createFixtureMarker({ kind, runId = null, scenario = null, fixtureName }) {
+  return {
+    kind,
+    runId,
+    scenario,
+    fixtureName,
+    worldId: String(game.world?.id ?? ""),
+    sceneId: canvas?.scene?.id ?? null,
+    createdAt: new Date().toISOString(),
+  };
+}
+
+function isCurrentWorldFixtureMarker(marker) {
+  return String(marker?.worldId ?? "") === String(game.world?.id ?? "");
 }
 
 async function stopAllPlaylists(api) {
