@@ -363,20 +363,27 @@ export function registerSequenceCleanupHooks() {
 
 export function getNextSequence(id, prefix = "pl") {
     const key = `${prefix}:${id}`;
-    const current = ACTION_SEQUENCES.get(key)?.seq || 0;
-    const next = current + 1;
-    ACTION_SEQUENCES.set(key, { seq: next, timestamp: Date.now() });
+    const now = Date.now();
+    const current = Number(ACTION_SEQUENCES.get(key)?.seq) || 0;
+    // Use a timestamp-backed high watermark so cleanup cannot reset long-running
+    // playlist transitions back to seq 1 on one client while another client
+    // still remembers an older sequence.
+    const next = Math.max(current + 1, now);
+    ACTION_SEQUENCES.set(key, { seq: next, timestamp: now });
     return next;
 }
 
 export function shouldProcessAction(id, seq, prefix = "pl") {
     const key = `${prefix}:${id}`;
+    const incoming = Number(seq);
+    if (!Number.isFinite(incoming)) return false;
+
     const data = ACTION_SEQUENCES.get(key);
-    const lastSeen = data?.seq || 0;
+    const lastSeen = Number(data?.seq) || 0;
 
-    if (seq <= lastSeen) return false; // Already processed
+    if (incoming <= lastSeen) return false; // Already processed
 
-    ACTION_SEQUENCES.set(key, { seq, timestamp: Date.now() });
+    ACTION_SEQUENCES.set(key, { seq: incoming, timestamp: Date.now() });
     return true;
 }
 

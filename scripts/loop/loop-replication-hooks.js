@@ -14,6 +14,42 @@ import {
 import { State } from "../state-manager.js";
 import { debug, MODULE_ID, shouldProcessAction } from "../utils.js";
 
+const SEGMENT_SKIP_RETRY_MS = 100;
+const SEGMENT_SKIP_MAX_ATTEMPTS = 8;
+const pendingSegmentSkipRetries = new Map();
+
+function segmentSkipRetryKey(soundDoc, seq) {
+  return `${soundDoc.uuid ?? soundDoc.id}:${seq}`;
+}
+
+function executeSegmentSkipWithRetry(soundDoc, targetIndex, seq, attempt = 1) {
+  if (executeSegmentSkip(soundDoc, targetIndex)) {
+    pendingSegmentSkipRetries.delete(segmentSkipRetryKey(soundDoc, seq));
+    return;
+  }
+
+  if (attempt >= SEGMENT_SKIP_MAX_ATTEMPTS) {
+    pendingSegmentSkipRetries.delete(segmentSkipRetryKey(soundDoc, seq));
+    debug(`[Segment-Sync] Gave up segment skip to index ${targetIndex} for "${soundDoc.name}" after ${attempt} attempt(s).`);
+    return;
+  }
+
+  const key = segmentSkipRetryKey(soundDoc, seq);
+  pendingSegmentSkipRetries.set(key, attempt);
+
+  if (soundDoc.playing && !State.getActiveLooper(soundDoc)) {
+    scheduleLoopWithin(soundDoc);
+  }
+
+  const wait = foundry.audio.AudioTimeout?.wait?.bind(foundry.audio.AudioTimeout);
+  const delay = wait ? wait(SEGMENT_SKIP_RETRY_MS) : new Promise((resolve) => setTimeout(resolve, SEGMENT_SKIP_RETRY_MS));
+  delay.then(() => {
+    if (pendingSegmentSkipRetries.get(key) !== attempt) return;
+    const liveSoundDoc = soundDoc.parent?.sounds?.get(soundDoc.id) ?? soundDoc;
+    executeSegmentSkipWithRetry(liveSoundDoc, targetIndex, seq, attempt + 1);
+  });
+}
+
 export function registerLoopReplicationHooks() {
   Hooks.on("updatePlaylistSound", (soundDoc, changes) => {
     const moduleFlags = changes?.flags?.[MODULE_ID];
@@ -50,7 +86,7 @@ export function registerLoopReplicationHooks() {
       }
 
       debug(`[Segment-Sync] Executing segment skip to index ${targetIndex} for "${soundDoc.name}"`);
-      executeSegmentSkip(soundDoc, targetIndex);
+      executeSegmentSkipWithRetry(soundDoc, targetIndex, seq);
     }
 
     if (moduleFlags.loopBreak) {

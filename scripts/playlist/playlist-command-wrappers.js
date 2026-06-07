@@ -402,8 +402,8 @@ export function registerPlaylistAdvanceWrappers() {
         let first = this.sounds.find((s) => s.playing);
         if (Array.isArray(first)) first = first.pop();
         if (first) {
-          scheduleCrossfade(this, first);
-          scheduleLoopWithin(first);
+          const loopScheduled = scheduleLoopWithin(first);
+          if (!loopScheduled) scheduleCrossfade(this, first);
         }
       });
       return result;

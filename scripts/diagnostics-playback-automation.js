@@ -5,6 +5,10 @@
 import { AdvancedShuffle, SHUFFLE_PATTERNS } from "./advanced-shuffle.js";
 import { Flags } from "./flag-service.js";
 import { disableAllLoopsWithin, nextSegmentWithin } from "./internal-loop.js";
+import {
+  inspectLegacyLoopMigration,
+  migrateLegacyLoopFlags,
+} from "./legacy-loop-migration.js";
 import { Silence } from "./silence.js";
 import { State } from "./state-manager.js";
 import { MODULE_ID } from "./utils.js";
@@ -30,6 +34,8 @@ const SCENARIOS = [
   "crossfade",
   "silence",
   "loopWithin",
+  "legacyLoopCrossfade",
+  "legacyLoopMigration",
   "soundscape",
   "soundscapeAdvanced",
   "shufflePatterns",
@@ -372,7 +378,9 @@ async function runClientSyncScenario(api, scenario, runId, { timeoutMs }) {
         ],
       });
 
-      const [first, second] = Array.from(playlist.sounds);
+      const order = Array.from(playlist.playbackOrder ?? []);
+      const first = playlist.sounds.get(order[0]) ?? Array.from(playlist.sounds)[0];
+      const second = playlist.sounds.get(order[1]) ?? Array.from(playlist.sounds).find((sound) => sound.id !== first?.id);
       await playlist.playSound(first);
       const ready = await waitForPlayingSound(playlist, {
         soundId: first.id,
@@ -967,6 +975,218 @@ async function runScenario(api, scenario, runId) {
       record(tests, "retired looper is absent from inspection", () =>
         !api.inspectPlaylist(playlist).features.loops
       );
+    } else if (scenario === "legacyLoopCrossfade") {
+      playlist = await createFixturePlaylist(runId, scenario, {
+        mode: playlistMode("SEQUENTIAL", 1),
+        fade: 1,
+        flags: {
+          crossfade: true,
+          useCustomAutoFade: true,
+          customAutoFadeMs: 100,
+        },
+        sounds: [
+          fixtureSound("Legacy Loop Source", {
+            runId,
+            scenario,
+            durationSec: 1.2,
+            frequency: 440,
+            flags: {
+              loopWithin: {
+                start: "00:00.100",
+                end: "00:00.350",
+                crossfadeMs: 50,
+                loopCount: 0,
+              },
+            },
+          }),
+          fixtureSound("Legacy Loop Next", {
+            runId,
+            scenario,
+            durationSec: 1.2,
+            frequency: 550,
+          }),
+        ],
+      });
+      const [source, next] = Array.from(playlist.sounds);
+      await playlist.playSound(source);
+      await waitForPlayingSound(playlist, { soundId: source.id });
+
+      const migrated = Flags.getLoopConfig(source);
+      record(tests, "legacy loop config migrates to enabled segment", () =>
+        migrated.enabled === true &&
+        migrated.active === true &&
+        Array.isArray(migrated.segments) &&
+        migrated.segments.length === 1
+      );
+
+      const loopStarted = await waitForCondition(() => api.isLooping(source), { timeoutMs: 1500 });
+      record(tests, "legacy loop state appears", () => loopStarted === true);
+      record(tests, "playlist crossfade timer is suppressed while legacy loop owns playback", () =>
+        !State.getCrossfadeTimer(playlist)
+      );
+
+      await wait(700);
+      record(tests, "legacy loop does not advance to next track before break", () =>
+        source.playing === true && next.playing !== true
+      );
+    } else if (scenario === "legacyLoopMigration") {
+      playlist = await createFixturePlaylist(runId, scenario, {
+        mode: playlistMode("SEQUENTIAL", 1),
+        fade: 1,
+        sounds: [
+          fixtureSound("Legacy Migration Candidate", {
+            runId,
+            scenario,
+            durationSec: 1.2,
+            frequency: 440,
+            flags: {
+              loopWithin: {
+                start: "00:00.100",
+                end: "00:00.450",
+                crossfadeMs: 75,
+                loopCount: 2,
+                skipCount: 0,
+              },
+            },
+          }),
+          fixtureSound("Legacy Migration Current", {
+            runId,
+            scenario,
+            durationSec: 1.2,
+            frequency: 550,
+            flags: {
+              loopWithin: {
+                enabled: true,
+                active: true,
+                startFromBeginning: true,
+                segments: [
+                  { start: "00:00.200", end: "00:00.550", crossfadeMs: 50, loopCount: 0 },
+                ],
+              },
+            },
+          }),
+          fixtureSound("Legacy Migration Empty", {
+            runId,
+            scenario,
+            durationSec: 1.2,
+            frequency: 660,
+            flags: {
+              loopWithin: {
+                start: "00:00.000",
+                end: "00:00",
+                crossfadeMs: 75,
+                loopCount: 0,
+              },
+            },
+          }),
+        ],
+      });
+      const sounds = Array.from(playlist.sounds ?? []);
+      const legacySound = sounds.find((sound) => sound.name === "Legacy Migration Candidate");
+      const currentSound = sounds.find((sound) => sound.name === "Legacy Migration Current");
+      const emptySound = sounds.find((sound) => sound.name === "Legacy Migration Empty");
+      const currentBefore = JSON.stringify(currentSound?.getFlag(MODULE_ID, "loopWithin") ?? {});
+
+      const inspectBefore = inspectLegacyLoopMigration({
+        maxCandidateSummaries: 10,
+        playlistIds: [playlist.id],
+      });
+      record(tests, "migration inspect scans only the fixture playlist", () =>
+        inspectBefore.scannedPlaylists === 1 && inspectBefore.scannedSounds === 3
+      );
+      record(tests, "migration inspect finds one useful legacy candidate", () =>
+        inspectBefore.candidates === 1 &&
+        inspectBefore.alreadyCurrent === 1 &&
+        inspectBefore.notUsefulLegacy === 1 &&
+        inspectBefore.canMigrate === true
+      );
+
+      const firstMigration = await migrateLegacyLoopFlags({
+        confirmLegacyLoopMigration: true,
+        playlistIds: [playlist.id],
+      });
+      record(tests, "migration writes exactly one fixture sound", () =>
+        firstMigration.success === true &&
+        firstMigration.migrated === 1 &&
+        firstMigration.skipped === 1 &&
+        firstMigration.errors === 0
+      );
+
+      const legacyRaw = legacySound?.getFlag(MODULE_ID, "loopWithin") ?? {};
+      const migratedConfig = legacySound ? Flags.getLoopConfig(legacySound) : null;
+      record(tests, "migration persists segment-based loop config", () =>
+        Array.isArray(legacyRaw.segments) &&
+        legacyRaw.segments.length === 1 &&
+        !Object.prototype.hasOwnProperty.call(legacyRaw, "start") &&
+        !Object.prototype.hasOwnProperty.call(legacyRaw, "end") &&
+        !Object.prototype.hasOwnProperty.call(legacyRaw, "crossfadeMs") &&
+        !Object.prototype.hasOwnProperty.call(legacyRaw, "loopCount") &&
+        !Object.prototype.hasOwnProperty.call(legacyRaw, "skipCount") &&
+        migratedConfig?.enabled === true &&
+        migratedConfig?.active === true
+      );
+      record(tests, "migration preserves legacy timing fields inside the segment", () => {
+        const segment = legacyRaw.segments?.[0] ?? {};
+        return segment.start === "00:00.100" &&
+          segment.end === "00:00.450" &&
+          Number(segment.crossfadeMs) === 75 &&
+          Number(segment.loopCount) === 2;
+      });
+      record(tests, "migration leaves current segment config alone", () =>
+        JSON.stringify(currentSound?.getFlag(MODULE_ID, "loopWithin") ?? {}) === currentBefore
+      );
+      record(tests, "migration skips empty legacy loop data", () => {
+        const raw = emptySound?.getFlag(MODULE_ID, "loopWithin") ?? {};
+        return raw.end === "00:00" && !Array.isArray(raw.segments);
+      });
+
+      const secondMigration = await migrateLegacyLoopFlags({
+        confirmLegacyLoopMigration: true,
+        playlistIds: [playlist.id],
+      });
+      record(tests, "migration is idempotent on a second pass", () =>
+        secondMigration.success === true &&
+        secondMigration.candidates === 0 &&
+        secondMigration.migrated === 0 &&
+        secondMigration.notUsefulLegacy === 1
+      );
+
+      const blockedPlaylist = await createFixturePlaylist(runId, `${scenario}-blocked`, {
+        mode: playlistMode("SEQUENTIAL", 1),
+        fade: 1,
+        sounds: [
+          fixtureSound("Legacy Migration Blocked", {
+            runId,
+            scenario: `${scenario}-blocked`,
+            durationSec: 1.2,
+            frequency: 770,
+            flags: {
+              loopWithin: {
+                start: "00:00.100",
+                end: "00:00.450",
+                crossfadeMs: 75,
+                loopCount: 1,
+              },
+            },
+          }),
+        ],
+      });
+      const [blockedSound] = Array.from(blockedPlaylist.sounds ?? []);
+      await blockedPlaylist.update({
+        playing: true,
+        sounds: [{ _id: blockedSound?.id, playing: true, pausedTime: null }],
+      });
+      const blockedMigration = await migrateLegacyLoopFlags({
+        confirmLegacyLoopMigration: true,
+        playlistIds: [blockedPlaylist.id],
+      });
+      record(tests, "migration refuses active fixture playback", () =>
+        blockedMigration.success === false &&
+        blockedMigration.blocked === true &&
+        Array.isArray(blockedMigration.activePlaylists) &&
+        blockedMigration.activePlaylists.some((entry) => entry.id === blockedPlaylist.id)
+      );
+      await blockedPlaylist.stopAll();
     } else if (scenario === "soundscape") {
       playlist = await createFixturePlaylist(runId, scenario, {
         mode: playlistMode("DISABLED", -1),

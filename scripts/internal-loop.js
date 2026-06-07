@@ -53,17 +53,17 @@ export function scheduleLoopWithin(ps) {
   // A looper can only be scheduled for a sound that is currently playing.
   if (!ps?.playing) {
     debug(`[Manager] Skipping loop schedule for "${ps.name}" because it is not playing.`);
-    return;
+    return false;
   }
 
   const cfg = Flags.getLoopConfig(ps);
-  const isActive = cfg.enabled && cfg.active; // undefined defaults to true
+  const isActive = Flags.isLoopConfigActive(cfg);
 
   // Cancel any existing looper for this sound to prevent duplicates.
   cancelLoopWithin(ps, { quiet: true, restorePlaybackHandlers: false });
 
-  if (!cfg.enabled || !isActive) {
-    return;
+  if (!isActive) {
+    return false;
   }
 
   cancelStandardTransitionScheduling(ps);
@@ -90,6 +90,8 @@ export function scheduleLoopWithin(ps) {
       looper.start();
     }
   });
+
+  return true;
 }
 
 /**
@@ -260,18 +262,19 @@ export function executeSegmentSkip(ps, targetIndex) {
   const looper = State.getActiveLooper(ps);
   if (!looper || looper.isDestroyed) {
     debug(`[Manager] Cannot execute skip to segment ${targetIndex} for "${ps.name}" - no active looper.`);
-    return;
+    return false;
   }
 
   // Bounds check to prevent out-of-range segment access
   const config = Flags.getLoopConfig(ps);
   if (targetIndex < 0 || targetIndex >= config.segments.length) {
     debug(`[Manager] Segment index ${targetIndex} out of bounds (0-${config.segments.length - 1}) for "${ps.name}".`);
-    return;
+    return false;
   }
 
   debug(`[Manager] Executing replicated skip to segment ${targetIndex} for "${ps.name}".`);
   looper.skipToSegmentByIndex(targetIndex);
+  return true;
 }
 
 /**

@@ -4,6 +4,7 @@ import { MODULE_ID, logFeature, LogSymbols } from "./utils.js";
 import { Silence } from "./silence.js";
 import { advancedFade } from "./audio-fader.js";
 import { debug, waitForMedia } from "./utils.js";
+import { Flags } from "./flag-service.js";
 import { State } from "./state-manager.js";
 
 // =========================================================================
@@ -40,8 +41,8 @@ export async function applyFadeIn(playlist, ps, { targetVolume } = {}) {
     }
 
     // Defer fade-in to LoopingSound if skipping intro ---
-    const loopConfig = ps.getFlag(MODULE_ID, "loopWithin");
-    if (loopConfig?.enabled && !loopConfig.startFromBeginning && (loopConfig.segments?.length ?? 0) > 0) {
+    const loopConfig = Flags.getLoopConfig(ps);
+    if (Flags.isLoopConfigActive(loopConfig) && !loopConfig.startFromBeginning) {
         debug(`[FadeIn] Deferring fade-in for "${ps.name}" to LoopingSound due to "skip intro" setting.`);
         return;
     }

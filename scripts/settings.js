@@ -3,6 +3,7 @@
  * @description Registers The Sound of Silence module settings.
  */
 import { AdvancedShuffle, SHUFFLE_PATTERNS } from "./advanced-shuffle.js";
+import { LegacyLoopMigrationLauncher } from "./legacy-loop-migration.js";
 import { debug, MODULE_ID } from "./utils.js";
 
 export function registerSettings({
@@ -37,6 +38,15 @@ export function registerSettings({
     config: true,
     type: Boolean,
     default: false,
+  });
+
+  game.settings.registerMenu(MODULE_ID, "legacyLoopMigration", {
+    name: "Migrate Legacy Internal Loops",
+    label: "Migrate Legacy Loops",
+    hint: "GM maintenance tool that permanently upgrades old internal-loop flags on playlist sounds to the current segment-based format.",
+    icon: "fas fa-database",
+    restricted: true,
+    type: LegacyLoopMigrationLauncher,
   });
 
   game.settings.register(MODULE_ID, "personalPlaylistVolumeEnabled", {

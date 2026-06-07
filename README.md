@@ -7,7 +7,7 @@
 [![Latest Release](https://img.shields.io/github/v/release/GnollStack/The-Sound-of-Silence?label=Latest%20Release&style=flat-square)](https://github.com/GnollStack/The-Sound-of-Silence/releases/latest)
 [![Downloads](https://img.shields.io/github/downloads/GnollStack/The-Sound-of-Silence/total?style=flat-square&color=green)](https://github.com/GnollStack/The-Sound-of-Silence/releases)
 [![Downloads@latest](https://img.shields.io/github/downloads/GnollStack/The-Sound-of-Silence/latest/total?style=flat-square)](https://github.com/GnollStack/The-Sound-of-Silence/releases/latest)
-[![Foundry VTT](https://img.shields.io/badge/Foundry-v14%2B-orange?style=flat-square)](https://foundryvtt.com)
+[![Foundry VTT](https://img.shields.io/badge/Foundry-v13--v14-orange?style=flat-square)](https://foundryvtt.com)
 [![Ko-fi](https://img.shields.io/badge/Ko--fi-Buy%20a%20Steak-FF5E5B?style=flat-square&logo=ko-fi&logoColor=white)](https://ko-fi.com/gnollstack)
 
 *For GMs who want music to help tell a story.*
@@ -191,9 +191,11 @@ call-module-debug-action({
 })
 ```
 
-These diagnostics intentionally ship with the module, but are disabled by default and require explicit GM-side settings before use. Available read-only actions are allowlisted under `game.modules.get("the-sound-of-silence").api.diagnostics.actions`: `getStatus`, `validateSettings`, `validateAssets`, `collectClientDiagnostics`, `runSmokeTests`, `openWindow`, `parseText`, `validateText`, and `refreshClient`. They are GM-only, JSON-safe, and never create world documents. `refreshClient` is inherently allowed once the normal diagnostics gates are open and requires `confirmRefresh: true`; the MCP bridge `reload-foundry-client` tool remains the main hard refresh path. `collectClientDiagnostics` can be filtered with `playlistIds` to keep remote payloads compact. `getStatus` includes normalized gate output (`activeGMUser`, `debugLogging`, `enableMcpDiagnostics`, `mutationEnabled`, and `refreshEnabled`) plus an audio preflight snapshot; `audio.locked: true` or zero available audio contexts means live media tests such as crossfade cannot prove real playback until the GM client unlocks Foundry audio.
+These diagnostics intentionally ship with the module, but are disabled by default and require explicit GM-side settings before use. Available read-only actions are allowlisted under `game.modules.get("the-sound-of-silence").api.diagnostics.actions`: `getStatus`, `validateSettings`, `validateAssets`, `collectClientDiagnostics`, `runSmokeTests`, `openWindow`, `parseText`, `validateText`, and `refreshClient`. They are GM-only, JSON-safe, and never create world documents. `refreshClient` is allowed once the normal diagnostics gates are open and requires `confirmRefresh: true`; the MCP bridge `reload-foundry-client` tool remains the main hard refresh path. `collectClientDiagnostics` can be filtered with `playlistIds` to keep remote payloads compact. `getStatus` includes normalized gate output (`activeGMUser`, `debugLogging`, `enableMcpDiagnostics`, `mutationEnabled`, and `refreshEnabled`) plus an audio preflight snapshot; `audio.locked: true` or zero available audio contexts means live media tests such as crossfade cannot prove real playback until the GM client unlocks Foundry audio.
 
-Dedicated test worlds can run mutating automation with the same **Enable MCP Diagnostics** gate plus `confirmMutation: true` in the call args. The standard mutating aliases are `runAutomation` and `cleanupFixtures`; existing SoS-specific actions remain available as `controlPlayback`, `runPlaybackAutomation`, `runClientSyncAutomation`, and `cleanupPlaybackFixtures`. Fixture cleanup only touches SoS MCP fixture documents with both the expected marker flag and `SoS MCP Test -` name prefix, and it honors `runId` when provided. Automation fixtures prefer known playable world audio paths when available and fall back to generated WAV data URIs. `runPlaybackAutomation` includes shuffle-pattern checks for exhaustive, weighted-random, and round-robin ordering, custom fade checks for all configured curve types, loop retirement cleanup, and advanced soundscape checks for procedural one-shots, polyphony caps, default inheritance, panners, and bed cleanup. `runClientSyncAutomation` requires active non-GM clients by default and compares their remote snapshots against GM-driven playback actions, including crossfade, stop, loop break/disable/segment-skip replication, and soundscape start/stop, bed-only, procedural-fire, arm/disarm, opt-out, and cleanup scenarios. Live-media checks are reported as inconclusive, not failed, when a target client has locked audio, no running audio context, or no live media object.
+Dedicated test worlds can run mutating automation with the same **Enable MCP Diagnostics** gate plus `confirmMutation: true` in the call args. The standard mutating aliases are `runAutomation` and `cleanupFixtures`; existing SoS-specific actions remain available as `controlPlayback`, `runPlaybackAutomation`, `runClientSyncAutomation`, and `cleanupPlaybackFixtures`. Fixture cleanup only touches SoS MCP fixture documents with both the expected marker flag and `SoS MCP Test -` name prefix, and it honors `runId` when provided. Automation fixtures prefer known playable world audio paths when available and fall back to generated WAV data URIs. `runPlaybackAutomation` includes shuffle-pattern checks for exhaustive, weighted-random, and round-robin ordering, custom fade checks for all configured curve types, loop retirement cleanup, legacy loop crossfade checks, fixture-scoped legacy loop migration checks, and advanced soundscape checks for procedural one-shots, polyphony caps, default inheritance, panners, and bed cleanup. `runClientSyncAutomation` requires active non-GM clients by default and compares their remote snapshots against GM-driven playback actions, including crossfade, stop, loop break/disable/segment-skip replication, and soundscape start/stop, bed-only, procedural-fire, arm/disarm, opt-out, and cleanup scenarios. Live-media checks are reported as inconclusive, not failed, when a target client has locked audio, no running audio context, or no live media object.
+
+GM maintenance tools are available in Foundry's Configure Settings window under **The Sound of Silence**. **Migrate Legacy Internal Loops** scans all playlists and permanently upgrades old flat internal-loop flags into the current segment-based format after a confirmation prompt. Back up your world first; the migration refuses to run while playlists are playing and leaves existing segment-based loop configs alone.
 
 > [!WARNING]
 > If the GM owns the playlist, sets Foundry's Music Volume to exact `0`, and backgrounds the tab, the browser audio clock can stall. Use `0.01` or mute the tab/OS instead.
@@ -217,11 +219,8 @@ https://github.com/GnollStack/The-Sound-of-Silence/releases/latest/download/modu
 
 | Requirement | Version |
 | --- | --- |
-| Foundry VTT | v14+ (verified through v14.363) |
+| Foundry VTT | v13 - v14 (verified on v13.531 and v14.363) |
 | [libWrapper](https://github.com/ruipin/fvtt-lib-wrapper) | Latest |
-
-> [!NOTE]
-> The Sound of Silence 14.14.6 and newer require Foundry VTT v14+. Foundry VTT v13 users should remain on module version `14.14.5`.
 
 ---
 
@@ -267,6 +266,10 @@ Intro plays once, jumps to Phase 1. Click *break* when the boss enters Phase 2. 
 <a id="compatibility"></a>
 
 ## Compatibility
+
+**Foundry VTT:** v13 - v14, tested on v13.531 and v14.363.
+
+**Browsers:** tested with connected player clients on Chrome, Opera GX, and Firefox. Chrome/Chromium and Firefox are the primary supported browser families; Opera GX is Chromium-based and is included in regression checks because browser audio throttling can differ. As with normal Foundry audio, each client must unlock browser audio before live playback can be verified.
 
 > [!TIP]
 > Run SoS as your only playlist/audio module. It's a superset of Monks Sound Enhancements and Playlist Enchantment's audio features. Keep them only if you use their non-audio features (actor sounds, drag-drop upload, prehear preview).
@@ -520,7 +523,7 @@ For licensing inquiries or permission slips:
 
 <div align="center">
 
-**Author:** [GnollStack](https://github.com/GnollStack) · **Compatibility:** Foundry VTT v14+ (verified through v14.363)
+**Author:** [GnollStack](https://github.com/GnollStack) · **Compatibility:** Foundry VTT v13 - v14
 
 [⬆ Back to Top](#the-sound-of-silence)
 

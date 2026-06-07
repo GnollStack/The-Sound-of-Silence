@@ -77,6 +77,7 @@ class FlagService {
         this._playlistCache = new WeakMap(); // playlist -> { flags, timestamp }
         this._soundCache = new WeakMap();    // sound -> { flags, timestamp }
         this._cacheTimeout = 1000; // 1 second cache TTL
+        this._legacyLoopMigrationNotices = new Set();
     }
 
     // ============================================
@@ -404,7 +405,21 @@ class FlagService {
      */
     isLoopActive(sound) {
         const config = this.getLoopConfig(sound);
-        return config.enabled && config.active;
+        return this.isLoopConfigActive(config);
+    }
+
+    /**
+     * Checks if a sanitized loop config should own playback.
+     * @param {object} config Sanitized loopWithin config
+     * @returns {boolean}
+     */
+    isLoopConfigActive(config) {
+        return Boolean(
+            config?.enabled &&
+            config?.active &&
+            Array.isArray(config.segments) &&
+            config.segments.length > 0
+        );
     }
 
 
@@ -489,7 +504,11 @@ class FlagService {
         }
 
         if ((!Array.isArray(segments) || segments.length === 0) && flags.end && flags.end !== "00:00") {
-            debug("[FlagService] Migrating legacy loop format to segment structure.");
+            const signature = `${flags.start ?? "00:00"}|${flags.end}|${flags.crossfadeMs ?? ""}|${flags.loopCount ?? ""}`;
+            if (!this._legacyLoopMigrationNotices.has(signature)) {
+                this._legacyLoopMigrationNotices.add(signature);
+                debug("[FlagService] Migrating legacy loop format to segment structure.");
+            }
             segments = [{
                 start: flags.start ?? "00:00",
                 end: flags.end,
@@ -498,6 +517,9 @@ class FlagService {
                 loopCount: flags.loopCount ?? 0,
                 skipToNext: false
             }];
+
+            if (typeof flags.enabled === "undefined") flags.enabled = true;
+            if (typeof flags.active === "undefined") flags.active = true;
         }
 
         flags.segments = segments || [];

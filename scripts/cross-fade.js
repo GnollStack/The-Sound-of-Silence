@@ -9,6 +9,14 @@ import { State } from "./state-manager.js";
 const AudioTimeout = foundry.audio.AudioTimeout;
 const PM = CONST.PLAYLIST_MODES;
 
+function internalLoopOwnsPlayback(ps) {
+  const looper = State.getActiveLooper(ps);
+  if (looper && !looper.isDestroyed) return true;
+
+  const config = Flags.getLoopConfig(ps);
+  return Flags.isLoopConfigActive(config);
+}
+
 async function loadCrossfadeMedia(ps) {
   if (!ps) return null;
 
@@ -29,7 +37,12 @@ export async function prepareIncomingCrossfadeMedia(ps) {
 
   if (!sound.playing) {
     sound.volume = 0;
-    await sound.play({ _fromCrossfade: true });
+    try {
+      await sound.play({ _fromCrossfade: true });
+    } catch (err) {
+      debug(`[CF] Failed to start incoming crossfade media for "${ps.name}":`, err?.message ?? err);
+      return null;
+    }
   } else if (!State.isSoundFading(sound)) {
     sound.volume = 0;
   }
@@ -276,6 +289,10 @@ export async function scheduleCrossfade(playlist, ps, { force = false } = {}) {
 
   if (fadeMs <= 0) return;
   if (ps.repeat) return;
+  if (internalLoopOwnsPlayback(ps)) {
+    debug(`[CF] Skipping auto crossfade schedule for "${ps.name}" because internal loop owns playback.`);
+    return;
+  }
 
   cancelCrossfade(playlist);
 

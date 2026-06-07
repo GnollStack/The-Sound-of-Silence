@@ -32,13 +32,13 @@ export function registerTransitionReplicationHooks() {
     const { fromSoundId, fadeMs, seq, gmId } = next;
     if (!fromSoundId || !Number.isFinite(fadeMs) || !Number.isFinite(seq)) return;
 
-    if (!shouldProcessAction(pl.id, seq)) {
-      debug(`[Skip-Sync] Ignoring duplicate or out-of-order skip (seq ${seq})`);
+    if (gmId === game.user.id || pl.isOwner) {
+      debug("[Skip-Sync] Skipping self/owner-triggered action");
       return;
     }
 
-    if (gmId === game.user.id) {
-      debug("[Skip-Sync] Skipping self-triggered action");
+    if (!shouldProcessAction(pl.id, seq)) {
+      debug(`[Skip-Sync] Ignoring duplicate or out-of-order skip (seq ${seq})`);
       return;
     }
 
@@ -67,16 +67,14 @@ export function registerTransitionReplicationHooks() {
     const { soundIds, fadeMs, seq, gmId } = stop;
     if (!Array.isArray(soundIds) || !Number.isFinite(seq)) return;
 
+    if (gmId === game.user.id || pl.isOwner) return;
+
     if (!shouldProcessAction(pl.id, seq)) {
       debug(`[Stop-Sync] Ignoring duplicate or out-of-order stop (seq ${seq})`);
       return;
     }
 
-    if (gmId === game.user.id) return;
-
     debug(`[Stop-Sync] Processing stop from GM ${gmId}, seq ${seq}`);
-
-    if (pl.isOwner) return;
 
     State.markPlaylistAsStopping(pl);
     await cleanupPlaylistState(pl, {
@@ -130,54 +128,67 @@ export function registerTransitionReplicationHooks() {
 
     const { incomingSoundId, outgoingSoundId, fadeMs, targetVolIn, seq, gmId } = cf;
 
+    if (gmId === game.user.id || playlist.isOwner) return;
+
     if (!shouldProcessAction(playlist.id, seq)) {
       debug(`[Crossfade-Sync] Ignoring duplicate/out-of-order (seq ${seq})`);
       return;
     }
-    if (gmId === game.user.id) return;
-    if (playlist.isOwner) return;
 
     State.markPlaylistAsCrossfading(playlist);
 
-    const psOut = playlist.sounds.get(outgoingSoundId);
-    const psIn = playlist.sounds.get(incomingSoundId);
-    if (!psIn) {
-      State.clearPlaylistCrossfading(playlist);
-      return;
-    }
-    const sharedTargetVolIn = Number.isFinite(Number(targetVolIn))
-      ? Number(targetVolIn)
-      : Flags.resolveSharedTargetVolume(psIn);
-    const localTargetVolIn = Flags.resolveTargetVolume(psIn, { sharedVolume: sharedTargetVolIn });
-
-    const [soundOut, soundIn] = await Promise.all([
-      psOut ? waitForMedia(psOut) : Promise.resolve(null),
-      prepareIncomingCrossfadeMedia(psIn),
-    ]);
-
-    if (!soundIn) {
-      State.clearPlaylistCrossfading(playlist);
-      return;
-    }
-
-    if (!soundOut?.playing) {
-      debug(`[Crossfade-Sync] Outgoing sound already stopped; snapping "${psIn.name}" to target volume.`);
-      soundIn.volume = localTargetVolIn;
-      State.clearPlaylistCrossfading(playlist);
-      return;
-    }
-
-    debug(`[Crossfade-Sync] Applying equal-power crossfade "${psOut?.name}" -> "${psIn.name}" (${fadeMs}ms)`);
-
-    const fadeTokens = equalPowerCrossfade(soundOut, soundIn, fadeMs, { targetVolIn: localTargetVolIn });
-
-    AudioTimeout.wait(fadeMs + 50).then(() => {
-      if (soundIn && fadeTokens?.inToken) State.clearFadingSound(soundIn, fadeTokens.inToken);
-      if (soundOut?.playing && (!fadeTokens?.outToken || State.isCurrentFadeToken(soundOut, fadeTokens.outToken))) {
-        safeStop(soundOut, "replicated crossfade completion");
+    try {
+      const psOut = playlist.sounds.get(outgoingSoundId);
+      const psIn = playlist.sounds.get(incomingSoundId);
+      if (!psIn) {
+        State.clearPlaylistCrossfading(playlist);
+        return;
       }
-      if (soundOut && fadeTokens?.outToken) State.clearFadingSound(soundOut, fadeTokens.outToken);
+      const sharedTargetVolIn = Number.isFinite(Number(targetVolIn))
+        ? Number(targetVolIn)
+        : Flags.resolveSharedTargetVolume(psIn);
+      const localTargetVolIn = Flags.resolveTargetVolume(psIn, { sharedVolume: sharedTargetVolIn });
+
+      const [soundOut, soundIn] = await Promise.all([
+        psOut ? waitForMedia(psOut) : Promise.resolve(null),
+        prepareIncomingCrossfadeMedia(psIn),
+      ]);
+
+      if (!soundIn) {
+        debug(`[Crossfade-Sync] Incoming sound "${psIn.name}" did not start; falling back to native sync after transition.`);
+        State.clearPlaylistCrossfading(playlist);
+        AudioTimeout.wait((Number(fadeMs) || 0) + 250).then(() => {
+          try {
+            psIn.sync?.();
+          } catch (err) {
+            debug(`[Crossfade-Sync] Native sync fallback failed for "${psIn.name}":`, err?.message ?? err);
+          }
+        }).catch(() => { });
+        return;
+      }
+
+      if (!soundOut?.playing) {
+        debug(`[Crossfade-Sync] Outgoing sound already stopped; snapping "${psIn.name}" to target volume.`);
+        soundIn.volume = localTargetVolIn;
+        State.clearPlaylistCrossfading(playlist);
+        return;
+      }
+
+      debug(`[Crossfade-Sync] Applying equal-power crossfade "${psOut?.name}" -> "${psIn.name}" (${fadeMs}ms)`);
+
+      const fadeTokens = equalPowerCrossfade(soundOut, soundIn, fadeMs, { targetVolIn: localTargetVolIn });
+
+      AudioTimeout.wait(fadeMs + 50).then(() => {
+        if (soundIn && fadeTokens?.inToken) State.clearFadingSound(soundIn, fadeTokens.inToken);
+        if (soundOut?.playing && (!fadeTokens?.outToken || State.isCurrentFadeToken(soundOut, fadeTokens.outToken))) {
+          safeStop(soundOut, "replicated crossfade completion");
+        }
+        if (soundOut && fadeTokens?.outToken) State.clearFadingSound(soundOut, fadeTokens.outToken);
+        State.clearPlaylistCrossfading(playlist);
+      });
+    } catch (err) {
+      debug(`[Crossfade-Sync] Failed to apply replicated crossfade:`, err?.message ?? err);
       State.clearPlaylistCrossfading(playlist);
-    });
+    }
   });
 }

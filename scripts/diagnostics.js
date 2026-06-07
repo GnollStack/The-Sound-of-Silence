@@ -66,6 +66,7 @@ const MODULE_ASSETS = Object.freeze([
   "scripts/diagnostics.js",
   "scripts/diagnostics-playback-automation.js",
   "scripts/flag-service.js",
+  "scripts/legacy-loop-migration.js",
   "templates/diagnostics.hbs",
   "templates/remote-diagnostics.hbs",
   "styles/diagnostics.css",
@@ -689,6 +690,24 @@ async function runSmokeTests(api) {
       }),
     });
     return result.parseable && result.validGeneratedData && result.mechanicallyUseful;
+  });
+  record(tests, "loop config validator migrates legacy start/end as active", () => {
+    const result = validateText({
+      kind: "loopConfig",
+      text: JSON.stringify({
+        start: "00:10.000",
+        end: "00:20.000",
+        crossfadeMs: 500,
+        loopCount: 0,
+      }),
+    });
+    const segment = result.sanitized?.segments?.[0];
+    return result.parseable &&
+      result.mechanicallyUseful &&
+      result.sanitized?.enabled === true &&
+      result.sanitized?.active === true &&
+      segment?.start === "00:10.000" &&
+      segment?.end === "00:20.000";
   });
 
   const afterCounts = getWorldDocumentCounts();

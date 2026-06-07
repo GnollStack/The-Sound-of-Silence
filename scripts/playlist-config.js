@@ -126,10 +126,10 @@ export function registerPlaylistSheetWrappers() {
 }
 
 /**
- * Registers wrappers for Foundry v14+ DocumentSheetV2.
+ * Registers wrappers for Foundry's playlist sheet application API.
  */
 function _registerDocumentSheetV2Wrappers() {
-  debug("Registering V14+ PlaylistConfig wrappers");
+  debug("Registering PlaylistConfig wrappers");
 
   // Supply module data to the template context. Also inject a synthetic
   // "soundscape" entry into the mode <select> so Soundscape appears as a 5th

@@ -281,8 +281,7 @@ export function registerPlaylistUiHooks() {
 
             if (!sound) return;
 
-            const currentActiveState =
-                sound.getFlag(MODULE_ID, "loopWithin.active") ?? false;
+            const currentActiveState = Flags.getLoopConfig(sound).active;
             await sound.setFlag(
                 MODULE_ID,
                 "loopWithin.active",

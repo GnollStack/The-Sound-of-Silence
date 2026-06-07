@@ -71,6 +71,9 @@ function _schedulePostPlayActions(ps, sound, { fromCrossfade = false } = {}) {
   const playlist = ps.parent;
   const isResume = Number.isFinite(ps.pausedTime);
   const resumeOffset = isResume ? Number(ps.pausedTime) : null;
+  const loopConfig = Flags.getLoopConfig(ps);
+  const playbackMode = Flags.getPlaybackMode(playlist);
+  let loopScheduled = false;
 
   PlaybackClock.record(playlist, ps, sound, {
     reason: fromCrossfade ? "crossfade playback" : (isResume ? "resume" : "play"),
@@ -84,9 +87,8 @@ function _schedulePostPlayActions(ps, sound, { fromCrossfade = false } = {}) {
     debug(`[Sound.play WRAPPER] Resuming loop for "${ps.name}".`);
     resumeLoopWithin(ps);
   } else {
-    debug(`[Sound.play WRAPPER] Scheduling new loop for "${ps.name}".`);
     cancelLoopWithin(ps, { quiet: true, restorePlaybackHandlers: false });
-    scheduleLoopWithin(ps);
+    loopScheduled = scheduleLoopWithin(ps);
   }
 
   const fadeInOverride = typeof ps?._sos_fadeInOverride === "number" ? ps._sos_fadeInOverride : null;
@@ -98,8 +100,12 @@ function _schedulePostPlayActions(ps, sound, { fromCrossfade = false } = {}) {
     });
   }
 
-  if (Flags.getPlaylistFlag(playlist, "crossfade")) {
-    scheduleCrossfade(playlist, ps, { force: isResume });
+  if (playbackMode.crossfade) {
+    if (loopScheduled || Flags.isLoopConfigActive(loopConfig)) {
+      debug(`[PostPlay] Skipping playlist crossfade schedule for "${ps.name}" - internal loop owns playback.`);
+    } else {
+      scheduleCrossfade(playlist, ps, { force: isResume });
+    }
 
     if (typeof ps._cancelFadeOut === "function") {
       ps._cancelFadeOut();
@@ -107,10 +113,7 @@ function _schedulePostPlayActions(ps, sound, { fromCrossfade = false } = {}) {
     }
   }
 
-  const loopConfig = Flags.getLoopConfig(ps);
-  const playbackMode = Flags.getPlaybackMode(playlist);
-
-  if (!loopConfig?.enabled && !playbackMode.crossfade && !ps.repeat) {
+  if (!Flags.isLoopConfigActive(loopConfig) && !playbackMode.crossfade && !ps.repeat) {
     scheduleEndOfTrackFade(ps);
   }
 

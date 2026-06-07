@@ -41,8 +41,14 @@ export function registerVisibilityRecovery() {
           s.playing && !Flags.getSoundFlag(s, "isSilenceGap")
         );
         if (currentlyPlaying) {
-          debug(`[Visibility] Re-arming crossfade timer for "${currentlyPlaying.name}"`);
-          scheduleCrossfade(playlist, currentlyPlaying);
+          const looper = State.getActiveLooper(currentlyPlaying);
+          const loopConfig = Flags.getLoopConfig(currentlyPlaying);
+          if ((looper && !looper.isDestroyed) || Flags.isLoopConfigActive(loopConfig)) {
+            debug(`[Visibility] Skipping crossfade re-arm for "${currentlyPlaying.name}" - internal loop owns playback.`);
+          } else {
+            debug(`[Visibility] Re-arming crossfade timer for "${currentlyPlaying.name}"`);
+            scheduleCrossfade(playlist, currentlyPlaying);
+          }
         }
       }
 
