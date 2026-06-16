@@ -58,6 +58,7 @@
             <div class="sos-progress-track-fill" style="width: {{ sos.loopTrackProgressPct }}%"></div>
             {{#each sos.loopSegments}}
             <div class="sos-progress-segment {{#if isCurrent}}is-current{{/if}} {{#if isPast}}is-past{{/if}}"
+                 data-tooltip="{{ tooltip }}"
                  style="left: {{ startPct }}%; width: {{ widthPct }}%; --sos-loop-segment-color: {{ color }}; --sos-loop-segment-soft-color: {{ softColor }}; --sos-loop-segment-fill-color: {{ fillColor }};">
                 <div class="sos-progress-segment-fill" style="width: {{ fillPct }}%"></div>
             </div>
@@ -165,6 +166,7 @@
         <span class="sos-seg-band-count">
             <span class="current">{{ sos.loopCurrentSegIdx1 }}</span><span class="sep">/</span><span class="total">{{ sos.loopTotalSegments }}</span>
         </span>
+        <span class="sos-seg-band-name ellipsis" title="{{ sos.loopCurrentSegmentLabel }}">{{ sos.loopCurrentSegmentLabel }}</span>
     </span>
     <button type="button" class="sos-seg-band-btn" data-sos-action="loopPrev"
             data-sound-id="{{ id }}" {{#unless sos.canSkipPrev}}disabled{{else}}{{#unless sos.isGM}}disabled{{/unless}}{{/unless}}

@@ -242,6 +242,7 @@ p.notes.disabled-note {
   display: flex;
   justify-content: space-between;
   align-items: center;
+  gap: var(--sos-space-sm);
   margin-bottom: 6px;
   padding-bottom: var(--sos-space-md);
   border-bottom: 1px solid var(--sos-border-light);
@@ -255,8 +256,36 @@ p.notes.disabled-note {
   color: var(--sos-text-primary);
 }
 
+.sos-segment-header.sos-compact .sos-segment-label-display {
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: text;
+}
+
+.sos-segment-header.sos-compact .sos-segment-label-display:hover {
+  color: var(--sos-amber-bright, #f5b14a);
+}
+
+.sos-segment-header.sos-compact .sos-segment-label-editor {
+  min-width: 0;
+  width: min(220px, 100%);
+  height: var(--sos-button-height-md);
+  margin: 0;
+  padding: 2px 6px;
+  font-size: 1.05em;
+  font-weight: 600;
+}
+
+.sos-loop-segment-section.is-renaming .sos-segment-label-display {
+  display: none;
+}
+
 .sos-segment-preview-buttons {
   display: flex;
+  flex: 0 0 auto;
   gap: var(--sos-space-sm);
   align-items: center;
 }
@@ -817,6 +846,8 @@ button.sos-loop-preview-segment.sos-compact i {
 
 .sos-segment-title {
   display: flex;
+  flex: 1 1 auto;
+  min-width: 0;
   align-items: center;
   gap: 6px;
 }

@@ -8,7 +8,12 @@ import { PlaybackClock } from "./playback-clock.js";
 import { maybeLoopPlaylist } from "./playlist-loop.js";
 import { Silence } from "./silence.js";
 import { State } from "./state-manager.js";
-import { debug, PlaylistActionAuthority, waitForMedia } from "./utils.js";
+import {
+  debug,
+  isAudioUnlocked,
+  PlaylistActionAuthority,
+  waitForMedia,
+} from "./utils.js";
 
 const PLAYBACK_RECOVERY_IN_FLIGHT = new Set();
 const PLAYBACK_RECOVERY_SEEN = new Map();
@@ -125,6 +130,10 @@ export function queuePlaybackClockRecord(soundDoc, reason = "document playing", 
 
   const attempt = async (label) => {
     if (!soundDoc.playing || PlaybackClock.get(playlist)?.soundId === soundDoc.id) return;
+    if (!isAudioUnlocked() && !soundDoc.sound) {
+      debug(`[Clock] Delaying clock record for "${soundDoc.name}" until Foundry audio is unlocked.`);
+      return;
+    }
 
     const pausedOffset = soundDoc.pausedTime == null ? null : Number(soundDoc.pausedTime);
     const offsetSec = Number.isFinite(pausedOffset) && pausedOffset > 0 ? pausedOffset : null;
@@ -135,6 +144,11 @@ export function queuePlaybackClockRecord(soundDoc, reason = "document playing", 
       force,
     });
     if (recorded) return;
+
+    if (!isAudioUnlocked()) {
+      debug(`[Clock] Delaying media clock record for "${soundDoc.name}" until Foundry audio is unlocked.`);
+      return;
+    }
 
     const media = await waitForMedia(soundDoc);
     await PlaybackClock.record(playlist, soundDoc, media, {
@@ -175,6 +189,7 @@ async function _recoverOverduePlaylist(playlist, reason = "watchdog") {
   if (!playlist?.isOwner || !playlist.playing) return false;
   if (!_isSequentialOrShuffle(playlist)) return false;
   if (Flags.getPlaybackMode(playlist).soundscape) return false;
+  if (!isAudioUnlocked()) return false;
 
   const key = playlist.id;
   if (PLAYBACK_RECOVERY_IN_FLIGHT.has(key)) return false;

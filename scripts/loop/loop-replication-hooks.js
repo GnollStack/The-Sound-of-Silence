@@ -18,6 +18,43 @@ const SEGMENT_SKIP_RETRY_MS = 100;
 const SEGMENT_SKIP_MAX_ATTEMPTS = 8;
 const pendingSegmentSkipRetries = new Map();
 
+function hasNestedPath(root, path) {
+  if (!root || !path) return false;
+  let current = root;
+  for (const part of path.split(".")) {
+    if (!current || !Object.prototype.hasOwnProperty.call(current, part)) return false;
+    current = current[part];
+  }
+  return true;
+}
+
+function getNestedPath(root, path) {
+  if (!hasNestedPath(root, path)) return undefined;
+  let current = root;
+  for (const part of path.split(".")) {
+    current = current[part];
+  }
+  return current;
+}
+
+function hasModuleFlagChange(changes, path) {
+  if (!changes || !path) return false;
+
+  const flatKey = `flags.${MODULE_ID}.${path}`;
+  if (Object.prototype.hasOwnProperty.call(changes, flatKey)) return true;
+  if (foundry.utils.hasProperty(changes, flatKey)) return true;
+
+  return hasNestedPath(changes?.flags?.[MODULE_ID], path);
+}
+
+function getModuleFlagChange(changes, path) {
+  const flatKey = `flags.${MODULE_ID}.${path}`;
+  if (Object.prototype.hasOwnProperty.call(changes ?? {}, flatKey)) {
+    return changes[flatKey];
+  }
+  return getNestedPath(changes?.flags?.[MODULE_ID], path);
+}
+
 function segmentSkipRetryKey(soundDoc, seq) {
   return `${soundDoc.uuid ?? soundDoc.id}:${seq}`;
 }
@@ -52,13 +89,26 @@ function executeSegmentSkipWithRetry(soundDoc, targetIndex, seq, attempt = 1) {
 
 export function registerLoopReplicationHooks() {
   Hooks.on("updatePlaylistSound", (soundDoc, changes) => {
-    const moduleFlags = changes?.flags?.[MODULE_ID];
-    if (!moduleFlags) return;
+    const loopWithinPatch = getModuleFlagChange(changes, "loopWithin");
+    const loopWithinPatchObject = loopWithinPatch && typeof loopWithinPatch === "object"
+      ? loopWithinPatch
+      : null;
+    const hasLoopActiveChange =
+      hasModuleFlagChange(changes, "loopWithin.active") ||
+      Object.prototype.hasOwnProperty.call(loopWithinPatchObject ?? {}, "active");
+    const hasLoopEnabledChange =
+      hasModuleFlagChange(changes, "loopWithin.enabled") ||
+      Object.prototype.hasOwnProperty.call(loopWithinPatchObject ?? {}, "enabled");
 
-    const loopFlags = moduleFlags.loopWithin;
-    if (loopFlags) {
-      if (loopFlags.hasOwnProperty("active")) {
-        const isActive = loopFlags.active;
+    if (
+      hasModuleFlagChange(changes, "loopWithin") ||
+      hasLoopActiveChange ||
+      hasLoopEnabledChange
+    ) {
+      if (hasLoopActiveChange) {
+        const isActive = hasModuleFlagChange(changes, "loopWithin.active")
+          ? getModuleFlagChange(changes, "loopWithin.active")
+          : loopWithinPatchObject?.active;
         if (isActive) {
           scheduleLoopWithin(soundDoc);
         } else {
@@ -66,15 +116,18 @@ export function registerLoopReplicationHooks() {
         }
       }
 
-      if (loopFlags.hasOwnProperty("enabled")) {
+      if (hasLoopEnabledChange) {
+        const isEnabled = hasModuleFlagChange(changes, "loopWithin.enabled")
+          ? getModuleFlagChange(changes, "loopWithin.enabled")
+          : loopWithinPatchObject?.enabled;
         ui.playlists?.render();
-        if (!loopFlags.enabled) {
+        if (!isEnabled) {
           cancelLoopWithin(soundDoc);
         }
       }
     }
 
-    if (moduleFlags.segmentSkip) {
+    if (hasModuleFlagChange(changes, "segmentSkip")) {
       const segmentSkip = soundDoc.getFlag(MODULE_ID, "segmentSkip") ?? {};
       const { targetIndex, seq } = segmentSkip;
 
@@ -89,7 +142,7 @@ export function registerLoopReplicationHooks() {
       executeSegmentSkipWithRetry(soundDoc, targetIndex, seq);
     }
 
-    if (moduleFlags.loopBreak) {
+    if (hasModuleFlagChange(changes, "loopBreak")) {
       const loopBreak = soundDoc.getFlag(MODULE_ID, "loopBreak") ?? {};
       const { seq } = loopBreak;
 
@@ -104,7 +157,7 @@ export function registerLoopReplicationHooks() {
       executeLoopBreak(soundDoc);
     }
 
-    if (moduleFlags.loopDisable) {
+    if (hasModuleFlagChange(changes, "loopDisable")) {
       const loopDisable = soundDoc.getFlag(MODULE_ID, "loopDisable") ?? {};
       const { seq } = loopDisable;
 

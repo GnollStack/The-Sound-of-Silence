@@ -23,17 +23,28 @@ import {
 
 const AudioTimeout = foundry.audio.AudioTimeout;
 
+function hasModuleFlagChange(changes, key) {
+  if (!changes || !key) return false;
+
+  const flatKey = `flags.${MODULE_ID}.${key}`;
+  if (Object.prototype.hasOwnProperty.call(changes, flatKey)) return true;
+  if (foundry.utils.hasProperty(changes, flatKey)) return true;
+
+  const moduleFlags = changes?.flags?.[MODULE_ID];
+  return !!moduleFlags && Object.prototype.hasOwnProperty.call(moduleFlags, key);
+}
+
 export function registerTransitionReplicationHooks() {
   Hooks.on("updatePlaylist", async (pl, changes) => {
-    if (!changes?.flags?.[MODULE_ID]?.skipTransition) return;
+    if (!hasModuleFlagChange(changes, "skipTransition")) return;
     const next = pl.getFlag(MODULE_ID, "skipTransition");
     if (!next) return;
 
     const { fromSoundId, fadeMs, seq, gmId } = next;
     if (!fromSoundId || !Number.isFinite(fadeMs) || !Number.isFinite(seq)) return;
 
-    if (gmId === game.user.id || pl.isOwner) {
-      debug("[Skip-Sync] Skipping self/owner-triggered action");
+    if (gmId === game.user.id) {
+      debug("[Skip-Sync] Skipping self-triggered action");
       return;
     }
 
@@ -60,14 +71,14 @@ export function registerTransitionReplicationHooks() {
   });
 
   Hooks.on("updatePlaylist", async (pl, changes) => {
-    if (!changes?.flags?.[MODULE_ID]?.stopTransition) return;
+    if (!hasModuleFlagChange(changes, "stopTransition")) return;
     const stop = pl.getFlag(MODULE_ID, "stopTransition");
     if (!stop) return;
 
     const { soundIds, fadeMs, seq, gmId } = stop;
     if (!Array.isArray(soundIds) || !Number.isFinite(seq)) return;
 
-    if (gmId === game.user.id || pl.isOwner) return;
+    if (gmId === game.user.id) return;
 
     if (!shouldProcessAction(pl.id, seq)) {
       debug(`[Stop-Sync] Ignoring duplicate or out-of-order stop (seq ${seq})`);
@@ -122,13 +133,13 @@ export function registerTransitionReplicationHooks() {
   });
 
   Hooks.on("updatePlaylist", async (playlist, changes) => {
-    if (!changes?.flags?.[MODULE_ID]?.crossfadeTransition) return;
+    if (!hasModuleFlagChange(changes, "crossfadeTransition")) return;
     const cf = playlist.getFlag(MODULE_ID, "crossfadeTransition");
     if (!cf) return;
 
     const { incomingSoundId, outgoingSoundId, fadeMs, targetVolIn, seq, gmId } = cf;
 
-    if (gmId === game.user.id || playlist.isOwner) return;
+    if (gmId === game.user.id) return;
 
     if (!shouldProcessAction(playlist.id, seq)) {
       debug(`[Crossfade-Sync] Ignoring duplicate/out-of-order (seq ${seq})`);

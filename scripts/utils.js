@@ -129,6 +129,33 @@ export function ensureAudioContext() {
     }
 }
 
+export function isAudioUnlocked() {
+    const audio = game?.audio;
+    if (!audio) return false;
+    if (audio.locked === true || audio.unlocked === false) return false;
+    return ["music", "environment", "interface"].some((name) => {
+        const context = audio[name];
+        const sampleRate = Number(context?.sampleRate);
+        return Number.isFinite(sampleRate) && context?.state !== "closed";
+    });
+}
+
+function waitWithBrowserTimer(ms) {
+    const delay = Math.max(0, Number(ms) || 0);
+    return new Promise((resolve) => globalThis.setTimeout?.(resolve, delay));
+}
+
+export function waitForAudioOrBrowserDelay(ms) {
+    if (isAudioUnlocked()) {
+        try {
+            return AudioTimeout.wait(ms).catch(() => waitWithBrowserTimer(ms));
+        } catch (_) {
+            return waitWithBrowserTimer(ms);
+        }
+    }
+    return waitWithBrowserTimer(ms);
+}
+
 /**
  * A robust, non-polling utility to get the Foundry Sound object
  * from a PlaylistSound, which may not be immediately available.
@@ -156,7 +183,7 @@ export function waitForMedia(ps) {
                 debug(`[waitForMedia] ⌛ Timed out waiting for media for "${ps.name}"`);
                 return resolve(null);
             }
-            AudioTimeout.wait(interval).then(check);
+            waitForAudioOrBrowserDelay(interval).then(check);
         };
 
         debug(`[waitForMedia] ⏳ Waiting for media on "${ps.name}"...`);

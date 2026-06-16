@@ -23,6 +23,7 @@ import { Integrations } from "./integrations.js";
 // =========================================================================
 const _disabledActions = new Set();
 const _timestampProxyWarnings = new Set();
+const LOOP_SEGMENT_LABEL_MAX_LENGTH = 48;
 let _playlistScrollPreservationRegistered = false;
 let _currentlyPlayingTicker = null;
 const CURRENTLY_PLAYING_TICK_MS = 500;
@@ -333,6 +334,19 @@ function _getLoopSegmentBoundarySeconds(segment, numericKey, textKey) {
     return Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
 }
 
+function _getLoopSegmentLabel(segment, index = 0) {
+    const safeIndex = Number(index);
+    const fallback = `Loop Segment ${Number.isFinite(safeIndex) && safeIndex >= 0 ? safeIndex + 1 : 1}`;
+    const text = String(segment?.label ?? "")
+        .replace(/<[^>]*>/g, " ")
+        .replace(/[<>]/g, "")
+        .replace(/\s+/g, " ")
+        .trim()
+        .slice(0, LOOP_SEGMENT_LABEL_MAX_LENGTH)
+        .trim();
+    return text || fallback;
+}
+
 function _isSameLoopSegment(a, b) {
     if (!a || !b) return false;
     if (a === b) return true;
@@ -404,6 +418,7 @@ function _buildCurrentlyPlayingLoopUi(loopConfig, looper, playbackPosition) {
     const currentIndex = loopControlsVisible
         ? _getCurrentLoopSegmentIndex(segments, looper, playbackPosition?.currentTime)
         : null;
+    const currentSegment = currentIndex == null ? null : segments[currentIndex];
     const currentTime = Number(playbackPosition?.currentTime);
     const trackProgressPct = _clampPercent(Number(playbackPosition?.progressPct)).toFixed(2);
 
@@ -413,6 +428,7 @@ function _buildCurrentlyPlayingLoopUi(loopConfig, looper, playbackPosition) {
         showSegBand: loopControlsVisible,
         loopCurrentSegIdx1: currentIndex == null ? 0 : currentIndex + 1,
         loopTotalSegments: segments.length,
+        loopCurrentSegmentLabel: currentSegment ? _getLoopSegmentLabel(currentSegment, currentIndex) : "",
         loopTrackProgressPct: trackProgressPct,
         loopSegments: showSegmentedProgress
             ? segments.map((segment, index) => {
@@ -426,12 +442,15 @@ function _buildCurrentlyPlayingLoopUi(loopConfig, looper, playbackPosition) {
                     ? _clampPercent((end / timelineDuration) * 100)
                     : startPct;
                 const color = SEGMENT_COLORS[index % SEGMENT_COLORS.length] ?? "#ee9b3a";
+                const label = _getLoopSegmentLabel(segment, index);
                 const fillPct = isPast
                     ? 100
                     : (isCurrent && duration && Number.isFinite(currentTime)
                         ? _clampPercent(((currentTime - start) / duration) * 100)
                         : 0);
                 return {
+                    label,
+                    tooltip: `${label}: ${_formatCurrentlyPlayingTime(start)} - ${end != null ? _formatCurrentlyPlayingTime(end) : "--:--"}`,
                     isCurrent,
                     isPast,
                     color,
@@ -1314,6 +1333,7 @@ function _updateSegmentedProgressBar(bar, loopUi) {
         segmentEl.style.setProperty("--sos-loop-segment-color", segment?.color ?? "#ee9b3a");
         segmentEl.style.setProperty("--sos-loop-segment-soft-color", segment?.softColor ?? "rgba(238, 155, 58, 0.33)");
         segmentEl.style.setProperty("--sos-loop-segment-fill-color", segment?.fillColor ?? "rgba(238, 155, 58, 0.8)");
+        if (segment?.tooltip) segmentEl.dataset.tooltip = segment.tooltip;
 
         const fill = segmentEl.querySelector(".sos-progress-segment-fill");
         if (fill) fill.style.width = `${segment?.fillPct ?? "0.00"}%`;
@@ -1334,6 +1354,13 @@ function _updateSegBand(band, loopUi) {
 
     const totalEl = band.querySelector(".sos-seg-band-count .total");
     if (totalEl) totalEl.textContent = String(loopUi.loopTotalSegments || 0);
+
+    const nameEl = band.querySelector(".sos-seg-band-name");
+    if (nameEl) {
+        const label = loopUi.loopCurrentSegmentLabel || "";
+        nameEl.textContent = label;
+        nameEl.title = label;
+    }
 
     const disabledForUser = !game.user?.isGM;
     _setButtonDisabled(

@@ -3,6 +3,25 @@
 import { debug, toSec, formatTime, MODULE_ID, SEGMENT_COLORS, error } from "./utils.js";
 import { equalPowerCrossfade } from "./audio-fader.js";
 
+const LOOP_SEGMENT_LABEL_MAX_LENGTH = 48;
+
+function defaultLoopSegmentLabel(index = 0) {
+    const safeIndex = Number(index);
+    return `Loop Segment ${Number.isFinite(safeIndex) && safeIndex >= 0 ? safeIndex + 1 : 1}`;
+}
+
+function sanitizeLoopSegmentLabel(value, index = 0) {
+    const fallback = defaultLoopSegmentLabel(index);
+    const text = String(value ?? "")
+        .replace(/<[^>]*>/g, " ")
+        .replace(/[<>]/g, "")
+        .replace(/\s+/g, " ")
+        .trim()
+        .slice(0, LOOP_SEGMENT_LABEL_MAX_LENGTH)
+        .trim();
+    return text || fallback;
+}
+
 export class LoopPreviewer {
     constructor(app, html, data) {
         this.app = app;
@@ -91,6 +110,7 @@ export class LoopPreviewer {
                 $form: $el,
                 $startInput: $el.find('input[name*=".start"]'),
                 $endInput: $el.find('input[name*=".end"]'),
+                $labelInput: $el.find('input[name*=".label"]'),
                 $crossfadeInput: $el.find('input[name*=".crossfadeMs"]'),
                 $loopCountInput: $el.find('input[name*=".loopCount"]'),
                 $previewBtn: $el.find('button.sos-loop-preview-segment'),
@@ -106,6 +126,7 @@ export class LoopPreviewer {
 
     _readSegmentsFromInputs() {
         this.segments.forEach(seg => {
+            seg.label = sanitizeLoopSegmentLabel(seg.$labelInput.val(), seg.index);
             seg.startSec = toSec(seg.$startInput.val());
             seg.endSec = toSec(seg.$endInput.val());
             seg.crossfadeMs = Number(seg.$crossfadeInput.val()) || 0;
@@ -230,7 +251,8 @@ export class LoopPreviewer {
         if (!segment?.$timeTooltip) return;
 
         if (isVisible) {
-            const text = `${formatTime(segment.startSec, false)} - ${formatTime(segment.endSec, false)}`;
+            const label = sanitizeLoopSegmentLabel(segment.label, segment.index);
+            const text = `${label}: ${formatTime(segment.startSec, false)} - ${formatTime(segment.endSec, false)}`;
             const startPct = (segment.startSec / this.duration) * 100;
             const endPct = (segment.endSec / this.duration) * 100;
             const midPct = (startPct + endPct) / 2;
@@ -537,6 +559,7 @@ export class LoopPreviewer {
         const startSec = toSec(segment.$startInput.val());
         const endSec = toSec(segment.$endInput.val());
         const crossfadeMs = Number(segment.$crossfadeInput.val()) || 0;
+        const label = sanitizeLoopSegmentLabel(segment.$labelInput.val(), segment.index);
 
         // Validate segment duration
         const segmentDuration = endSec - startSec;
@@ -594,7 +617,7 @@ export class LoopPreviewer {
         const loopDurationMs = (endSec - startSec) * 1000;
         const delayUntilFirstFade = Math.max(50, loopDurationMs - safeCrossfadeMs);
 
-        debug(`[Previewer] Starting preview loop. Segment: ${startSec}-${endSec}, Duration: ${loopDurationMs}ms, First fade in: ${delayUntilFirstFade}ms`);
+        debug(`[Previewer] Starting preview loop "${label}". Segment: ${startSec}-${endSec}, Duration: ${loopDurationMs}ms, First fade in: ${delayUntilFirstFade}ms`);
 
         this.timeoutIds.push(setTimeout(performCrossfade, delayUntilFirstFade));
     }
@@ -615,6 +638,7 @@ export class LoopPreviewer {
         const startSec = toSec(segment.$startInput.val());
         const endSec = toSec(segment.$endInput.val());
         const crossfadeMs = Number(segment.$crossfadeInput.val()) || 0;
+        const label = sanitizeLoopSegmentLabel(segment.$labelInput.val(), segment.index);
 
         // Validate segment
         const segmentDuration = endSec - startSec;
@@ -633,7 +657,7 @@ export class LoopPreviewer {
         // Play from PREVIEW_WINDOW seconds before the crossfade point
         const playFromSec = Math.max(startSec, crossfadeStartSec - PREVIEW_WINDOW);
 
-        debug(`[Previewer] Preview loop point: playing from ${playFromSec.toFixed(2)}s, crossfade at ${crossfadeStartSec.toFixed(2)}s`);
+        debug(`[Previewer] Preview loop point "${label}": playing from ${playFromSec.toFixed(2)}s, crossfade at ${crossfadeStartSec.toFixed(2)}s`);
 
         try {
             // Create and start the first sound

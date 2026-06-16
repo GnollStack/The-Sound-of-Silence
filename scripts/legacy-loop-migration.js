@@ -327,7 +327,8 @@ function toPersistentLoopConfig(config) {
     active: Boolean(config?.active),
     startFromBeginning: config?.startFromBeginning !== false,
     segments: Array.isArray(config?.segments)
-      ? config.segments.map((segment) => ({
+      ? config.segments.map((segment, index) => ({
+        label: String(segment?.label ?? `Loop Segment ${index + 1}`),
         start: String(segment?.start ?? "00:00"),
         end: String(segment?.end ?? "00:00"),
         crossfadeMs: Math.max(0, Number(segment?.crossfadeMs) || 0),

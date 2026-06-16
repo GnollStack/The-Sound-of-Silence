@@ -1,7 +1,18 @@
 // cross-fade.js - Automatic cross-fading for Foundry VTT playlists
 
-import { MODULE_ID, debug, waitForMedia, logFeature, LogSymbols, safeStop, getNextSequence, error } from "./utils.js";
-import { equalPowerCrossfade, fadeOutAndStop } from "./audio-fader.js";
+import {
+  MODULE_ID,
+  debug,
+  waitForMedia,
+  waitForAudioOrBrowserDelay,
+  isAudioUnlocked,
+  logFeature,
+  LogSymbols,
+  safeStop,
+  getNextSequence,
+  error,
+} from "./utils.js";
+import { cancelActiveFade, equalPowerCrossfade, fadeOutAndStop } from "./audio-fader.js";
 import { Flags } from "./flag-service.js";
 import { PlaybackClock } from "./playback-clock.js";
 import { State } from "./state-manager.js";
@@ -19,12 +30,17 @@ function internalLoopOwnsPlayback(ps) {
 
 async function loadCrossfadeMedia(ps) {
   if (!ps) return null;
+  if (!isAudioUnlocked()) {
+    debug(`[CF] Skipping media load for "${ps.name}" until Foundry audio is unlocked.`);
+    return null;
+  }
 
   if (!ps.sound && typeof ps.load === "function") {
     try {
       await ps.load();
     } catch (err) {
       debug(`[CF] Failed to load media for "${ps.name}":`, err?.message ?? err);
+      if (!isAudioUnlocked()) return null;
     }
   }
 
@@ -36,19 +52,26 @@ export async function prepareIncomingCrossfadeMedia(ps) {
   if (!sound) return null;
 
   if (!sound.playing) {
-    sound.volume = 0;
     try {
+      cancelActiveFade(sound);
+      sound.volume = 0;
       await sound.play({ _fromCrossfade: true });
     } catch (err) {
       debug(`[CF] Failed to start incoming crossfade media for "${ps.name}":`, err?.message ?? err);
       return null;
     }
   } else if (!State.isSoundFading(sound)) {
-    sound.volume = 0;
+    try {
+      cancelActiveFade(sound);
+      sound.volume = 0;
+    } catch (err) {
+      debug(`[CF] Failed to prepare already-playing crossfade media for "${ps.name}":`, err?.message ?? err);
+      return null;
+    }
   }
 
   if (!sound.gain) {
-    await AudioTimeout.wait(200);
+    await waitForAudioOrBrowserDelay(200);
   }
 
   return sound;
@@ -68,9 +91,10 @@ export async function performCrossfade(playlist, soundToFade, { recovery = false
   const soundOut = soundToFade?.sound;
   if (!playlist || !soundToFade) return;
 
-  // Only the owner (GM) should execute playlist updates
-  if (!playlist.isOwner) {
-    debug(`[CF] Non-owner skipping crossfade execution for "${soundToFade.name}".`);
+  // Only the authorized GM should execute playlist updates. Other clients apply
+  // the replicated crossfadeTransition flag locally.
+  if (!playlist.isOwner || !game.user?.isGM) {
+    debug(`[CF] Non-authority client skipping crossfade execution for "${soundToFade.name}".`);
     return;
   }
 
@@ -269,7 +293,7 @@ export function cancelCrossfade(playlist) {
  * @param {boolean} [options.force=false] Cancel and replace an existing timer for the same sound.
  */
 export async function scheduleCrossfade(playlist, ps, { force = false } = {}) {
-  if (!playlist?.isOwner || !ps) return;
+  if (!playlist?.isOwner || !game.user?.isGM || !ps) return;
   if (![PM.SEQUENTIAL, PM.SHUFFLE].includes(playlist.mode)) return;
   if (!Flags.getPlaybackMode(playlist).crossfade) return;
 

@@ -5,6 +5,25 @@
  */
 import { MODULE_ID, toSec, debug, warn } from "./utils.js";
 
+const LOOP_SEGMENT_LABEL_MAX_LENGTH = 48;
+
+function defaultLoopSegmentLabel(index = 0) {
+    const safeIndex = Number(index);
+    return `Loop Segment ${Number.isFinite(safeIndex) && safeIndex >= 0 ? safeIndex + 1 : 1}`;
+}
+
+function sanitizeLoopSegmentLabel(value, index = 0) {
+    const fallback = defaultLoopSegmentLabel(index);
+    const text = String(value ?? "")
+        .replace(/<[^>]*>/g, " ")
+        .replace(/[<>]/g, "")
+        .replace(/\s+/g, " ")
+        .trim()
+        .slice(0, LOOP_SEGMENT_LABEL_MAX_LENGTH)
+        .trim();
+    return text || fallback;
+}
+
 /**
  * Defines the schema for all module flags, including type, defaults, and validation rules.
  * This structure is used by the FlagService to ensure data integrity.
@@ -294,8 +313,9 @@ class FlagService {
         const validatedConfig = this._validate(migrated, FlagSchemas.PLAYLIST_SOUND.loopWithin);
 
         // Validate each segment individually
-        validatedConfig.segments = (validatedConfig.segments || []).map(seg => {
+        validatedConfig.segments = (validatedConfig.segments || []).map((seg, index) => {
             const validated = {
+                label: sanitizeLoopSegmentLabel(seg.label, index),
                 start: seg.start || "00:00",
                 end: seg.end || "00:00",
                 crossfadeMs: this._validateNumber(seg.crossfadeMs, 1000, 0), // min: 0

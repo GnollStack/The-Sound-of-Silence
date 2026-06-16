@@ -7,8 +7,45 @@ import { Flags } from "./flag-service.js";
 
 // max amount of Loop Segments
 const MAX_SEGMENTS = 16;
+const LOOP_SEGMENT_LABEL_MAX_LENGTH = 48;
 let wrappersRegistered = false;
 let hooksRegistered = false;
+
+function defaultLoopSegmentLabel(index = 0) {
+  const safeIndex = Number(index);
+  return `Loop Segment ${Number.isFinite(safeIndex) && safeIndex >= 0 ? safeIndex + 1 : 1}`;
+}
+
+function isGeneratedLoopSegmentLabel(value) {
+  return /^Loop Segment \d+$/i.test(String(value ?? "").trim());
+}
+
+function sanitizeLoopSegmentLabel(value, index = 0) {
+  const fallback = defaultLoopSegmentLabel(index);
+  const text = String(value ?? "")
+    .replace(/<[^>]*>/g, " ")
+    .replace(/[<>]/g, "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, LOOP_SEGMENT_LABEL_MAX_LENGTH)
+    .trim();
+  return text || fallback;
+}
+
+function normalizeLoopSegmentLabel(value, index = 0) {
+  const label = sanitizeLoopSegmentLabel(value, index);
+  return isGeneratedLoopSegmentLabel(label) ? defaultLoopSegmentLabel(index) : label;
+}
+
+function escapeHtml(value) {
+  return String(value ?? "").replace(/[&<>"']/g, (char) => ({
+    "&": "&amp;",
+    "<": "&lt;",
+    ">": "&gt;",
+    "\"": "&quot;",
+    "'": "&#39;",
+  }[char]));
+}
 
 // =========================================================================
 // Flag Constants & Defaults
@@ -258,8 +295,9 @@ export function registerSoundConfigWrappers() {
           debug("[SoS Debug] 3. Processing and validating segments...");
           cleanSegments = Array.from(segments.values())
             .filter(segData => typeof segData.start !== 'undefined' && typeof segData.end !== 'undefined')
-            .map((segData) => {
+            .map((segData, index) => {
               const cleaned = {
+                label: sanitizeLoopSegmentLabel(segData.label, index),
                 crossfadeMs: Math.max(0, Number(segData.crossfadeMs) ?? 0),
                 loopCount: Math.max(0, parseInt(segData.loopCount, 10) || 0),
               };
@@ -280,9 +318,17 @@ export function registerSoundConfigWrappers() {
               cleaned.start = norm(segData.start);
               cleaned.end = norm(segData.end);
               cleaned.skipToNext = !!segData.skipToNext;
+              cleaned._labelWasGenerated = isGeneratedLoopSegmentLabel(cleaned.label);
               return cleaned;
             });
           cleanSegments.sort((a, b) => toSec(a.start) - toSec(b.start));
+          cleanSegments = cleanSegments.map((segment, index) => {
+            const label = segment._labelWasGenerated
+              ? defaultLoopSegmentLabel(index)
+              : sanitizeLoopSegmentLabel(segment.label, index);
+            const { _labelWasGenerated, ...cleanSegment } = segment;
+            return { ...cleanSegment, label };
+          });
         }
         cleanLoopFlags.segments = cleanSegments;
         // --- (End of segment processing) ---
@@ -354,6 +400,7 @@ function _createSegmentHtml(segmentData, index) {
     const field = (key) => `flags.${MODULE_ID}.${LOOP_KEY}.segments.${index}.${key}`;
 
     const data = foundry.utils.mergeObject({
+      label: defaultLoopSegmentLabel(index),
       start: "00:00.000",
       end: "00:00.000",
       crossfadeMs: 1000,
@@ -361,6 +408,8 @@ function _createSegmentHtml(segmentData, index) {
       skipToNext: false
     }, segmentData || {});
 
+    const safeLabel = normalizeLoopSegmentLabel(data.label, index);
+    const safeLabelHtml = escapeHtml(safeLabel);
     const safeStart = String(data.start).replace(/[<>"']/g, '');
     const safeEnd = String(data.end).replace(/[<>"']/g, '');
     const safeCrossfade = Math.max(0, Number(data.crossfadeMs) ?? 1000);
@@ -375,7 +424,18 @@ function _createSegmentHtml(segmentData, index) {
         <div class="sos-segment-header sos-compact collapsible" style="background: linear-gradient(90deg, ${startColor} 10%, ${endColor} 90%);">
           <div class="sos-segment-title">
             <i class="fas fa-chevron-right segment-toggle-icon"></i>
-            <h4>Loop Segment ${index + 1}</h4>
+            <h4 class="sos-segment-label-display"
+                title="Double-click to rename">${safeLabelHtml}</h4>
+            <input type="text"
+                   class="sos-segment-label-editor"
+                   value="${safeLabelHtml}"
+                   maxlength="${LOOP_SEGMENT_LABEL_MAX_LENGTH}"
+                   aria-label="Loop segment name"
+                   hidden>
+            <input type="hidden"
+                   class="sos-segment-label-input"
+                   name="${field("label")}"
+                   value="${safeLabelHtml}">
           </div>
           <div class="sos-segment-preview-buttons">
             <button type="button" class="loop-stop sos-compact" data-tooltip="Stop Preview">
@@ -672,22 +732,71 @@ function _registerSoundConfigHooks() {
   const $addButton = $mainBlock.find('button.sos-add-loop-segment');
   const $removeButton = $mainBlock.find('button.sos-remove-loop-segment');
 
+  function setSegmentLabel($section, label, index) {
+    const normalized = normalizeLoopSegmentLabel(label, index);
+    $section.find(".sos-segment-label-input").val(normalized);
+    $section.find(".sos-segment-label-editor").val(normalized);
+    $section.find(".sos-segment-label-display").text(normalized);
+    return normalized;
+  }
+
+  function beginLabelEdit($section, selectAll = false) {
+    const $editor = $section.find(".sos-segment-label-editor");
+    const $hidden = $section.find(".sos-segment-label-input");
+    if (!$editor.length || !$hidden.length) return;
+
+    const currentLabel = $hidden.val() || defaultLoopSegmentLabel($section.index());
+    $editor.data("originalLabel", currentLabel).val(currentLabel);
+    $section.addClass("is-renaming");
+    $editor.prop("hidden", false).trigger("focus");
+    if (selectAll) $editor[0]?.select?.();
+  }
+
+  function commitLabelEdit($section, { cancel = false } = {}) {
+    if (!$section.hasClass("is-renaming")) return;
+
+    const $editor = $section.find(".sos-segment-label-editor");
+    const originalLabel = $editor.data("originalLabel");
+    const index = Number($section.attr("data-segment-index")) || $section.index();
+    const nextLabel = cancel ? originalLabel : $editor.val();
+
+    setSegmentLabel($section, nextLabel, index);
+    $section.removeClass("is-renaming");
+    $editor.prop("hidden", true).removeData("originalLabel");
+    app._soundOfSilencePreviewer?.rescanSegments();
+  }
+
   function refreshUI() {
     const segmentCount = $segmentsContainer.children().length;
     $removeButton.prop('disabled', segmentCount <= 1);
     const atLimit = segmentCount >= MAX_SEGMENTS;
     $addButton.prop('disabled', atLimit);
     $addButton.attr('data-tooltip', atLimit ? `Maximum of ${MAX_SEGMENTS} segments reached` : 'Add Loop Section');
-    $segmentsContainer.find("h4").each(function (i) {
-      $(this).text(`Loop Segment ${i + 1}`);
+
+    $segmentsContainer.children(".sos-loop-segment-section").each(function (i) {
+      const $section = $(this);
+      $section.attr("data-segment-index", i);
+      $section.find(`[name^="flags.${MODULE_ID}.${LOOP_KEY}.segments."]`).each(function () {
+        this.name = this.name.replace(/segments\.\d+\./, `segments.${i}.`);
+      });
+      $section.find("[data-segment-index]").attr("data-segment-index", i);
+
+      const rawLabel = $section.find(".sos-segment-label-input").val();
+      const label = isGeneratedLoopSegmentLabel(rawLabel)
+        ? defaultLoopSegmentLabel(i)
+        : sanitizeLoopSegmentLabel(rawLabel, i);
+      setSegmentLabel($section, label, i);
     });
+
     app._soundOfSilencePreviewer?.rescanSegments();
   }
 
   function addSegment(data = {}, index) {
     debug(`[SoS Debug] Adding new segment HTML. Index: ${index ?? 'new'}, Data:`, data);
     const newIndex = index ?? $segmentsContainer.children().length;
-    $segmentsContainer.append(_createSegmentHtml(data, newIndex));
+    const $segment = _createSegmentHtml(data, newIndex);
+    $segmentsContainer.append($segment);
+    return $segment;
   }
 
   const segments = Array.isArray(loop.segments) ? loop.segments : Object.values(loop.segments || {});
@@ -699,8 +808,9 @@ function _registerSoundConfigHooks() {
 
   $mainBlock.find('button.sos-add-loop-segment').on('click', (ev) => {
     ev.preventDefault();
-    addSegment();
+    const $segment = addSegment();
     refreshUI();
+    beginLabelEdit($segment, true);
   });
 
   $mainBlock.find('button.sos-remove-loop-segment').on('click', (ev) => {
@@ -710,6 +820,7 @@ function _registerSoundConfigHooks() {
   });
 
   $mainBlock.on('click', '.sos-segment-header.collapsible', function (ev) {
+    if ($(ev.target).closest(".sos-segment-label-display, .sos-segment-label-editor").length) return;
     ev.preventDefault();
     const $header = $(this);
     const $content = $header.next('.sos-segment-content');
@@ -720,6 +831,30 @@ function _registerSoundConfigHooks() {
 
   $mainBlock.on('click', '.sos-segment-preview-buttons', function (ev) {
     ev.stopPropagation();
+  });
+
+  $mainBlock.on("click", ".sos-segment-label-display, .sos-segment-label-editor", function (ev) {
+    ev.stopPropagation();
+  });
+
+  $mainBlock.on("dblclick", ".sos-segment-label-display", function (ev) {
+    ev.preventDefault();
+    ev.stopPropagation();
+    beginLabelEdit($(this).closest(".sos-loop-segment-section"), true);
+  });
+
+  $mainBlock.on("keydown", ".sos-segment-label-editor", function (ev) {
+    if (ev.key === "Enter") {
+      ev.preventDefault();
+      commitLabelEdit($(this).closest(".sos-loop-segment-section"));
+    } else if (ev.key === "Escape") {
+      ev.preventDefault();
+      commitLabelEdit($(this).closest(".sos-loop-segment-section"), { cancel: true });
+    }
+  });
+
+  $mainBlock.on("blur", ".sos-segment-label-editor", function () {
+    commitLabelEdit($(this).closest(".sos-loop-segment-section"));
   });
 
   html.find(`input[name="${field("enabled")}"]`).on("change", (ev) => {

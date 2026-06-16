@@ -215,6 +215,104 @@ function clearFadeTokenAfter(sound, token, durationMs, bufferMs = 50) {
     .catch(() => { });
 }
 
+function createCancellableTimeout(delayMs) {
+  let timerId = null;
+  let cancelled = false;
+  const delay = Math.max(1, Math.min(Math.floor(Number(delayMs) || 0), 2147483000));
+  const complete = new Promise((resolve) => {
+    timerId = globalThis.setTimeout(() => {
+      timerId = null;
+      if (!cancelled) resolve();
+    }, delay);
+  });
+
+  return {
+    complete,
+    cancel() {
+      cancelled = true;
+      if (timerId !== null) {
+        globalThis.clearTimeout(timerId);
+        timerId = null;
+      }
+    },
+    get cancelled() {
+      return cancelled;
+    },
+  };
+}
+
+function isCurveEventCollision(err) {
+  const message = String(err?.message ?? err ?? "");
+  return /curve event|setValueCurveAtTime/i.test(message);
+}
+
+function useRampSampleFallback() {
+  const ua = String(globalThis.navigator?.userAgent ?? "");
+  return /\bFirefox\//i.test(ua);
+}
+
+function scheduleCurveAsRamps(gain, context, curve, startTime, durationSec, label = "gain") {
+  const now = Number(context?.currentTime);
+  const currentTime = Number.isFinite(now) ? now : 0;
+  const safeStartTime = Math.max(Number(startTime) || currentTime, currentTime + 0.001);
+  const safeDuration = Math.max(0, Number(durationSec) || 0);
+  const lastIndex = curve.length - 1;
+
+  gain.setValueAtTime(clampVolume(curve[0], 0), safeStartTime);
+
+  if (lastIndex <= 0 || safeDuration <= 0) return;
+
+  for (let i = 1; i < curve.length; i++) {
+    const time = safeStartTime + (safeDuration * i / lastIndex);
+    gain.linearRampToValueAtTime(clampVolume(curve[i], 0), time);
+  }
+
+  debug(`[AF] ${label}: Scheduled Firefox-compatible sampled ramps (${curve.length} samples).`);
+}
+
+function scheduleGainCurve(gain, context, curve, startTime, durationSec, label = "gain") {
+  if (useRampSampleFallback()) {
+    scheduleCurveAsRamps(gain, context, curve, startTime, durationSec, label);
+    return;
+  }
+
+  try {
+    gain.setValueCurveAtTime(curve, startTime, durationSec);
+  } catch (err) {
+    if (!isCurveEventCollision(err)) throw err;
+    debug(`[AF] ${label}: Curve collision; falling back to sampled ramps.`);
+    gain.cancelScheduledValues(0);
+    scheduleCurveAsRamps(gain, context, curve, startTime, durationSec, label);
+  }
+}
+
+function cancelGainAutomation(gain, context, value, label = "gain") {
+  const now = Number(context?.currentTime);
+  const when = Number.isFinite(now) ? now : 0;
+  const safeValue = clampVolume(value, 0);
+
+  try {
+    if (typeof gain.cancelAndHoldAtTime === "function") {
+      gain.cancelAndHoldAtTime(when);
+    } else {
+      gain.cancelScheduledValues(when);
+    }
+  } catch (err) {
+    if (!isCurveEventCollision(err)) throw err;
+    debug(`[AF] ${label}: Firefox-safe full automation cancel after curve collision.`);
+    gain.cancelScheduledValues(0);
+  }
+
+  try {
+    gain.setValueAtTime(safeValue, when);
+  } catch (err) {
+    if (!isCurveEventCollision(err)) throw err;
+    debug(`[AF] ${label}: Retrying setValueAtTime after full curve cancellation.`);
+    gain.cancelScheduledValues(0);
+    gain.setValueAtTime(safeValue, when);
+  }
+}
+
 export function cancelActiveFade(sound) {
   const gain = sound?.gain;
   const context = sound?.context;
@@ -223,13 +321,11 @@ export function cancelActiveFade(sound) {
     return;
   }
 
-  const now = context.currentTime;
   const currentValue = Number.isFinite(gain.value)
     ? gain.value
     : clampVolume(sound.volume, 0);
 
-  gain.cancelScheduledValues(now);
-  gain.setValueAtTime(currentValue, now);
+  cancelGainAutomation(gain, context, currentValue, "cancelActiveFade");
   State.clearFadingSound(sound);
 }
 
@@ -248,7 +344,7 @@ export function advancedFade(sound, { targetVol, duration }) {
   if (!sound?.gain) return;
   targetVol = clampVolume(targetVol, 1);
   if (!Number.isFinite(duration) || duration <= 0) {
-    State.clearFadingSound(sound);
+    cancelActiveFade(sound);
     sound.volume = targetVol;
     return null;
   }
@@ -267,11 +363,8 @@ export function advancedFade(sound, { targetVol, duration }) {
   startVol = clampVolume(startVol, targetVol);
 
   // Cancel any existing scheduled values and clear their token before replacing them.
-  gain.cancelScheduledValues(now);
+  cancelGainAutomation(gain, context, startVol, "advancedFade");
   State.clearFadingSound(sound);
-
-  // Establish a known value at current time (Web Audio best practice after cancel)
-  gain.setValueAtTime(startVol, now);
 
   const durationSec = duration / 1000;
 
@@ -292,7 +385,7 @@ export function advancedFade(sound, { targetVol, duration }) {
   debug(`[AF] Fade-${direction} (${curveType}): ${startVol.toFixed(3)} → ${targetVol.toFixed(3)} over ${duration}ms (${resolution} samples)`);
 
   // Schedule on the audio thread (slight offset to avoid collision with setValueAtTime)
-  gain.setValueCurveAtTime(curve, now + 0.001, durationSec);
+  scheduleGainCurve(gain, context, curve, now + 0.001, durationSec, `fade-${direction}`);
   clearFadeTokenAfter(sound, token, duration);
   return token;
 }
@@ -348,8 +441,8 @@ export function equalPowerCrossfade(soundOut, soundIn, duration, { targetVolIn: 
   const safeTargetVolIn = clampVolume(resolvedTargetVolIn, 1);
 
   if (!Number.isFinite(duration) || duration <= 0) {
-    State.clearFadingSound(soundOut);
-    State.clearFadingSound(soundIn);
+    cancelActiveFade(soundOut);
+    cancelActiveFade(soundIn);
     soundOut.volume = 0;
     soundIn.volume = safeTargetVolIn;
     return null;
@@ -395,15 +488,15 @@ export function equalPowerCrossfade(soundOut, soundIn, duration, { targetVolIn: 
 
   debug(`[AF] Crossfade: ${resolution} samples over ${duration}ms, targetVolIn=${targetVolIn.toFixed(3)}`);
 
-  gainOut.cancelScheduledValues(contextOut.currentTime);
-  gainIn.cancelScheduledValues(contextIn.currentTime);
+  cancelGainAutomation(gainOut, contextOut, startVolOut, "crossfade-out");
+  cancelGainAutomation(gainIn, contextIn, 0, "crossfade-in");
   State.clearFadingSound(soundOut);
   State.clearFadingSound(soundIn);
 
   // Establish known starting values before scheduling curves (Web Audio API spec requirement).
-  // After cancelScheduledValues, the gain value can be in an undefined state.
-  gainOut.setValueAtTime(startVolOut, contextOut.currentTime);
-  gainIn.setValueAtTime(0, contextIn.currentTime);
+  // The curve starts a tick later so Firefox never sees a new event inside an active curve.
+  const outStartTime = contextOut.currentTime + 0.001;
+  const inStartTime = contextIn.currentTime + 0.001;
   const outToken = State.startFade(soundOut, {
     type: "crossfade-out",
     duration,
@@ -415,8 +508,8 @@ export function equalPowerCrossfade(soundOut, soundIn, duration, { targetVolIn: 
     targetVol: targetVolIn,
   });
 
-  gainOut.setValueCurveAtTime(curveOut, contextOut.currentTime, durationSec);
-  gainIn.setValueCurveAtTime(curveIn, contextIn.currentTime, durationSec);
+  scheduleGainCurve(gainOut, contextOut, curveOut, outStartTime, durationSec, "crossfade-out");
+  scheduleGainCurve(gainIn, contextIn, curveIn, inStartTime, durationSec, "crossfade-in");
   clearFadeTokenAfter(soundOut, outToken, duration, 500);
   clearFadeTokenAfter(soundIn, inToken, duration, 500);
   return { outToken, inToken };
@@ -431,7 +524,8 @@ export function scheduleEndOfTrackFade(ps) {
   const playlist = ps.parent;
   const sound = ps.sound;
 
-  if (!playlist || !sound || !sound.playing) return;
+  if (!playlist || !sound || !sound.playing || ps.playing !== true) return;
+  if (State.isPlaylistStopping(playlist) || State.isPlaylistCrossfading(playlist)) return;
 
   // Don't schedule end-of-track fade for sounds set to loop natively.
   // The loop would restart the sound mid-fade, causing gain.value to become NaN.
@@ -456,9 +550,13 @@ export function scheduleEndOfTrackFade(ps) {
   if (currentTime >= fadeStartTime) return;
 
   const delayMs = (fadeStartTime - currentTime) * 1000;
-  const timer = new foundry.audio.AudioTimeout(delayMs, {
-    context: sound.context,
-  });
+  const existing = State.getEndOfTrackFade(ps);
+  if (existing) {
+    existing.cancel?.();
+    State.clearEndOfTrackFade(ps);
+  }
+
+  const timer = createCancellableTimeout(delayMs);
 
   State.setEndOfTrackFade(ps, timer);
   debug(
@@ -468,7 +566,7 @@ export function scheduleEndOfTrackFade(ps) {
 
   timer.complete.then(() => {
     // Verify the timer wasn't cancelled and the sound is still playing
-    if (!State.getEndOfTrackFade(ps) || !sound.playing) return;
+    if (!State.getEndOfTrackFade(ps) || !sound.playing || ps.playing !== true) return;
 
     State.clearEndOfTrackFade(ps);
     debug(`[Fade] Starting end-of-track configured fade-out for "${ps.name}"`);

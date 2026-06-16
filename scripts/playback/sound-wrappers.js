@@ -3,6 +3,7 @@
  * @description Audio-level Foundry wrappers for playback, pause, sync, and volume updates.
  */
 import {
+  cancelActiveFade,
   scheduleEndOfTrackFade,
 } from "../audio-fader.js";
 import { scheduleCrossfade } from "../cross-fade.js";
@@ -53,11 +54,18 @@ function _isSequentialOrShuffle(playlist) {
   ].includes(playlist?.mode);
 }
 
+function _playlistHasActiveSosFade(playlist) {
+  return Array.from(playlist?.sounds ?? []).some((sound) =>
+    sound?.sound && State.isSoundFading(sound.sound)
+  );
+}
+
 function _shouldDeferSyncForCrossfade(ps) {
   const playlist = ps?.parent;
   if (!playlist || !_isSequentialOrShuffle(playlist)) return false;
   if (!Flags.getPlaybackMode(playlist).crossfade) return false;
   if (State.isPlaylistCrossfading(playlist)) return true;
+  if (_playlistHasActiveSosFade(playlist)) return true;
   if (!ps.playing || ps.sound?.playing) return false;
 
   return playlist.sounds.some((sound) =>
@@ -69,6 +77,17 @@ function _shouldDeferSyncForCrossfade(ps) {
 
 function _schedulePostPlayActions(ps, sound, { fromCrossfade = false } = {}) {
   const playlist = ps.parent;
+  if (!fromCrossfade && ps?.playing !== true) {
+    const pendingFade = State.getEndOfTrackFade(ps);
+    if (pendingFade) {
+      pendingFade.cancel?.();
+      State.clearEndOfTrackFade(ps);
+    }
+    if (sound?.playing) safeStop(sound, "stale document post-play");
+    debug(`[PostPlay] Skipping post-play actions for "${ps.name}" because the document is no longer playing.`);
+    return;
+  }
+
   const isResume = Number.isFinite(ps.pausedTime);
   const resumeOffset = isResume ? Number(ps.pausedTime) : null;
   const loopConfig = Flags.getLoopConfig(ps);
@@ -127,6 +146,22 @@ function _schedulePostPlayActions(ps, sound, { fromCrossfade = false } = {}) {
 }
 
 export function registerSoundPlaybackWrappers() {
+  libWrapper.register(
+    MODULE_ID,
+    "foundry.audio.Sound.prototype.stop",
+    function (wrapped, ...args) {
+      if (this?.gain) {
+        try {
+          cancelActiveFade(this);
+        } catch (err) {
+          debug(`[Sound.stop WRAPPER] Failed to cancel active fade before stop:`, err?.message ?? err);
+        }
+      }
+      return wrapped.call(this, ...args);
+    },
+    "WRAPPER"
+  );
+
   libWrapper.register(
     MODULE_ID,
     "foundry.audio.Sound.prototype.play",

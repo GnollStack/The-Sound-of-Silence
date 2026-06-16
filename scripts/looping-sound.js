@@ -16,6 +16,17 @@ const POSITION_CHECK_INTERVAL = 50;    // ms between checks
 const PRELOAD_WINDOW = 0.5;            // seconds before crossfade
 const HANDOFF_BUFFER = 50;             // ms buffer after crossfade
 
+function getSegmentLabel(segment, index = 0) {
+  const safeIndex = Number(index);
+  const fallback = `Loop Segment ${Number.isFinite(safeIndex) && safeIndex >= 0 ? safeIndex + 1 : 1}`;
+  const text = String(segment?.label ?? "")
+    .replace(/<[^>]*>/g, " ")
+    .replace(/[<>]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  return text || fallback;
+}
+
 
 
 export class LoopingSound {
@@ -352,14 +363,15 @@ export class LoopingSound {
     }
 
     const fireAt = nextSegment.startSec;
-    debug(`[LoopingSound] Arming timer for segment at ${nextSegment.start} for "${this.ps.name}". Will fire at ${fireAt.toFixed(2)}s.`);
+    const segmentLabel = getSegmentLabel(nextSegment, this.config.segments.indexOf(nextSegment));
+    debug(`[LoopingSound] Arming timer for "${segmentLabel}" at ${nextSegment.start} for "${this.ps.name}". Will fire at ${fireAt.toFixed(2)}s.`);
     this.mainSchedule = this.activeSound.schedule(() => this._handleLoopTrigger(nextSegment), fireAt);
   }
 
   _handleLoopTrigger(segment) {
     if (this.isDestroyed || !this.ps?.playing) return;
 
-    debug(`[LoopingSound] Triggered loop for segment starting at ${segment.start}.`);
+    debug(`[LoopingSound] Triggered loop for "${getSegmentLabel(segment, this.config.segments.indexOf(segment))}" starting at ${segment.start}.`);
     this._setActiveLoopSegment(segment);
     this.loopsCompleted = 0;
 
@@ -400,7 +412,7 @@ export class LoopingSound {
     const untilFade = timeToEnd - crossfadeSec;
 
     logFeature(LogSymbols.LOOP, 'Loop',
-      `Arm crossfade: ${this.ps.name} [${formatTime(startSec)}-${formatTime(endSec)}]`,
+      `Arm crossfade: ${this.ps.name} ${getSegmentLabel(this.activeLoopSegment, this.config.segments.indexOf(this.activeLoopSegment))} [${formatTime(startSec)}-${formatTime(endSec)}]`,
       { untilFade: untilFade.toFixed(2) + 's' }
     );
 
@@ -522,7 +534,7 @@ export class LoopingSound {
     // skipToNext is ON
     if (nextSegment) {
       // Skip directly to the next segment
-      debug(`[LoopingSound] Skipping to next segment at ${nextSegment.start}`);
+      debug(`[LoopingSound] Skipping to next segment "${getSegmentLabel(nextSegment, this.config.segments.indexOf(nextSegment))}" at ${nextSegment.start}`);
       await this._skipToSegment(nextSegment);
     } else {
       // This is the last segment and skipToNext is ON - fade out and advance
@@ -887,7 +899,7 @@ export class LoopingSound {
     }
 
     const nextSegment = this.config.segments[nextIndex];
-    debug(`[LoopingSound] Skipping to next segment: "${nextSegment.label}" at ${nextSegment.start}`);
+    debug(`[LoopingSound] Skipping to next segment: "${getSegmentLabel(nextSegment, nextIndex)}" at ${nextSegment.start}`);
     this._skipToSegment(nextSegment);
   }
 
@@ -906,7 +918,7 @@ export class LoopingSound {
     }
 
     const prevSegment = this.config.segments[prevIndex];
-    debug(`[LoopingSound] Skipping to previous segment: "${prevSegment.label}" at ${prevSegment.start}`);
+    debug(`[LoopingSound] Skipping to previous segment: "${getSegmentLabel(prevSegment, prevIndex)}" at ${prevSegment.start}`);
     this._skipToSegment(prevSegment);
   }
 
@@ -932,7 +944,7 @@ export class LoopingSound {
       return;
     }
 
-    debug(`[LoopingSound] Skipping to segment index ${index} at ${targetSegment.start}`);
+    debug(`[LoopingSound] Skipping to segment index ${index} "${getSegmentLabel(targetSegment, index)}" at ${targetSegment.start}`);
     this._skipToSegment(targetSegment);
   }
 

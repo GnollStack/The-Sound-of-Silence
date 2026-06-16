@@ -1006,7 +1006,8 @@ body.theme-light .currently-playing .sos-now-playing.sos-progress-card {
 
 .currently-playing .sos-progress-card .sos-seg-band-label {
   display: inline-flex;
-  flex: 0 0 auto;
+  flex: 1 1 auto;
+  min-width: 0;
   align-items: center;
   gap: 3px;
   margin-right: 2px;
@@ -1016,7 +1017,20 @@ body.theme-light .currently-playing .sos-now-playing.sos-progress-card {
   font-variant-numeric: tabular-nums;
 }
 
+.currently-playing .sos-progress-card .sos-seg-band-count {
+  flex: 0 0 auto;
+}
+
+.currently-playing .sos-progress-card .sos-seg-band-name {
+  min-width: 0;
+  max-width: 100%;
+  color: var(--sos-text-secondary);
+  font-weight: 600;
+  font-variant-numeric: normal;
+}
+
 .currently-playing .sos-progress-card .sos-seg-band-label > i {
+  flex: 0 0 auto;
   color: var(--sos-checkbox-accent);
   font-size: 9px;
 }
