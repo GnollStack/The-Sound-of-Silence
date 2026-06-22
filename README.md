@@ -470,7 +470,7 @@ Submitted ideas may be adapted, declined, or implemented by GnollStack. Any acce
 
 ## AI-Assisted Development
 
-This module is developed and maintained with the help of AI-assisted tools for coding, debugging, documentation, and testing.
+This module is developed and maintained with the help of AI-assisted tools for coding, debugging, and testing.
 
 I care about the quality, behavior, performance, security, and long-term maintainability of this module, and I take full responsibility for what ships. AI assistance does not replace review, testing, debugging, or security and design judgment.
 
