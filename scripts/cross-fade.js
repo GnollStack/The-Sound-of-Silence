@@ -47,6 +47,59 @@ async function loadCrossfadeMedia(ps) {
   return waitForMedia(ps);
 }
 
+export function describeCrossfadeAudioGraph(sound) {
+  if (!sound) {
+    return {
+      hasSound: false,
+      playing: false,
+      hasGain: false,
+      hasContext: false,
+    };
+  }
+
+  const gainValue = Number(sound.gain?.value);
+  const volume = Number(sound.volume);
+  const currentTime = Number(sound.currentTime);
+  const duration = Number(sound.duration);
+
+  return {
+    hasSound: true,
+    playing: Boolean(sound.playing),
+    hasGain: Boolean(sound.gain),
+    hasContext: Boolean(sound.context),
+    contextState: sound.context?.state ?? null,
+    gainValue: Number.isFinite(gainValue) ? Number(gainValue.toFixed(3)) : null,
+    volume: Number.isFinite(volume) ? Number(volume.toFixed(3)) : null,
+    currentTime: Number.isFinite(currentTime) ? Number(currentTime.toFixed(3)) : null,
+    duration: Number.isFinite(duration) ? Number(duration.toFixed(3)) : null,
+  };
+}
+
+async function waitForCrossfadeAudioGraph(sound, ps, timeoutMs = 1000) {
+  const timeout = Math.max(0, Number(timeoutMs) || 0);
+  const startedAt = Date.now();
+  let loggedWait = false;
+
+  while (Date.now() - startedAt <= timeout) {
+    if (sound?.playing && sound.gain && sound.context) {
+      if (loggedWait) {
+        debug(`[CF] Audio graph became ready for "${ps?.name ?? "unknown"}".`, describeCrossfadeAudioGraph(sound));
+      }
+      return true;
+    }
+
+    if (!loggedWait) {
+      loggedWait = true;
+      debug(`[CF] Waiting for audio graph for "${ps?.name ?? "unknown"}".`, describeCrossfadeAudioGraph(sound));
+    }
+
+    await waitForAudioOrBrowserDelay(50);
+  }
+
+  debug(`[CF] Audio graph not ready for "${ps?.name ?? "unknown"}" after ${timeout}ms.`, describeCrossfadeAudioGraph(sound));
+  return false;
+}
+
 export async function prepareIncomingCrossfadeMedia(ps) {
   const sound = await loadCrossfadeMedia(ps);
   if (!sound) return null;
@@ -71,8 +124,10 @@ export async function prepareIncomingCrossfadeMedia(ps) {
   }
 
   if (!sound.gain) {
-    await waitForAudioOrBrowserDelay(200);
+    await waitForCrossfadeAudioGraph(sound, ps);
   }
+
+  debug(`[CF] Incoming crossfade media prepared for "${ps.name}".`, describeCrossfadeAudioGraph(sound));
 
   return sound;
 }

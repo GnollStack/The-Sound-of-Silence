@@ -3,6 +3,7 @@
  * @description Replicates playlist skip, stop, and crossfade transitions to non-owner clients.
  */
 import {
+  describeCrossfadeAudioGraph,
   prepareIncomingCrossfadeMedia,
 } from "../cross-fade.js";
 import {
@@ -165,6 +166,11 @@ export function registerTransitionReplicationHooks() {
         prepareIncomingCrossfadeMedia(psIn),
       ]);
 
+      debug(`[Crossfade-Sync] Audio graph snapshot before replicated crossfade.`, {
+        outgoing: describeCrossfadeAudioGraph(soundOut),
+        incoming: describeCrossfadeAudioGraph(soundIn),
+      });
+
       if (!soundIn) {
         debug(`[Crossfade-Sync] Incoming sound "${psIn.name}" did not start; falling back to native sync after transition.`);
         State.clearPlaylistCrossfading(playlist);
@@ -187,7 +193,30 @@ export function registerTransitionReplicationHooks() {
 
       debug(`[Crossfade-Sync] Applying equal-power crossfade "${psOut?.name}" -> "${psIn.name}" (${fadeMs}ms)`);
 
-      const fadeTokens = equalPowerCrossfade(soundOut, soundIn, fadeMs, { targetVolIn: localTargetVolIn });
+      const canEqualPowerCrossfade = !!(
+        soundOut?.playing &&
+        soundOut?.gain &&
+        soundOut?.context &&
+        soundIn?.gain &&
+        soundIn?.context
+      );
+      let fadeTokens = null;
+
+      if (canEqualPowerCrossfade) {
+        fadeTokens = equalPowerCrossfade(soundOut, soundIn, fadeMs, { targetVolIn: localTargetVolIn });
+      } else {
+        debug(`[Crossfade-Sync] Audio graph unavailable; snapping "${psIn.name}" to target volume and fading outgoing where possible.`, {
+          outgoing: describeCrossfadeAudioGraph(soundOut),
+          incoming: describeCrossfadeAudioGraph(soundIn),
+        });
+        soundIn.volume = localTargetVolIn;
+
+        const fadeDuration = Number(fadeMs) || 0;
+        if (soundOut?.playing && fadeDuration > 0 && soundOut.gain && soundOut.context) {
+          const outToken = advancedFade(soundOut, { targetVol: 0, duration: fadeDuration });
+          fadeTokens = outToken ? { outToken, inToken: null } : null;
+        }
+      }
 
       AudioTimeout.wait(fadeMs + 50).then(() => {
         if (soundIn && fadeTokens?.inToken) State.clearFadingSound(soundIn, fadeTokens.inToken);
