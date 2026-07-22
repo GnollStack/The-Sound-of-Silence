@@ -17,6 +17,7 @@ import {
   applyPersonalPlaylistVolumesToActiveSounds,
 } from "../personal-audio-mix.js";
 import { startPlaybackRecoveryWatchdog } from "../playback-recovery.js";
+import { registerPlaybackClockCleanupHooks } from "../playback-clock.js";
 import {
   bootstrapSoundscapeEngines,
   registerSoundscapePlaylistHooks,
@@ -31,6 +32,7 @@ import {
 } from "../playlist/playlist-command-wrappers.js";
 import { registerTransitionReplicationHooks } from "../playlist/transition-replication-hooks.js";
 import { registerSoundPlaybackWrappers } from "../playback/sound-wrappers.js";
+import { registerCrossfadePreloadHooks } from "../playback/preload-coordinator.js";
 import { registerShuffleHooks } from "../playlist/shuffle-hooks.js";
 import { registerNormalizationHooks } from "../volume/normalization-hooks.js";
 
@@ -41,6 +43,7 @@ export function registerLifecycleHooks() {
     // Detect conflicting playlist modules (informational; SoS still activates).
     Integrations.detect();
     registerSequenceCleanupHooks();
+    registerPlaybackClockCleanupHooks();
     registerFlagServiceHooks();
     registerSoundCacheHooks();
     registerSettings({
@@ -72,6 +75,7 @@ export function registerLifecycleHooks() {
     startPlaybackRecoveryWatchdog();
 
     registerPlaybackDocumentHooks();
+    registerCrossfadePreloadHooks();
     bootstrapSoundscapeEngines();
     registerVisibilityRecovery();
     registerLoopReplicationHooks();

@@ -13,6 +13,11 @@ import {
 } from "../audio-fader.js";
 import { Flags } from "../flag-service.js";
 import { cancelLoopWithin } from "../internal-loop.js";
+import {
+  activateCrossfadeSession,
+  createCrossfadeSession,
+  isCurrentCrossfadeSession,
+} from "../playback/transition-session.js";
 import { State, cleanupPlaylistState } from "../state-manager.js";
 import {
   debug,
@@ -147,24 +152,36 @@ export function registerTransitionReplicationHooks() {
       return;
     }
 
-    State.markPlaylistAsCrossfading(playlist);
-
+    let transitionSession = null;
     try {
       const psOut = playlist.sounds.get(outgoingSoundId);
       const psIn = playlist.sounds.get(incomingSoundId);
-      if (!psIn) {
-        State.clearPlaylistCrossfading(playlist);
-        return;
-      }
+      if (!psIn) return;
       const sharedTargetVolIn = Number.isFinite(Number(targetVolIn))
         ? Number(targetVolIn)
         : Flags.resolveSharedTargetVolume(psIn);
       const localTargetVolIn = Flags.resolveTargetVolume(psIn, { sharedVolume: sharedTargetVolIn });
+      transitionSession = createCrossfadeSession({
+        playlist,
+        outgoingDocument: psOut,
+        incomingDocument: psIn,
+        outgoingSound: psOut?.sound ?? null,
+        durationMs: Number(fadeMs) || 0,
+        outgoingTargetVolume: psOut ? Flags.resolveTargetVolume(psOut) : 1,
+        source: "replicated",
+      });
 
       const [soundOut, soundIn] = await Promise.all([
         psOut ? waitForMedia(psOut) : Promise.resolve(null),
         prepareIncomingCrossfadeMedia(psIn),
       ]);
+      if (!isCurrentCrossfadeSession(transitionSession)) {
+        if (soundIn?.playing) safeStop(soundIn, "stale replicated incoming media");
+        return;
+      }
+      transitionSession.outgoingSound = soundOut;
+      transitionSession.incomingSound = soundIn;
+      transitionSession.incomingTargetVolume = localTargetVolIn;
 
       debug(`[Crossfade-Sync] Audio graph snapshot before replicated crossfade.`, {
         outgoing: describeCrossfadeAudioGraph(soundOut),
@@ -173,7 +190,7 @@ export function registerTransitionReplicationHooks() {
 
       if (!soundIn) {
         debug(`[Crossfade-Sync] Incoming sound "${psIn.name}" did not start; falling back to native sync after transition.`);
-        State.clearPlaylistCrossfading(playlist);
+        await transitionSession.settle({ mode: "cancel", reason: "incoming media unavailable" });
         AudioTimeout.wait((Number(fadeMs) || 0) + 250).then(() => {
           try {
             psIn.sync?.();
@@ -186,8 +203,7 @@ export function registerTransitionReplicationHooks() {
 
       if (!soundOut?.playing) {
         debug(`[Crossfade-Sync] Outgoing sound already stopped; snapping "${psIn.name}" to target volume.`);
-        soundIn.volume = localTargetVolIn;
-        State.clearPlaylistCrossfading(playlist);
+        await transitionSession.settle({ mode: "complete", reason: "outgoing media already stopped" });
         return;
       }
 
@@ -218,17 +234,15 @@ export function registerTransitionReplicationHooks() {
         }
       }
 
-      AudioTimeout.wait(fadeMs + 50).then(() => {
-        if (soundIn && fadeTokens?.inToken) State.clearFadingSound(soundIn, fadeTokens.inToken);
-        if (soundOut?.playing && (!fadeTokens?.outToken || State.isCurrentFadeToken(soundOut, fadeTokens.outToken))) {
-          safeStop(soundOut, "replicated crossfade completion");
-        }
-        if (soundOut && fadeTokens?.outToken) State.clearFadingSound(soundOut, fadeTokens.outToken);
-        State.clearPlaylistCrossfading(playlist);
+      activateCrossfadeSession(transitionSession, {
+        outgoingSound: soundOut,
+        incomingSound: soundIn,
+        incomingTargetVolume: localTargetVolIn,
+        fadeTokens,
       });
     } catch (err) {
       debug(`[Crossfade-Sync] Failed to apply replicated crossfade:`, err?.message ?? err);
-      State.clearPlaylistCrossfading(playlist);
+      await transitionSession?.settle({ mode: "cancel", reason: "replicated crossfade error" });
     }
   });
 }

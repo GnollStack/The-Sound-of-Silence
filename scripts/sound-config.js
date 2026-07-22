@@ -2,8 +2,9 @@
 
 import { LoopPreviewer } from "./loop-previewer.js";
 import { ProceduralAuditioner } from "./procedural-auditioner.js";
+import { normalizeNonNegativeNumber } from "./core-helpers.js";
 import { debug, MODULE_ID, toSec, SEGMENT_COLORS, warn, error } from "./utils.js";
-import { Flags } from "./flag-service.js";
+import { Flags, sanitizeSoundscapeGroupId } from "./flag-service.js";
 
 // max amount of Loop Segments
 const MAX_SEGMENTS = 16;
@@ -120,6 +121,7 @@ function assignKnownSoundFlag(target, fieldName, value) {
   switch (fieldName) {
     case "allowVolumeOverride":
     case "isProcedural":
+    case "soundscapeGroupId":
     case "minDelay":
     case "maxDelay":
     case "timingMode":
@@ -272,6 +274,10 @@ export function registerSoundConfigWrappers() {
         const cleanRootFlags = {
           allowVolumeOverride: !!otherFlags.allowVolumeOverride,
           isProcedural,
+          soundscapeGroupId: Flags.getSoundscapeGroup(
+            this.document.parent,
+            sanitizeSoundscapeGroupId(otherFlags.soundscapeGroupId)
+          )?.id ?? "",
         };
         setOptionalProceduralFlag(cleanRootFlags, "minDelay", minDelay);
         setOptionalProceduralFlag(cleanRootFlags, "maxDelay", maxDelay);
@@ -298,7 +304,7 @@ export function registerSoundConfigWrappers() {
             .map((segData, index) => {
               const cleaned = {
                 label: sanitizeLoopSegmentLabel(segData.label, index),
-                crossfadeMs: Math.max(0, Number(segData.crossfadeMs) ?? 0),
+                crossfadeMs: normalizeNonNegativeNumber(segData.crossfadeMs, 0),
                 loopCount: Math.max(0, parseInt(segData.loopCount, 10) || 0),
               };
               const norm = (v) => {
@@ -412,7 +418,7 @@ function _createSegmentHtml(segmentData, index) {
     const safeLabelHtml = escapeHtml(safeLabel);
     const safeStart = String(data.start).replace(/[<>"']/g, '');
     const safeEnd = String(data.end).replace(/[<>"']/g, '');
-    const safeCrossfade = Math.max(0, Number(data.crossfadeMs) ?? 1000);
+    const safeCrossfade = normalizeNonNegativeNumber(data.crossfadeMs, 1000);
     const safeLoopCount = Math.max(0, parseInt(data.loopCount, 10) || 0);
     const safeSkipToNext = !!data.skipToNext;
     const colorHex = SEGMENT_COLORS[index % SEGMENT_COLORS.length];
@@ -520,6 +526,14 @@ function _registerSoundConfigHooks() {
   const volumeVariance = Flags.resolveProceduralField(app.document, "volumeVariance");
   const randomPan = Flags.resolveProceduralField(app.document, "randomPan");
   const playChance = Flags.resolveProceduralField(app.document, "playChance");
+  const soundscapeGroups = Flags.getSoundscapeGroups(app.document.parent);
+  const soundscapeGroupId = Flags.getSoundscapeGroupForSound(app.document)?.id ?? "";
+  const soundscapeGroupOptions = [
+    '<option value="">None (global cap only)</option>',
+    ...soundscapeGroups.map((group) =>
+      `<option value="${escapeHtml(group.id)}" ${soundscapeGroupId === group.id ? "selected" : ""}>${escapeHtml(group.name)}</option>`
+    ),
+  ].join("");
 
   // --- 1. Create UI Blocks ---
 
@@ -549,6 +563,13 @@ function _registerSoundConfigHooks() {
 
         <fieldset class="sos-procedural-fieldset">
           <legend>Timing</legend>
+          <div class="form-group sos-compact">
+            <label>Soundscape Group</label>
+            <select name="${rootField("soundscapeGroupId")}">
+              ${soundscapeGroupOptions}
+            </select>
+            <p class="notes sos-compact">Optional shared polyphony cap and cooldown configured on the playlist.</p>
+          </div>
           <div class="form-group sos-compact sos-two-column">
             <div class="sos-column">
               <label>Cadence Mode</label>

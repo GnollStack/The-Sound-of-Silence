@@ -4,7 +4,7 @@
  * advancement when the owner client's local media clock stalls.
  */
 
-import { MODULE_ID, debug } from "./utils.js";
+import { MODULE_ID, debug, PlaylistActionAuthority } from "./utils.js";
 import { Flags } from "./flag-service.js";
 
 const FLAG_KEY = "playbackClock";
@@ -12,6 +12,7 @@ const WATCHDOG_INTERVAL_MS = 2000;
 const RECOVERY_GRACE_MS = 1500;
 const CLOCK_SEQUENCES = new Map();
 const LAST_CLOCK_WRITES = new Map();
+let cleanupHooksRegistered = false;
 
 function _clamp(value, min, max) {
   const num = Number(value);
@@ -52,7 +53,18 @@ function _nextClockSeq(playlist) {
 }
 
 function _canWriteClock(playlist) {
-  return !!playlist?.isOwner && !!game.user?.isGM;
+  return !!playlist?.isOwner && PlaylistActionAuthority.isAuthorizedGM();
+}
+
+export function registerPlaybackClockCleanupHooks() {
+  if (cleanupHooksRegistered) return;
+  cleanupHooksRegistered = true;
+  Hooks.on("deletePlaylist", (playlist) => {
+    const id = playlist?.id;
+    if (!id) return;
+    CLOCK_SEQUENCES.delete(id);
+    LAST_CLOCK_WRITES.delete(id);
+  });
 }
 
 function _resolveOffsetSeconds(ps, media, explicitOffset) {
@@ -103,7 +115,7 @@ export const PlaybackClock = {
     if (Flags.getSoundFlag(ps, "isSilenceGap")) return null;
     if (ps.repeat) return null;
     const loopConfig = Flags.getLoopConfig(ps);
-    if (loopConfig?.enabled && loopConfig?.active) {
+    if (Flags.isLoopConfigActive(loopConfig)) {
       debug(`[Clock] Skipping clock for "${ps.name}" - internal loop is active.`);
       return null;
     }
@@ -138,10 +150,14 @@ export const PlaybackClock = {
       if (_sameClock(lastWrite, nextClock)) return lastWrite;
     }
 
-    LAST_CLOCK_WRITES.set(playlist.id, nextClock);
-
     debug(`[Clock] Recording "${ps.name}" for "${playlist.name}" (${reason}).`, nextClock);
-    await playlist.setFlag(MODULE_ID, FLAG_KEY, nextClock);
+    LAST_CLOCK_WRITES.set(playlist.id, nextClock);
+    try {
+      await playlist.setFlag(MODULE_ID, FLAG_KEY, nextClock);
+    } catch (err) {
+      if (LAST_CLOCK_WRITES.get(playlist.id) === nextClock) LAST_CLOCK_WRITES.delete(playlist.id);
+      throw err;
+    }
     return nextClock;
   },
 

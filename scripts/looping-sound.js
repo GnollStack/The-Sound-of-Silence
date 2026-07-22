@@ -1,10 +1,11 @@
 // looping-sound.js
-import { advancedFade, equalPowerCrossfade, fadeOutAndStop } from "./audio-fader.js";
+import { advancedFade, cancelActiveFade, equalPowerCrossfade, fadeOutAndStop } from "./audio-fader.js";
+import { normalizeNonNegativeNumber } from "./core-helpers.js";
 import { maybeLoopPlaylist } from "./playlist-loop.js";
 import { performCrossfade } from "./cross-fade.js";
 import { Silence } from "./silence.js";
 import { Flags } from "./flag-service.js";
-import { MODULE_ID, toSec, debug, waitForMedia, formatTime, logFeature, LogSymbols, safeStop, safeCancelTimer, error } from "./utils.js";
+import { MODULE_ID, toSec, debug, waitForMedia, formatTime, logFeature, LogSymbols, PlaylistActionAuthority, safeStop, safeCancelTimer, error } from "./utils.js";
 import { State } from "./state-manager.js";
 
 const AudioTimeout = foundry.audio.AudioTimeout;
@@ -49,6 +50,7 @@ export class LoopingSound {
     this.handoffTimer = null;
     this.loopCrossfadeTimer = null;
     this.finalTransitionTimer = null;
+    this.pausedSnapshot = null;
 
     this.wasRestarted = false; // track if we used stop/play
   }
@@ -631,7 +633,7 @@ export class LoopingSound {
     this.handoffTimer?.cancel();
 
     const sourceSound = this.activeSound;
-    const crossfadeMs = this.activeLoopSegment?.crossfadeMs || 1000;
+    const crossfadeMs = normalizeNonNegativeNumber(this.activeLoopSegment?.crossfadeMs, 1000);
 
     debug(`[LoopingSound] Crossfading to next segment at ${nextSegment.startSec}s over ${crossfadeMs}ms`);
 
@@ -686,24 +688,24 @@ export class LoopingSound {
     if (isCrossfadeEnabled) {
       // This part is correct and remains the same.
       debug(`[LoopingSound] Crossfade enabled. Delegating to performCrossfade for "${this.ps.name}".`);
-      performCrossfade(playlist, this.ps);
+      await performCrossfade(playlist, this.ps);
 
     } else {
       // --- ROBUST LOGIC FOR SILENCE/DEFAULT MODES ---
-      const fadeMs = Number(playlist?.fade) || 500;
+      const fadeMs = normalizeNonNegativeNumber(playlist?.fade, 500);
 
       debug(`[LoopingSound] Fading out over ${fadeMs}ms...`);
       // First, fade out and stop the current sound.
       await fadeOutAndStop(this.activeSound, fadeMs);
 
       // Now, decide what to do next. Only the GM should control this.
-      if (!game.user.isGM) return;
+      if (!PlaylistActionAuthority.isAuthorizedGM()) return;
 
       const isSilenceEnabled = Flags.getPlaybackMode(playlist).silence;
 
       // This is the logic that finds the next track or loops the playlist.
       // We define it here so we can call it after the silence, or immediately.
-      const playNextOrLoop = () => {
+      const playNextOrLoop = async () => {
         const order = playlist.playbackOrder;
         const currentIndex = order.indexOf(this.ps.id);
         const nextId = order[currentIndex + 1];
@@ -712,26 +714,29 @@ export class LoopingSound {
           const nextSound = playlist.sounds.get(nextId);
           if (nextSound) {
             debug(`[LoopingSound] Advancing to next track: "${nextSound.name}"`);
-            playlist.playSound(nextSound);
+            await playlist.playSound(nextSound);
           }
         } else {
           // End of playlist - check for playlist looping
           if (!maybeLoopPlaylist(playlist)) {
-            playlist.stopAll();
+            await playlist.stopAll();
           }
         }
       };
 
       if (isSilenceEnabled) {
         debug(`[LoopingSound] Silence is enabled. Injecting silent gap.`);
-        // Fire-and-forget: playSilence handles advancement internally when the
-        // gap timer completes (calls playlist.playSound or maybeLoopPlaylist).
-        // Do NOT await and advance again — that would skip a track.
-        Silence.playSilence(playlist, this.ps);
+        const transition = await Silence.startGap(playlist, this.ps);
+        if (!transition.started) await playNextOrLoop();
       } else {
         // If silence is not enabled, just play the next track after a short buffer.
         debug(`[LoopingSound] Silence is disabled. Advancing to next track immediately.`);
-        AudioTimeout.wait(100).then(() => playNextOrLoop());
+        try {
+          await AudioTimeout.wait(100);
+        } catch (_) {
+          // A rejected audio timer must not prevent document advancement.
+        }
+        await playNextOrLoop();
       }
     }
   }
@@ -989,6 +994,7 @@ export class LoopingSound {
     this.loopCrossfadeTimer = null;
     this.handoffTimer = null;
     this.finalTransitionTimer = null;
+    this.pausedSnapshot = null;
     this.isDestroyed = true;
     this._unregisterIfCurrent();
     this.soundA = null;
@@ -1024,19 +1030,74 @@ export class LoopingSound {
     this._recordLoopSessionEnd({ completed: false });
     this._setActiveLoopSegment(null);
     this.finalTransitionTimer = null;
+    this.pausedSnapshot = null;
     this.soundA = null;
     this.soundB = null;
   }
 
   pause() {
+    if (this.isDestroyed || this.pausedSnapshot) return;
+
+    const activeSound = this.activeSound;
+    const targetSound = this.targetSound;
+    const activeOffset = Number(activeSound?.currentTime);
+    this.pausedSnapshot = {
+      activeOffset: Number.isFinite(activeOffset) ? activeOffset : 0,
+      activeSegmentIndex: this.config.segments.indexOf(this.activeLoopSegment),
+      loopsCompleted: this.loopsCompleted,
+      loopingDisabled: this.loopingDisabled,
+      activeWasA: this.isA_Active,
+    };
+
     safeCancelTimer(this.mainSchedule, `pause main schedule for "${this.ps?.name}"`);
     safeCancelTimer(this.loopCrossfadeTimer, `pause crossfade timer for "${this.ps?.name}"`);
+    safeCancelTimer(this.handoffTimer, `pause handoff timer for "${this.ps?.name}"`);
     safeCancelTimer(this.finalTransitionTimer, `pause final transition timer for "${this.ps?.name}"`);
-    // We don't need to cancel handoffTimer as it's very short-lived
+    this.mainSchedule = null;
+    this.loopCrossfadeTimer = null;
+    this.handoffTimer = null;
+    this.finalTransitionTimer = null;
+
+    if (activeSound) cancelActiveFade(activeSound);
+    if (targetSound) cancelActiveFade(targetSound);
+    if (targetSound && targetSound !== activeSound) {
+      safeStop(targetSound, `pause inactive loop buffer for "${this.ps?.name}"`);
+    }
+
+    if (activeSound) {
+      activeSound._manager = this.ps;
+      this.ps.sound = activeSound;
+    }
+    this._setCrossfading(false);
   }
 
   resume() {
-    if (this.isCrossfading || this.isDestroyed) return;
+    if (this.isDestroyed) return;
+
+    const snapshot = this.pausedSnapshot;
+    if (snapshot) {
+      const resumedSound = this.ps.sound;
+      this.isA_Active = snapshot.activeWasA;
+      if (this.isA_Active) this.soundA = resumedSound;
+      else this.soundB = resumedSound;
+
+      const inactiveSound = this.targetSound;
+      if (inactiveSound && inactiveSound !== resumedSound) {
+        cancelActiveFade(inactiveSound);
+        safeStop(inactiveSound, `resume stale loop buffer for "${this.ps?.name}"`);
+      }
+
+      this.loopsCompleted = snapshot.loopsCompleted;
+      this.loopingDisabled = snapshot.loopingDisabled;
+      const segment = snapshot.activeSegmentIndex >= 0
+        ? this.config.segments[snapshot.activeSegmentIndex] ?? null
+        : null;
+      this._setActiveLoopSegment(segment);
+      this._setCrossfading(false);
+      this.pausedSnapshot = null;
+    }
+
+    if (this.isCrossfading) return;
 
     if (this.loopingDisabled) {
       this._scheduleFinalFadeOut();

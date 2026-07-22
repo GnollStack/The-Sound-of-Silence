@@ -9,6 +9,7 @@
 
 import { Flags } from "./flag-service.js";
 import { PlaybackClock } from "./playback-clock.js";
+import { getCrossfadePreloadDiagnostics } from "./playback/preload-coordinator.js";
 import { advancedFade, equalPowerCrossfade, fadeOutAndStop } from "./audio-fader.js";
 import { scheduleCrossfade, performCrossfade, cancelCrossfade } from "./cross-fade.js";
 import { scheduleLoopWithin, cancelLoopWithin, breakLoopWithin } from "./internal-loop.js";
@@ -21,7 +22,7 @@ import {
 } from "./procedural-ambience.js";
 import { Silence } from "./silence.js";
 import { createSoundOfSilenceDiagnostics } from "./diagnostics.js";
-import { toSec, formatTime, info, debug, getSequenceSnapshot, MODULE_ID } from "./utils.js";
+import { toSec, formatTime, info, debug, getSequenceSnapshot, MODULE_ID, PlaylistActionAuthority } from "./utils.js";
 import { State, cleanupPlaylistState } from "./state-manager.js";
 import { Integrations } from "./integrations.js";
 
@@ -105,15 +106,24 @@ class SoundOfSilenceAPI {
         if (!(playlist instanceof Playlist)) {
             throw new TypeError("Expected Playlist document");
         }
+        if (!updates || typeof updates !== "object" || Array.isArray(updates)) {
+            throw new TypeError("Expected playlist configuration updates object");
+        }
 
-        const validKeys = Object.keys(Flags.getPlaylistFlags(playlist));
+        const validKeys = Flags.getPlaylistFlagKeys();
         const invalidKeys = Object.keys(updates).filter(k => !validKeys.includes(k));
         if (invalidKeys.length) {
             throw new Error(`Invalid config keys: ${invalidKeys.join(', ')}`);
         }
 
+        const current = Flags.getPlaylistFlags(playlist);
+        const validated = Flags.validatePlaylistFlags({ ...current, ...updates });
+        const sanitizedUpdates = Object.fromEntries(
+            Object.keys(updates).map((key) => [key, validated[key]])
+        );
+
         return playlist.update({
-            [`flags.the-sound-of-silence`]: updates
+            [`flags.${MODULE_ID}`]: sanitizedUpdates
         });
     }
 
@@ -165,7 +175,10 @@ class SoundOfSilenceAPI {
         if (!(sound instanceof PlaylistSound)) {
             throw new TypeError("Expected PlaylistSound document");
         }
-        return sound.setFlag('the-sound-of-silence', 'loopWithin', loopConfig);
+        if (!loopConfig || typeof loopConfig !== "object" || Array.isArray(loopConfig)) {
+            throw new TypeError("Expected complete loop configuration object");
+        }
+        return Flags.replaceLoopConfig(sound, loopConfig);
     }
 
     // ============================================
@@ -195,7 +208,7 @@ class SoundOfSilenceAPI {
             throw new Error("No sound currently playing");
         }
 
-        return performCrossfade(playlist, current);
+        return performCrossfade(playlist, current, { reason: "api" });
     }
 
     /**
@@ -450,8 +463,7 @@ class SoundOfSilenceAPI {
     inspectAll() {
         const integrations = Integrations.diagnostics();
         const isGM = Boolean(game.user?.isGM);
-        const activeGMs = game.users ? game.users.filter(u => u.isGM && u.active) : [];
-        const authorizedGM = isGM && activeGMs[0]?.id === game.user?.id;
+        const authorizedGM = PlaylistActionAuthority.isAuthorizedGM();
 
         return {
             ...State.inspectAll(),
@@ -460,6 +472,7 @@ class SoundOfSilenceAPI {
                 currentlyPlayingTimestamps: Boolean(game.settings?.get(this.ID, "debugCurrentlyPlayingTimestamps")),
                 isGM,
                 authorizedGM,
+                authorizedGMId: PlaylistActionAuthority.getAuthorizedGMId(),
                 roleLabel: isGM ? "GM" : "Player",
                 authorityLabel: authorizedGM ? "Primary GM" : (isGM ? "Secondary GM" : "Not GM")
             },
@@ -975,6 +988,7 @@ class SoundOfSilenceAPI {
             audioContexts,
             coreAudioVolumes,
             playbackClocks,
+            crossfadePreloads: getCrossfadePreloadDiagnostics(),
             soundscapes,
             soundscapeProceduralSyncEnabled: isSoundscapeProceduralSyncEnabled(),
             personalAudioMix: {
@@ -1074,6 +1088,14 @@ class SoundOfSilenceAPI {
             filtered.soundscapes = ids.size === 0
                 ? []
                 : diagnostics.soundscapes.filter((snapshot) => ids.has(String(snapshot?.playlistId)));
+        }
+
+        if (Array.isArray(diagnostics.crossfadePreloads)) {
+            filtered.crossfadePreloads = ids.size === 0
+                ? []
+                : diagnostics.crossfadePreloads.filter((snapshot) =>
+                    ids.has(String(snapshot?.playlistId))
+                );
         }
 
         if (diagnostics.sequences && typeof diagnostics.sequences === "object") {

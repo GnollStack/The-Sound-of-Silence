@@ -1,6 +1,11 @@
 // utils.js
 // A collection of utility functions used throughout the module.
 
+import {
+    formatTimeValue,
+    selectPrimaryActiveGmId,
+} from "./core-helpers.js";
+
 const AudioTimeout = foundry.audio.AudioTimeout;
 
 // Module identifier for flag storage and settings as well as debug logging.
@@ -282,28 +287,25 @@ export const toSec = (mmss) => {
  * @param {boolean} showMilliseconds Whether to include milliseconds (default: true).
  * @returns {string} The formatted time string.
  */
-export const formatTime = (sec, showMilliseconds = true) => {
-    const s = Math.max(0, sec || 0);
-    const minutes = String(Math.floor(s / 60)).padStart(2, '0');
-    const wholeSeconds = Math.floor(s % 60);
-
-    if (showMilliseconds) {
-        const milliseconds = Math.round((s % 1) * 1000);
-        const secondsStr = String(wholeSeconds).padStart(2, '0');
-        const millisecondsStr = String(milliseconds).padStart(3, '0');
-        return `${minutes}:${secondsStr}.${millisecondsStr}`;
-    } else {
-        const secondsStr = String(wholeSeconds).padStart(2, '0');
-        return `${minutes}:${secondsStr}`;
-    }
-};
+export const formatTime = formatTimeValue;
 
 
 export class PlaylistActionAuthority {
+    static getAuthorizedGMId() {
+        return selectPrimaryActiveGmId(game.users);
+    }
+
+    static isActiveGMId(userId) {
+        const id = String(userId ?? "");
+        if (!id) return false;
+        return Array.from(game.users ?? []).some((user) =>
+            user?.isGM && user?.active !== false && String(user.id) === id
+        );
+    }
+
     static isAuthorizedGM() {
-        if (!game.user.isGM) return false;
-        const gms = game.users.filter(u => u.isGM && u.active);
-        return gms[0]?.id === game.user.id; // Lowest ID wins
+        if (!game.user?.isGM || game.user?.active === false) return false;
+        return this.getAuthorizedGMId() === String(game.user.id);
     }
 }
 
@@ -492,12 +494,22 @@ export function logFeature(symbol, feature, message, data) {
  * @param {string} context - Context description for debugging
  */
 export function safeStop(sound, context = "unknown") {
-    if (!sound) return;
+    if (!sound) return Promise.resolve(false);
 
     try {
-        sound.stop();
+        const result = sound.stop();
+        if (result && typeof result.then === "function") {
+            return Promise.resolve(result)
+                .then(() => true)
+                .catch((err) => {
+                    debug(`[Safe Stop] Failed to stop sound in context: ${context}`, err?.message ?? err);
+                    return false;
+                });
+        }
+        return Promise.resolve(true);
     } catch (err) {
-        debug(`[Safe Stop] Failed to stop sound in context: ${context}`, err.message);
+        debug(`[Safe Stop] Failed to stop sound in context: ${context}`, err?.message ?? err);
+        return Promise.resolve(false);
     }
 }
 

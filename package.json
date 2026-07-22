@@ -1,0 +1,10 @@
+{
+  "name": "the-sound-of-silence",
+  "version": "14.15.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node tests/run-tests.js",
+    "check:syntax": "powershell -ExecutionPolicy Bypass -File tests/check-syntax.ps1"
+  }
+}

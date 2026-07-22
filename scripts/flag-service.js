@@ -6,6 +6,58 @@
 import { MODULE_ID, toSec, debug, warn } from "./utils.js";
 
 const LOOP_SEGMENT_LABEL_MAX_LENGTH = 48;
+const LOOP_SEGMENT_MAX_COUNT = 16;
+const SOUNDSCAPE_GROUP_MAX_COUNT = 16;
+const SOUNDSCAPE_GROUP_NAME_MAX_LENGTH = 48;
+const SOUNDSCAPE_GROUP_ID_MAX_LENGTH = 40;
+
+export function sanitizeSoundscapeGroupId(value) {
+    return String(value ?? "")
+        .trim()
+        .replace(/[^A-Za-z0-9_-]+/g, "-")
+        .replace(/^-+|-+$/g, "")
+        .slice(0, SOUNDSCAPE_GROUP_ID_MAX_LENGTH);
+}
+
+function sanitizeSoundscapeGroupName(value, index = 0) {
+    const text = String(value ?? "")
+        .replace(/<[^>]*>/g, " ")
+        .replace(/[<>]/g, "")
+        .replace(/\s+/g, " ")
+        .trim()
+        .slice(0, SOUNDSCAPE_GROUP_NAME_MAX_LENGTH)
+        .trim();
+    return text || `Group ${index + 1}`;
+}
+
+export function sanitizeSoundscapeGroups(value) {
+    const candidates = Array.isArray(value) ? value : [];
+    const ids = new Set();
+    return candidates.slice(0, SOUNDSCAPE_GROUP_MAX_COUNT).map((candidate, index) => {
+        const source = candidate && typeof candidate === "object" && !Array.isArray(candidate)
+            ? candidate
+            : {};
+        const baseId = sanitizeSoundscapeGroupId(source.id) || `group-${index + 1}`;
+        let id = baseId;
+        let suffix = 2;
+        while (ids.has(id)) {
+            const suffixText = `-${suffix++}`;
+            id = baseId.slice(0, SOUNDSCAPE_GROUP_ID_MAX_LENGTH - suffixText.length) + suffixText;
+        }
+        ids.add(id);
+
+        const maxPolyphony = Math.max(1, Math.min(16, Math.floor(Number(source.maxPolyphony) || 1)));
+        const cooldown = Number(source.cooldownSec);
+        return {
+            id,
+            name: sanitizeSoundscapeGroupName(source.name, index),
+            maxPolyphony,
+            cooldownSec: Number.isFinite(cooldown)
+                ? Math.max(0, Math.min(3600, cooldown))
+                : 0,
+        };
+    });
+}
 
 function defaultLoopSegmentLabel(index = 0) {
     const safeIndex = Number(index);
@@ -44,6 +96,7 @@ const FlagSchemas = {
         normalizedVolume: { type: Number, default: 0.5, min: 0, max: 1.0 },
         soundscapeMode: { type: Boolean, default: false },
         soundscapeMaxPolyphony: { type: Number, default: 4, min: 1, max: 16 },
+        soundscapeGroups: { type: Array, default: [], sanitize: sanitizeSoundscapeGroups },
         soundscapePlayChanceScaling: { type: String, default: "independent", enum: ["independent", "scaled", "soft"] },
         soundscapeDefaults: {
             type: Object,
@@ -64,6 +117,7 @@ const FlagSchemas = {
         allowVolumeOverride: { type: Boolean, default: false },
         normalizedVolumeOverride: { type: Number, default: null, min: 0, max: 1 },
         isProcedural: { type: Boolean, default: false },
+        soundscapeGroupId: { type: String, default: "", sanitize: sanitizeSoundscapeGroupId },
         minDelay: { type: Number, default: 15, min: 0, max: 3600 },
         maxDelay: { type: Number, default: 60, min: 0, max: 3600 },
         timingMode: { type: String, default: "uniform", enum: ["uniform", "fixed", "natural"] },
@@ -247,10 +301,16 @@ class FlagService {
             throw new Error(`[${MODULE_ID}] Unknown flag key "${key}" for document type ${doc.documentName}`);
         }
 
+        if (key === "loopWithin") {
+            return this.replaceLoopConfig(doc, value);
+        }
+
+        const sanitized = this._validate(value, schema);
+
         // Invalidate cache before updating
         this._clearCache(doc);
 
-        return doc.setFlag(MODULE_ID, key, value);
+        return doc.setFlag(MODULE_ID, key, sanitized);
     }
 
     // ============================================
@@ -313,13 +373,18 @@ class FlagService {
         const validatedConfig = this._validate(migrated, FlagSchemas.PLAYLIST_SOUND.loopWithin);
 
         // Validate each segment individually
-        validatedConfig.segments = (validatedConfig.segments || []).map((seg, index) => {
+        validatedConfig.segments = (Array.isArray(validatedConfig.segments) ? validatedConfig.segments : [])
+        .slice(0, LOOP_SEGMENT_MAX_COUNT)
+        .map((candidate, index) => {
+            const seg = candidate && typeof candidate === "object" && !Array.isArray(candidate)
+                ? candidate
+                : {};
             const validated = {
                 label: sanitizeLoopSegmentLabel(seg.label, index),
                 start: seg.start || "00:00",
                 end: seg.end || "00:00",
                 crossfadeMs: this._validateNumber(seg.crossfadeMs, 1000, 0), // min: 0
-                loopCount: this._validateNumber(seg.loopCount, 0, 0), // min: 0
+                loopCount: Math.floor(this._validateNumber(seg.loopCount, 0, 0)), // min: 0
                 skipToNext: typeof seg.skipToNext === "boolean" ? seg.skipToNext : false
             };
 
@@ -333,6 +398,56 @@ class FlagService {
         return foundry.utils.duplicate(validatedConfig);
     }
 
+    /**
+     * Reduce validated loop data to the complete persistent schema.
+     * Runtime-only startSec/endSec and legacy flat keys are intentionally omitted.
+     * @param {object} input
+     * @returns {object}
+     */
+    toPersistentLoopConfig(input = {}) {
+        const config = this.validateLoopConfig(input);
+        return {
+            enabled: Boolean(config.enabled),
+            active: Boolean(config.active),
+            startFromBeginning: config.startFromBeginning !== false,
+            segments: config.segments.map((segment, index) => ({
+                label: sanitizeLoopSegmentLabel(segment.label, index),
+                start: String(segment.start ?? "00:00"),
+                end: String(segment.end ?? "00:00"),
+                crossfadeMs: this._validateNumber(segment.crossfadeMs, 1000, 0),
+                loopCount: Math.floor(this._validateNumber(segment.loopCount, 0, 0)),
+                skipToNext: Boolean(segment.skipToNext),
+            })),
+        };
+    }
+
+    /**
+     * Replace a complete loop flag instead of relying on Foundry's nested merge.
+     * @param {PlaylistSound} sound
+     * @param {object} input
+     * @returns {Promise<PlaylistSound>}
+     */
+    async replaceLoopConfig(sound, input = {}) {
+        const persistent = this.toPersistentLoopConfig(input);
+        const original = sound.getFlag(MODULE_ID, "loopWithin");
+        let cleared = false;
+        this._clearCache(sound);
+        try {
+            await sound.unsetFlag(MODULE_ID, "loopWithin");
+            cleared = true;
+            return await sound.setFlag(MODULE_ID, "loopWithin", persistent);
+        } catch (err) {
+            if (cleared && original !== undefined) {
+                try {
+                    await sound.setFlag(MODULE_ID, "loopWithin", original);
+                } catch (_) {
+                    // Preserve the replacement error; rollback is best effort.
+                }
+            }
+            throw err;
+        }
+    }
+
     getPlaylistFlagKeys() {
         return Object.keys(FlagSchemas.PLAYLIST);
     }
@@ -343,6 +458,21 @@ class FlagService {
 
     getLoopConfigKeys() {
         return Object.keys(FlagSchemas.PLAYLIST_SOUND.loopWithin.schema);
+    }
+
+    getSoundscapeGroups(playlist) {
+        return this.getPlaylistFlag(playlist, "soundscapeGroups") ?? [];
+    }
+
+    getSoundscapeGroup(playlist, groupId) {
+        const id = sanitizeSoundscapeGroupId(groupId);
+        if (!id) return null;
+        return this.getSoundscapeGroups(playlist).find((group) => group.id === id) ?? null;
+    }
+
+    getSoundscapeGroupForSound(sound) {
+        const id = this.getSoundFlag(sound, "soundscapeGroupId");
+        return this.getSoundscapeGroup(sound?.parent, id);
     }
 
     /**
@@ -469,6 +599,9 @@ class FlagService {
      * @private
      */
     _validate(value, schema) {
+        if (typeof schema?.sanitize === "function") {
+            return schema.sanitize(value);
+        }
         if (value === null || typeof value === "undefined") {
             return foundry.utils.deepClone(schema.default);
         }

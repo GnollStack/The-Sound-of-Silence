@@ -84,6 +84,9 @@ function executeSegmentSkipWithRetry(soundDoc, targetIndex, seq, attempt = 1) {
     if (pendingSegmentSkipRetries.get(key) !== attempt) return;
     const liveSoundDoc = soundDoc.parent?.sounds?.get(soundDoc.id) ?? soundDoc;
     executeSegmentSkipWithRetry(liveSoundDoc, targetIndex, seq, attempt + 1);
+  }).catch((err) => {
+    if (pendingSegmentSkipRetries.get(key) === attempt) pendingSegmentSkipRetries.delete(key);
+    debug(`[Segment-Sync] Retry timer failed for "${soundDoc.name}":`, err?.message ?? err);
   });
 }
 

@@ -6,7 +6,7 @@
  * For persistent configuration, see flag-service.js
  */
 
-import { debug, MODULE_ID, logFeature, LogSymbols, warn } from "./utils.js";
+import { debug, MODULE_ID, logFeature, LogSymbols, PlaylistActionAuthority, warn } from "./utils.js";
 
 /**
  * Manages all runtime state for the module.
@@ -53,6 +53,12 @@ class StateManager {
          * @type {WeakMap<Playlist, {timeout: AudioTimeout}>}
          */
         this._crossfadeTimers = new WeakMap();
+
+        /**
+         * Tracks the local media participants and completion timer for an active crossfade.
+         * @type {WeakMap<Playlist, object>}
+         */
+        this._crossfadeSessions = new WeakMap();
 
         /**
          * Tracks pending play event listeners for crossfade scheduling
@@ -383,6 +389,26 @@ class StateManager {
         return this._crossfadeTimers.has(playlist);
     }
 
+    getCrossfadeSession(playlist) {
+        return this._crossfadeSessions.get(playlist);
+    }
+
+    setCrossfadeSession(playlist, session) {
+        if (!playlist || !session) return;
+        this._crossfadeSessions.set(playlist, session);
+        this.markPlaylistAsCrossfading(playlist);
+        this._emitStateChange(true);
+    }
+
+    clearCrossfadeSession(playlist, session = null) {
+        if (!playlist) return false;
+        if (session && this._crossfadeSessions.get(playlist) !== session) return false;
+        const had = this._crossfadeSessions.delete(playlist);
+        this.clearPlaylistCrossfading(playlist);
+        if (had) this._emitStateChange(true);
+        return had;
+    }
+
     /**
      * Get the play waiter for a playlist (used when scheduling crossfades for paused sounds)
      * @param {Playlist} playlist
@@ -616,9 +642,14 @@ class StateManager {
         debug(`[State] Cleanup requested for "${playlist?.name}"`, options);
         if (!playlist) return;
 
-        // 1. Clean Crossfade (no changes needed here)
+        // 1. Clean Crossfade
         if (cleanCrossfade) {
             try {
+                const session = this.getCrossfadeSession(playlist);
+                if (session?.settle) {
+                    await session.settle({ mode: "cancel", reason: "playlist cleanup" });
+                }
+
                 const timer = this.getCrossfadeTimer(playlist);
                 if (timer?.timeout?.cancel) {
                     timer.timeout.cancel();
@@ -636,6 +667,7 @@ class StateManager {
                     }
                 }
                 this.clearPlayWaiter(playlist);
+                this.clearCrossfadeSession(playlist);
             } catch (err) {
                 warn(`[State] Error during crossfade cleanup for "${playlist?.name}":`, err);
             }
@@ -653,7 +685,7 @@ class StateManager {
                     const gap = silenceState.gap;
                     if (gap) {
                         this.markGapAsCancelled(gap);
-                        if (gap.id && game.user.isGM) {
+                        if (gap.id && PlaylistActionAuthority.isAuthorizedGM()) {
                             // No need to await, let it delete in the background
                             gap.delete().catch(err => {
                                 debug(`[State] Failed to delete silent gap "${gap?.name}":`, err.message);
@@ -728,6 +760,8 @@ class StateManager {
 
         const silenceState = this.getSilenceState(playlist);
         const crossfadeTimer = this.getCrossfadeTimer(playlist);
+        const crossfadeSession = this.getCrossfadeSession(playlist);
+        const soundscapeEngine = this.getSoundscapeEngine(playlist);
         let hasScheduledSilenceFade = false;
 
         const activeLoops = [];
@@ -762,11 +796,29 @@ class StateManager {
 
                 scheduledSilenceFade: hasScheduledSilenceFade,
 
-                crossfade: crossfadeTimer ? {
-                    scheduled: true,
+                crossfade: (crossfadeTimer || crossfadeSession) ? {
+                    scheduled: !!crossfadeTimer,
+                    active: !!crossfadeSession,
+                    session: crossfadeSession ? {
+                        id: crossfadeSession.id,
+                        status: crossfadeSession.status,
+                        source: crossfadeSession.source,
+                        outgoingSoundId: crossfadeSession.outgoingDocument?.id ?? null,
+                        incomingSoundId: crossfadeSession.incomingDocument?.id ?? null,
+                        durationMs: crossfadeSession.durationMs,
+                    } : null,
                 } : null,
 
-                loops: activeLoops.length > 0 ? activeLoops : null
+                loops: activeLoops.length > 0 ? activeLoops : null,
+
+                soundscape: soundscapeEngine && !soundscapeEngine.isDestroyed ? {
+                    active: true,
+                    started: Boolean(soundscapeEngine.isStarted),
+                    syncMode: soundscapeEngine.syncMode ?? null,
+                    armedProcedurals: Number(soundscapeEngine.oneShotTimers?.size ?? 0),
+                    activeOneShots: Number(soundscapeEngine.activeOneShots?.size ?? 0),
+                    pendingOneShots: Number(soundscapeEngine.pendingOneShotTotal ?? 0),
+                } : null
             }
         };
     }
@@ -783,6 +835,7 @@ class StateManager {
             totalActiveLoopers: 0,
             totalCrossfades: 0,
             totalSilentGaps: 0,
+            totalActiveSoundscapes: 0,
             metrics: this.getMetrics()
         };
 
@@ -793,6 +846,7 @@ class StateManager {
 
             if (inspection.features.silence) summary.totalSilentGaps++;
             if (inspection.features.crossfade) summary.totalCrossfades++;
+            if (inspection.features.soundscape) summary.totalActiveSoundscapes++;
             if (inspection.features.loops) {
                 summary.totalActiveLoopers += inspection.features.loops.length;
             }
@@ -800,7 +854,8 @@ class StateManager {
             // Only include playlists with active features
             const hasFeatures = inspection.features.silence ||
                 inspection.features.crossfade ||
-                inspection.features.loops;
+                inspection.features.loops ||
+                inspection.features.soundscape;
             if (hasFeatures) {
                 summary.playlists.push(inspection);
             }

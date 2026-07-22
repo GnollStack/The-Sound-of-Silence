@@ -19,6 +19,7 @@ import {
     warn,
     error,
     ensureAudioContext,
+    PlaylistActionAuthority,
     safeStop,
     safeCancelTimer,
 } from "./utils.js";
@@ -110,6 +111,12 @@ export class SoundscapeEngine {
         /** @type {Map<string, number>} soundId -> active instance count */
         this.activeOneShotCounts = new Map();
 
+        /** Group-scoped pending/active counts and completion cooldowns. */
+        this.pendingGroupCounts = new Map();
+        this.activeGroupCounts = new Map();
+        this.groupCooldowns = new Map();
+        this.groupBlockedCounts = new Map();
+
         /** @type {WeakMap<foundry.audio.Sound, {soundId: string, varianceFactor: number}>} active one-shot volume metadata */
         this.oneShotSharedTargetVolumes = new WeakMap();
 
@@ -140,7 +147,7 @@ export class SoundscapeEngine {
 
     get syncMode() {
         if (!this.soundscapeSyncEnabled) return "local";
-        return game.user?.isGM ? "authority" : "synced";
+        return PlaylistActionAuthority.isAuthorizedGM() ? "authority" : "synced";
     }
 
     _shouldArmLocalProcedurals() {
@@ -343,10 +350,14 @@ export class SoundscapeEngine {
      * Fire a single procedural one-shot. Checks polyphony cap and playChance first.
      * The next randomized timer begins only after this playback attempt fully settles.
      * @param {PlaylistSound} ps
-     * @param {{bypassChance?: boolean}} [options]
+     * @param {{bypassChance?: boolean, bypassCooldown?: boolean}} [options]
      * @returns {Promise<boolean>} true when playback was started
      */
-    async _fireOneShot(ps, { bypassChance = false } = {}) {
+    async _fireOneShot(ps, {
+        bypassChance = false,
+        bypassCooldown = false,
+        allowGmAuthorship = false,
+    } = {}) {
         if (this.isDestroyed) return false;
         this.oneShotTimers.delete(ps.id);
         _notifySoundscapeUi(this.playlist, "soundscape-one-shot-timer", ps.id);
@@ -363,6 +374,20 @@ export class SoundscapeEngine {
             return false;
         }
 
+        const groupGate = this._getGroupGate(ps, { bypassCooldown });
+        if (groupGate) {
+            this._recordGroupBlock(groupGate);
+            debug(
+                `[Soundscape] ${groupGate.reason} blocked "${ps.name}" in group "${groupGate.group.name}"`
+            );
+            if (!this.isDestroyed) {
+                this._armOneShot(ps, {
+                    minimumDelayMs: Math.max(RETRY_BACKOFF_MS, groupGate.retryMs),
+                });
+            }
+            return false;
+        }
+
         // Play chance — probabilistic skip (optionally scaled by active polyphony).
         const effectiveChance = this._resolveEffectivePlayChance(ps);
         if (!bypassChance && effectiveChance < 100 && (Math.random() * 100) >= effectiveChance) {
@@ -371,12 +396,17 @@ export class SoundscapeEngine {
             return false;
         }
 
-        const synced = this._shouldEmitSyncedFires();
+        const synced = this._shouldEmitSyncedFires() || (
+            allowGmAuthorship &&
+            game.user?.isGM &&
+            this.soundscapeSyncEnabled
+        );
         const recipe = this._createFireRecipe(ps, { synced });
         if (synced) this._emitSyncedFire(recipe);
         return this._playOneShotRecipe(ps, recipe, {
             rearmAfter: true,
             source: synced ? "authority" : "local",
+            bypassGroupCooldown: bypassCooldown,
         });
     }
 
@@ -393,12 +423,14 @@ export class SoundscapeEngine {
         const panValue = randomPan ? Math.max(-1, Math.min(1, Math.random() * 2 - 1)) : null;
         const now = Date.now();
         const seq = synced ? this.syncedFireSeq + 1 : null;
+        const groupId = Flags.getSoundscapeGroupForSound(ps)?.id ?? null;
         if (synced) this.syncedFireSeq = seq;
 
         return {
             action: SYNCED_FIRE_ACTION,
             playlistId: this.playlist.id,
             soundId: ps.id,
+            groupId,
             seq,
             eventId: synced ? `${this.playlist.id}:${ps.id}:${seq}:${game.user?.id ?? "gm"}:${now}` : null,
             startAtMs: synced ? now + SYNCED_FIRE_LEAD_MS : now,
@@ -420,10 +452,13 @@ export class SoundscapeEngine {
         const seq = Number(recipe?.seq);
         const pan = Number(recipe?.panValue);
         const fadeIn = Number(recipe?.fadeInMs);
+        const requestedGroupId = recipe?.groupId ?? Flags.getSoundFlag(ps, "soundscapeGroupId");
+        const groupId = Flags.getSoundscapeGroup(this.playlist, requestedGroupId)?.id ?? null;
         return {
             action: SYNCED_FIRE_ACTION,
             playlistId: recipe?.playlistId ?? this.playlist.id,
             soundId: recipe?.soundId ?? ps.id,
+            groupId,
             seq: Number.isFinite(seq) ? seq : null,
             eventId: recipe?.eventId ? String(recipe.eventId) : null,
             startAtMs: Number.isFinite(startAt) ? startAt : Date.now(),
@@ -445,6 +480,7 @@ export class SoundscapeEngine {
             timeMs: now,
             playlistId: recipe?.playlistId ?? this.playlist.id,
             soundId: recipe?.soundId ?? null,
+            groupId: recipe?.groupId ?? null,
             seq: Number.isFinite(Number(recipe?.seq)) ? Number(recipe.seq) : null,
             eventId: recipe?.eventId ?? null,
             startAtMs: Number.isFinite(startAtMs) ? startAtMs : null,
@@ -526,6 +562,10 @@ export class SoundscapeEngine {
         if (!ps || !Flags.getSoundFlag(ps, "isProcedural")) return false;
 
         const normalized = this._normalizeFireRecipe(recipe, ps);
+        if (!PlaylistActionAuthority.isActiveGMId(normalized.gmId)) {
+            this._recordMissedSyncedEvent(normalized, "invalid-gm");
+            return false;
+        }
         if (!normalized.eventId) {
             this._recordMissedSyncedEvent(normalized, "missing-event-id");
             return false;
@@ -554,10 +594,16 @@ export class SoundscapeEngine {
         return this._playOneShotRecipe(ps, normalized, {
             rearmAfter: false,
             source: "synced",
+            enforceGroupGate: false,
         });
     }
 
-    async _playOneShotRecipe(ps, recipe = {}, { rearmAfter = true, source = "local" } = {}) {
+    async _playOneShotRecipe(ps, recipe = {}, {
+        rearmAfter = true,
+        source = "local",
+        enforceGroupGate = true,
+        bypassGroupCooldown = false,
+    } = {}) {
         const normalized = this._normalizeFireRecipe(recipe, ps);
         const isSyncedEvent = Boolean(normalized.eventId);
         const canRearm = () => rearmAfter && this._shouldArmLocalProcedurals();
@@ -570,16 +616,47 @@ export class SoundscapeEngine {
             return false;
         }
 
+        if (enforceGroupGate) {
+            const groupGate = this._getGroupGate(ps, {
+                groupId: normalized.groupId,
+                bypassCooldown: bypassGroupCooldown,
+            });
+            if (groupGate) {
+                this._recordGroupBlock(groupGate);
+                if (canRearm() && !this.isDestroyed && ps.playing) {
+                    this._armOneShot(ps, {
+                        minimumDelayMs: Math.max(RETRY_BACKOFF_MS, groupGate.retryMs),
+                    });
+                }
+                return false;
+            }
+        }
+
+        const groupId = normalized.groupId;
         let reservationActive = true;
-        this._reserveOneShot(ps.id);
+        this._reserveOneShot(ps.id, groupId);
         const releaseReservation = () => {
             if (!reservationActive) return;
             reservationActive = false;
-            this._releaseOneShotReservation(ps.id);
+            this._releaseOneShotReservation(ps.id, groupId);
         };
 
         const waitMs = Math.max(0, normalized.startAtMs - Date.now());
-        if (waitMs > 0) await AudioTimeout.wait(waitMs);
+        if (waitMs > 0) {
+            try {
+                await AudioTimeout.wait(waitMs);
+            } catch (err) {
+                releaseReservation();
+                if (isSyncedEvent) this._recordMissedSyncedEvent(normalized, "timer-failed", {
+                    message: err?.message ?? null,
+                });
+                warn(`[Soundscape] Scheduled fire timer failed for "${ps.name}":`, err?.message ?? err);
+                if (canRearm() && !this.isDestroyed && ps.playing) {
+                    this._armOneShot(ps, { minimumDelayMs: RETRY_BACKOFF_MS });
+                }
+                return false;
+            }
+        }
 
         if (this.isDestroyed || !ps.playing) {
             releaseReservation();
@@ -641,10 +718,11 @@ export class SoundscapeEngine {
         this.activeOneShots.add(sound);
         this.oneShotSharedTargetVolumes.set(sound, {
             soundId: ps.id,
+            groupId,
             varianceFactor: normalized.varianceFactor,
             eventId: normalized.eventId,
         });
-        this._incrementActiveCount(ps.id);
+        this._incrementActiveCount(ps.id, groupId);
         releaseReservation();
         _notifySoundscapeUi(this.playlist, "soundscape-one-shot-active", ps.id);
 
@@ -668,7 +746,7 @@ export class SoundscapeEngine {
             warn(`[Soundscape] Play failed for "${ps.name}":`, err?.message);
             this.activeOneShots.delete(sound);
             this.oneShotSharedTargetVolumes.delete(sound);
-            this._decrementActiveCount(ps.id);
+            this._decrementActiveCount(ps.id, groupId);
             this._detachPanner(sound);
             _notifySoundscapeUi(this.playlist, "soundscape-one-shot-play-failed", ps.id);
             if (isSyncedEvent) this._recordMissedSyncedEvent(normalized, "play-failed", {
@@ -684,7 +762,7 @@ export class SoundscapeEngine {
             safeStop(sound, "soundscape fire aborted post-play");
             this.activeOneShots.delete(sound);
             this.oneShotSharedTargetVolumes.delete(sound);
-            this._decrementActiveCount(ps.id);
+            this._decrementActiveCount(ps.id, groupId);
             this._detachPanner(sound);
             _notifySoundscapeUi(this.playlist, "soundscape-one-shot-aborted", ps.id);
             if (isSyncedEvent) this._recordMissedSyncedEvent(normalized, "aborted-after-play");
@@ -705,7 +783,8 @@ export class SoundscapeEngine {
             cleanedUp = true;
             this.activeOneShots.delete(sound);
             this.oneShotSharedTargetVolumes.delete(sound);
-            this._decrementActiveCount(ps.id);
+            this._decrementActiveCount(ps.id, groupId);
+            this._markGroupCompleted(groupId);
             this._detachPanner(sound);
             if (sound.playing) safeStop(sound, "soundscape fire cleanup");
             _notifySoundscapeUi(this.playlist, "soundscape-one-shot-cleanup", ps.id);
@@ -725,7 +804,7 @@ export class SoundscapeEngine {
             const waitForEndMs = Number.isFinite(sound.duration)
                 ? sound.duration * 1000 + 100
                 : 3000;
-            AudioTimeout.wait(waitForEndMs).then(cleanup);
+            AudioTimeout.wait(waitForEndMs).then(cleanup).catch(cleanup);
         }
 
         debug(`[Soundscape] Fired "${ps.name}"`, {
@@ -771,19 +850,85 @@ export class SoundscapeEngine {
         return Math.max(0, Math.min(100, base * attenuation));
     }
 
+    _resolveGroup(ps, groupId = undefined) {
+        const requestedId = groupId === undefined
+            ? Flags.getSoundFlag(ps, "soundscapeGroupId")
+            : groupId;
+        return Flags.getSoundscapeGroup(this.playlist, requestedId);
+    }
+
+    _getGroupOccupied(groupId) {
+        if (!groupId) return 0;
+        return (this.activeGroupCounts.get(groupId) ?? 0) +
+            (this.pendingGroupCounts.get(groupId) ?? 0);
+    }
+
+    _getGroupGate(ps, { groupId = undefined, bypassCooldown = false } = {}) {
+        const group = this._resolveGroup(ps, groupId);
+        if (!group) return null;
+
+        const occupied = this._getGroupOccupied(group.id);
+        if (occupied >= group.maxPolyphony) {
+            return {
+                group,
+                reason: "group-polyphony",
+                retryMs: RETRY_BACKOFF_MS,
+            };
+        }
+
+        const cooldown = this.groupCooldowns.get(group.id);
+        const remainingMs = Math.max(0, Number(cooldown?.nextEligibleAt) - Date.now());
+        if (!bypassCooldown && remainingMs > 0) {
+            return {
+                group,
+                reason: "group-cooldown",
+                retryMs: remainingMs,
+            };
+        }
+        return null;
+    }
+
+    _recordGroupBlock(gate) {
+        const groupId = gate?.group?.id;
+        if (!groupId) return;
+        const next = (this.groupBlockedCounts.get(groupId) ?? 0) + 1;
+        this.groupBlockedCounts.set(groupId, next);
+        _notifySoundscapeUi(this.playlist, gate.reason, null);
+    }
+
+    _markGroupCompleted(groupId) {
+        if (this.isDestroyed) return;
+        const group = Flags.getSoundscapeGroup(this.playlist, groupId);
+        if (!group) return;
+        const completedAt = Date.now();
+        this.groupCooldowns.set(group.id, {
+            lastCompletedAt: completedAt,
+            nextEligibleAt: completedAt + (group.cooldownSec * 1000),
+        });
+        _notifySoundscapeUi(this.playlist, "soundscape-group-cooldown", null);
+    }
+
     _getOccupiedPolyphony() {
         return this.activeOneShots.size + this.pendingOneShotTotal;
     }
 
-    _reserveOneShot(soundId) {
+    _reserveOneShot(soundId, groupId = null) {
         this.pendingOneShotTotal += 1;
         const next = (this.pendingOneShotCounts.get(soundId) ?? 0) + 1;
         this.pendingOneShotCounts.set(soundId, next);
+        if (groupId) {
+            this.pendingGroupCounts.set(groupId, (this.pendingGroupCounts.get(groupId) ?? 0) + 1);
+        }
         _notifySoundscapeUi(this.playlist, "soundscape-one-shot-pending", soundId);
     }
 
-    _releaseOneShotReservation(soundId) {
+    _releaseOneShotReservation(soundId, groupId = null) {
         this.pendingOneShotTotal = Math.max(0, this.pendingOneShotTotal - 1);
+        if (groupId) {
+            const groupPending = this.pendingGroupCounts.get(groupId) ?? 0;
+            if (groupPending <= 1) this.pendingGroupCounts.delete(groupId);
+            else this.pendingGroupCounts.set(groupId, groupPending - 1);
+        }
         const current = this.pendingOneShotCounts.get(soundId) ?? 0;
         if (current <= 1) {
             this.pendingOneShotCounts.delete(soundId);
@@ -794,12 +939,20 @@ export class SoundscapeEngine {
         _notifySoundscapeUi(this.playlist, "soundscape-one-shot-pending", soundId);
     }
 
-    _incrementActiveCount(soundId) {
+    _incrementActiveCount(soundId, groupId = null) {
         const next = (this.activeOneShotCounts.get(soundId) ?? 0) + 1;
         this.activeOneShotCounts.set(soundId, next);
+        if (groupId) {
+            this.activeGroupCounts.set(groupId, (this.activeGroupCounts.get(groupId) ?? 0) + 1);
+        }
     }
 
-    _decrementActiveCount(soundId) {
+    _decrementActiveCount(soundId, groupId = null) {
+        if (groupId) {
+            const groupActive = this.activeGroupCounts.get(groupId) ?? 0;
+            if (groupActive <= 1) this.activeGroupCounts.delete(groupId);
+            else this.activeGroupCounts.set(groupId, groupActive - 1);
+        }
         const current = this.activeOneShotCounts.get(soundId) ?? 0;
         if (current <= 1) {
             this.activeOneShotCounts.delete(soundId);
@@ -822,6 +975,23 @@ export class SoundscapeEngine {
 
     isOneShotPending(soundId) {
         return this.getPendingOneShotCount(soundId) > 0;
+    }
+
+    getGroupPolyphony(groupId) {
+        const group = Flags.getSoundscapeGroup(this.playlist, groupId);
+        if (!group) return null;
+        return {
+            id: group.id,
+            name: group.name,
+            active: this.activeGroupCounts.get(group.id) ?? 0,
+            pending: this.pendingGroupCounts.get(group.id) ?? 0,
+            occupied: this._getGroupOccupied(group.id),
+            max: group.maxPolyphony,
+            cooldownSec: group.cooldownSec,
+            lastCompletedAt: this.groupCooldowns.get(group.id)?.lastCompletedAt ?? null,
+            nextEligibleAt: this.groupCooldowns.get(group.id)?.nextEligibleAt ?? null,
+            blocked: this.groupBlockedCounts.get(group.id) ?? 0,
+        };
     }
 
     /**
@@ -945,7 +1115,11 @@ export class SoundscapeEngine {
         this.oneShotTimers.delete(soundId);
 
         try {
-            return await this._fireOneShot(ps, { bypassChance: true });
+            return await this._fireOneShot(ps, {
+                bypassChance: true,
+                bypassCooldown: true,
+                allowGmAuthorship: true,
+            });
         } catch (err) {
             warn(`[Soundscape] fireOneShotNow failed for "${ps.name}":`, err?.message);
             if (!this.isDestroyed && ps.playing) this._armOneShot(ps, { minimumDelayMs: RETRY_BACKOFF_MS });
@@ -1044,6 +1218,9 @@ export class SoundscapeEngine {
             activeOneShotCounts: _mapToObject(this.activeOneShotCounts),
             pendingOneShots: this.pendingOneShotTotal,
             pendingOneShotCounts: _mapToObject(this.pendingOneShotCounts),
+            groups: Flags.getSoundscapeGroups(this.playlist)
+                .map((group) => this.getGroupPolyphony(group.id))
+                .filter(Boolean),
             recentSyncedEvents: this.recentSyncedEvents.slice(-SYNCED_EVENT_HISTORY_LIMIT),
             missedSyncedEvents: this.missedSyncedEvents.slice(-SYNCED_EVENT_HISTORY_LIMIT),
             polyphony: this.getPolyphony(),
@@ -1088,9 +1265,13 @@ export class SoundscapeEngine {
         this.activeOneShotCounts.clear();
         this.pendingOneShotTotal = 0;
         this.pendingOneShotCounts.clear();
+        this.activeGroupCounts.clear();
+        this.pendingGroupCounts.clear();
+        this.groupCooldowns.clear();
+        this.groupBlockedCounts.clear();
 
         // GM stops beds via normal Foundry mechanism (replicates to clients).
-        if (stopBeds && game.user.isGM) {
+        if (stopBeds && PlaylistActionAuthority.isAuthorizedGM()) {
             const updates = [];
             for (const bedId of this.bedSoundIds) {
                 const bed = this.playlist.sounds.get(bedId);
@@ -1168,6 +1349,7 @@ export function isSoundscapeActive(playlist) {
  */
 export async function handleSoundscapeProceduralFire(data = {}) {
     if (!isSoundscapeProceduralSyncEnabled()) return false;
+    if (!PlaylistActionAuthority.isActiveGMId(data.gmId)) return false;
     const playlist = game.playlists?.get?.(data.playlistId);
     if (!playlist || !Flags.getPlaybackMode(playlist).soundscape) return false;
 

@@ -1,6 +1,6 @@
 // audio-fader.js - Advanced audio fading utilities for Foundry VTT
 
-import { debug, MODULE_ID, ensureAudioContext } from "./utils.js";
+import { debug, MODULE_ID, ensureAudioContext, safeStop } from "./utils.js";
 import { State } from "./state-manager.js";
 
 const AudioTimeout = foundry.audio.AudioTimeout;
@@ -212,7 +212,7 @@ function clearFadeTokenAfter(sound, token, durationMs, bufferMs = 50) {
   if (!token) return;
   AudioTimeout.wait(Math.max(0, Number(durationMs) || 0) + bufferMs)
     .then(() => State.clearFadingSound(sound, token))
-    .catch(() => { });
+    .catch(() => State.clearFadingSound(sound, token));
 }
 
 function createCancellableTimeout(delayMs) {
@@ -403,17 +403,16 @@ export async function fadeOutAndStop(sound, ms = 500) {
 
   try {
     await AudioTimeout.wait(ms);
-  } catch (_) {
-    return;
+  } catch (err) {
+    debug("[AF] Fade timer failed; stopping through the safe fallback.", err?.message ?? err);
   }
 
   if (!token || State.isCurrentFadeToken(sound, token)) {
     try {
-      sound.stop();
-    } catch (err) {
-      // Sound may have been destroyed
+      await safeStop(sound, "fadeOutAndStop completion");
+    } finally {
+      State.clearFadingSound(sound, token);
     }
-    State.clearFadingSound(sound, token);
   }
 }
 

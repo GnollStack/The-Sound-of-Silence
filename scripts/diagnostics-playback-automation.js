@@ -11,7 +11,9 @@ import {
 } from "./legacy-loop-migration.js";
 import { Silence } from "./silence.js";
 import { State } from "./state-manager.js";
-import { MODULE_ID } from "./utils.js";
+import { activatePlaylistSidebar } from "./diagnostics-sidebar.js";
+import { getCrossfadePreloadDiagnostics } from "./playback/preload-coordinator.js";
+import { MODULE_ID, PlaylistActionAuthority } from "./utils.js";
 
 export const FIXTURE_FLAG = "mcpAutomationFixture";
 export const FIXTURE_PREFIX = "SoS MCP Test -";
@@ -32,18 +34,24 @@ const CONTROL_OPERATIONS = [
 const SCENARIOS = [
   "basicPlayback",
   "crossfade",
+  "pauseResumeTransitions",
+  "crossfadePreload",
   "silence",
+  "transitionFallbacks",
+  "configurationBoundaries",
   "loopWithin",
   "legacyLoopCrossfade",
   "legacyLoopMigration",
   "soundscape",
   "soundscapeAdvanced",
+  "soundscapeGroups",
   "shufflePatterns",
   "customFades",
 ];
 
 const CLIENT_SYNC_SCENARIOS = [
   "responder",
+  "authorityElection",
   "basicPlaybackSync",
   "crossfadeReplication",
   "stopTransitionReplication",
@@ -116,6 +124,7 @@ async function controlPlayback(api, args) {
   const operation = normalizeChoice(args.operation, CONTROL_OPERATIONS, "operation");
   const playlist = resolvePlaylist(args);
   const waitMs = normalizeWait(args.waitMs, DEFAULT_WAIT_MS);
+  const playlistSidebar = await requirePlaylistSidebar();
   let sound = null;
 
   if (operation === "playSound") {
@@ -148,16 +157,25 @@ async function controlPlayback(api, args) {
   return {
     success: true,
     operation,
+    playlistSidebar,
     playlist: summarizePlaylist(playlist),
   };
 }
 
 async function runPlaybackAutomation(api, args) {
-  const requestedScenario = normalizeChoice(args.scenario ?? "all", getPlaybackAutomationScenarios(), "scenario");
+  const scenarioNames = normalizeScenarioList(
+    args.scenarios ?? args.scenario ?? "all",
+    getPlaybackAutomationScenarios(),
+    SCENARIOS,
+    "scenarios"
+  );
+  const requestedScenario = scenarioNames.length === SCENARIOS.length
+    ? "all"
+    : scenarioNames.join(",");
   const cleanupAfter = args.cleanupAfter !== false && args.leaveFixtures !== true;
   const cleanupBefore = args.cleanupBefore !== false;
   const runId = String(args.runId || foundry.utils.randomID(8));
-  const scenarioNames = requestedScenario === "all" ? SCENARIOS : [requestedScenario];
+  const playlistSidebar = await requirePlaylistSidebar();
   const beforeCounts = getWorldDocumentCounts();
   const results = [];
   const createdPlaylistIds = [];
@@ -191,6 +209,7 @@ async function runPlaybackAutomation(api, args) {
     failed: failed.length,
     results,
     createdPlaylistIds,
+    playlistSidebar,
     beforeCleanup,
     cleanup,
     remainingFixtures: getPlaybackFixtureCounts(runId),
@@ -213,6 +232,7 @@ async function runClientSyncAutomation(api, args = {}) {
   const cleanupAfter = args.cleanupAfter !== false && args.leaveFixtures !== true;
   const cleanupBefore = args.cleanupBefore !== false;
   const runId = String(args.runId || foundry.utils.randomID(8));
+  const playlistSidebar = await requirePlaylistSidebar();
   const beforeCounts = getWorldDocumentCounts();
   const results = [];
   const createdPlaylistIds = [];
@@ -252,6 +272,7 @@ async function runClientSyncAutomation(api, args = {}) {
       beforeCleanup,
       cleanup,
       preflight,
+      playlistSidebar,
     });
   }
 
@@ -279,6 +300,7 @@ async function runClientSyncAutomation(api, args = {}) {
     beforeCleanup,
     cleanup,
     preflight,
+    playlistSidebar,
   });
 }
 
@@ -293,6 +315,7 @@ function finalizeClientSyncRun({
   beforeCleanup,
   cleanup,
   preflight,
+  playlistSidebar,
 }) {
   const failed = results.filter((result) => !result.success);
   const inconclusive = results.reduce((total, result) => total + Number(result.inconclusive ?? 0), 0);
@@ -309,6 +332,7 @@ function finalizeClientSyncRun({
     createdPlaylistIds,
     beforeCleanup,
     cleanup,
+    playlistSidebar,
     remainingFixtures: getPlaybackFixtureCounts(runId),
     preflight: summarizeCollection(preflight),
     documentCounts: {
@@ -323,7 +347,20 @@ async function runClientSyncScenario(api, scenario, runId, { timeoutMs }) {
   let playlist = null;
 
   try {
-    if (scenario === "basicPlaybackSync") {
+    if (scenario === "authorityElection") {
+      const diagnostics = await collectSyncDiagnostics(api, { timeoutMs, playlistIds: [] });
+      const gmClients = diagnostics.gmClients;
+      const primaryClients = gmClients.filter((client) => client.debug?.authorizedGM === true);
+      const expectedId = PlaylistActionAuthority.getAuthorizedGMId();
+      record(tests, "authority diagnostics include an active GM", () => gmClients.length >= 1);
+      record(tests, "exactly one connected GM reports primary authority", () => primaryClients.length === 1);
+      record(tests, "all GM clients agree on the deterministic primary GM", () =>
+        gmClients.every((client) => String(client.debug?.authorizedGMId ?? "") === String(expectedId ?? ""))
+      );
+      record(tests, "the elected primary client matches the deterministic GM id", () =>
+        String(primaryClients[0]?.client?.userId ?? "") === String(expectedId ?? "")
+      );
+    } else if (scenario === "basicPlaybackSync") {
       playlist = await createFixturePlaylist(runId, scenario, {
         mode: playlistMode("SEQUENTIAL", 1),
         sounds: [
@@ -627,6 +664,13 @@ async function runClientSyncScenario(api, scenario, runId, { timeoutMs }) {
       const fixture = await createSoundscapeSyncFixture(runId, scenario);
       playlist = fixture.playlist;
       const { proc } = fixture;
+      await Flags.setFlag(playlist, "soundscapeGroups", [{
+        id: "synced-group",
+        name: "Synced Group",
+        maxPolyphony: 2,
+        cooldownSec: 1,
+      }]);
+      await Flags.setFlag(proc, "soundscapeGroupId", "synced-group");
 
       await playlist.playAll();
       const engine = await waitForSoundscapeEngine(playlist, { timeoutMs: 2500 });
@@ -636,7 +680,9 @@ async function runClientSyncScenario(api, scenario, runId, { timeoutMs }) {
         .reverse()
         .find((event) => event.soundId === proc?.id && event.status === "played");
       record(tests, "GM emits and plays synced procedural fire", () =>
-        fired === true && !!gmEvent?.eventId
+        fired === true &&
+        !!gmEvent?.eventId &&
+        gmEvent.groupId === "synced-group"
       );
 
       await wait(250);
@@ -646,6 +692,13 @@ async function runClientSyncScenario(api, scenario, runId, { timeoutMs }) {
         const snapshot = findSoundscapeSnapshot(client, playlist.id);
         const event = findSoundscapeEvent(snapshot, gmEvent?.eventId);
         const missed = findMissedSoundscapeEvent(snapshot, gmEvent?.eventId);
+        record(tests, `${clientName} receives soundscape group configuration`, () =>
+          snapshot?.groups?.some((group) =>
+            group.id === "synced-group" &&
+            group.max === 2 &&
+            group.cooldownSec === 1
+          )
+        );
         if (!event) {
           const readiness = getClientAudioReadiness(client);
           if (!readiness.ready || ["audio-locked", "no-audio", "no-audio-context", "audio-context-closed", "late", "late-after-wait", "load-failed", "play-failed"].includes(missed?.reason)) {
@@ -665,6 +718,7 @@ async function runClientSyncScenario(api, scenario, runId, { timeoutMs }) {
         record(tests, `${clientName} receives same fire recipe`, () =>
           event.eventId === gmEvent.eventId &&
           event.soundId === gmEvent.soundId &&
+          event.groupId === gmEvent.groupId &&
           event.seq === gmEvent.seq &&
           approximately(event.panValue, gmEvent.panValue, 0.0001) &&
           approximately(event.varianceFactor, gmEvent.varianceFactor, 0.0001)
@@ -877,6 +931,131 @@ async function runScenario(api, scenario, runId) {
       record(tests, "crossfade advances to another sound", () => !!active && active.id !== first.id);
       record(tests, "crossfade metric increments", () => metricAfter > metricBefore);
       record(tests, "crossfade runtime state clears", () => !State.isPlaylistCrossfading(playlist));
+    } else if (scenario === "pauseResumeTransitions") {
+      playlist = await createFixturePlaylist(runId, scenario, {
+        mode: playlistMode("SEQUENTIAL", 1),
+        fade: 1,
+        flags: {
+          crossfade: true,
+          useCustomAutoFade: true,
+          customAutoFadeMs: 900,
+        },
+        sounds: [
+          fixtureSound("Pause Crossfade A", {
+            runId,
+            scenario,
+            path: createToneDataUri({ durationSec: 2.5, frequency: 330 }),
+          }),
+          fixtureSound("Pause Crossfade B", {
+            runId,
+            scenario,
+            path: createToneDataUri({ durationSec: 2.5, frequency: 440 }),
+          }),
+        ],
+      });
+      const [source] = Array.from(playlist.sounds);
+      await playlist.playSound(source);
+      await waitForPlayingSound(playlist, {
+        soundId: source.id,
+        requireMedia: true,
+        timeoutMs: 2500,
+      });
+      await api.crossfadeToNext(playlist, source);
+      await wait(120);
+
+      const incoming = getPlayingSound(playlist);
+      const sessionBeforePause = State.getCrossfadeSession(playlist);
+      record(tests, "crossfade session is active before pause", () =>
+        !!incoming && incoming.id !== source.id &&
+        !!sessionBeforePause &&
+        ["preparing", "active"].includes(sessionBeforePause.status)
+      );
+
+      const capturedTime = Number(incoming?.sound?.currentTime);
+      if (incoming) {
+        await incoming.update({
+          playing: false,
+          pausedTime: Number.isFinite(capturedTime) ? capturedTime : 0,
+        });
+      }
+      await wait(150);
+
+      record(tests, "pause clears active transition ownership", () =>
+        !State.getCrossfadeSession(playlist) && !State.isPlaylistCrossfading(playlist)
+      );
+      record(tests, "pause settles both crossfade media participants", () =>
+        Array.from(playlist.sounds).every((sound) => !sound.sound?.playing)
+      );
+      record(tests, "pause preserves a finite incoming offset", () =>
+        !!incoming && Number.isFinite(Number(incoming.pausedTime))
+      );
+
+      if (incoming) await incoming.update({ playing: true });
+      const resumed = incoming
+        ? await waitForPlayingSound(playlist, {
+            soundId: incoming.id,
+            requireMedia: true,
+            timeoutMs: 2500,
+          })
+        : null;
+      record(tests, "resume restarts the logical incoming track", () =>
+        !!resumed?.sound?.playing && resumed.id === incoming?.id
+      );
+      record(tests, "resume does not revive the outgoing crossfade media", () =>
+        !source.sound?.playing && !State.getCrossfadeSession(playlist)
+      );
+    } else if (scenario === "crossfadePreload") {
+      const originalNativeLead = CONFIG.Playlist?.autoPreloadSeconds;
+      try {
+        CONFIG.Playlist.autoPreloadSeconds = 1;
+        playlist = await createFixturePlaylist(runId, scenario, {
+          mode: playlistMode("SEQUENTIAL", 1),
+          fade: 1,
+          flags: {
+            crossfade: true,
+            useCustomAutoFade: true,
+            customAutoFadeMs: 2000,
+          },
+          sounds: [
+            fixtureSound("Preload Source", {
+              runId,
+              scenario,
+              path: createToneDataUri({ durationSec: 8, frequency: 330 }),
+            }),
+            fixtureSound("Preload Target", {
+              runId,
+              scenario,
+              path: createToneDataUri({ durationSec: 1, frequency: 440 }),
+            }),
+          ],
+        });
+        const [source, target] = Array.from(playlist.sounds);
+        await playlist.playSound(source);
+        await waitForPlayingSound(playlist, {
+          soundId: source.id,
+          requireMedia: true,
+          timeoutMs: 2500,
+        });
+        const ready = await waitForCondition(
+          () => getCrossfadePreloadDiagnostics(playlist)?.status === "ready",
+          { timeoutMs: 2500, intervalMs: 40 }
+        );
+        const preload = getCrossfadePreloadDiagnostics(playlist);
+        record(tests, "long crossfade preload becomes ready", () =>
+          ready === true && preload?.status === "ready"
+        );
+        record(tests, "preload targets the next playback-order sound", () =>
+          preload?.sourceSoundId === source.id && preload?.targetSoundId === target.id
+        );
+        record(tests, "preload runs earlier than Foundry's native window", () =>
+          Number(preload?.desiredAtSec) < Number(preload?.nativeAtSec)
+        );
+        record(tests, "preloading does not start target playback", () =>
+          !!target.sound?.loaded && !target.sound.playing && target.playing === false
+        );
+      } finally {
+        if (CONFIG.Playlist) CONFIG.Playlist.autoPreloadSeconds = originalNativeLead;
+      }
     } else if (scenario === "silence") {
       playlist = await createFixturePlaylist(runId, scenario, {
         mode: playlistMode("SEQUENTIAL", 1),
@@ -901,6 +1080,133 @@ async function runScenario(api, scenario, runId) {
       await wait(350);
       record(tests, "silent gap state clears", () => !State.hasSilenceState(playlist));
       record(tests, "silent gap document removed", () => getSilenceGaps(playlist).length === 0);
+    } else if (scenario === "transitionFallbacks") {
+      playlist = await createFixturePlaylist(runId, scenario, {
+        mode: playlistMode("SEQUENTIAL", 1),
+        fade: 0,
+        flags: {
+          crossfade: true,
+          useCustomAutoFade: true,
+          customAutoFadeMs: 0,
+        },
+        sounds: [
+          fixtureSound("Zero Transition Source", {
+            runId,
+            scenario,
+            path: createToneDataUri({ durationSec: 0.55, frequency: 330 }),
+          }),
+          fixtureSound("Zero Transition Next", {
+            runId,
+            scenario,
+            path: createToneDataUri({ durationSec: 0.8, frequency: 440 }),
+          }),
+        ],
+      });
+      const [source, target] = Array.from(playlist.sounds);
+
+      await playlist.playSound(source);
+      await waitForPlayingSound(playlist, { soundId: source.id, requireMedia: true });
+      const crossfadeAdvanced = await waitForCondition(
+        () => target.playing && !source.playing,
+        { timeoutMs: 2500, intervalMs: 40 }
+      );
+      record(tests, "zero-duration crossfade falls back to native advancement", () => crossfadeAdvanced);
+      record(tests, "zero-duration crossfade does not leave runtime state", () =>
+        !State.isPlaylistCrossfading(playlist) && !State.getCrossfadeTimer(playlist)
+      );
+
+      await playlist.stopAll();
+      await wait(150);
+      await api.updatePlaylistConfig(playlist, {
+        crossfade: false,
+        silenceEnabled: true,
+        silenceMode: "static",
+        silenceDuration: 0,
+      });
+      await playlist.playSound(source);
+      await waitForPlayingSound(playlist, { soundId: source.id, requireMedia: true });
+      const silenceAdvanced = await waitForCondition(
+        () => target.playing && !source.playing,
+        { timeoutMs: 2500, intervalMs: 40 }
+      );
+      record(tests, "zero-duration silence falls back to native advancement", () => silenceAdvanced);
+      record(tests, "zero-duration silence creates no gap state or document", () =>
+        !State.hasSilenceState(playlist) && getSilenceGaps(playlist).length === 0
+      );
+    } else if (scenario === "configurationBoundaries") {
+      playlist = await createFixturePlaylist(runId, scenario, {
+        mode: playlistMode("SEQUENTIAL", 1),
+        sounds: [
+          fixtureSound("Configuration Boundary Sound", {
+            runId,
+            scenario,
+            flags: {
+              loopWithin: {
+                enabled: true,
+                active: true,
+                start: "00:01.000",
+                end: "00:02.000",
+                crossfadeMs: 900,
+                loopCount: 3,
+              },
+            },
+          }),
+        ],
+      });
+      const [sound] = Array.from(playlist.sounds);
+
+      await api.updatePlaylistConfig(playlist, {
+        normalizedVolume: 5,
+        customAutoFadeMs: -25,
+        soundscapeMaxPolyphony: 99,
+        crossfade: "invalid-boolean",
+      });
+      record(tests, "public playlist config clamps normalized volume", () =>
+        Flags.getPlaylistFlag(playlist, "normalizedVolume") === 1
+      );
+      record(tests, "public playlist config preserves the zero lower bound", () =>
+        Flags.getPlaylistFlag(playlist, "customAutoFadeMs") === 0
+      );
+      record(tests, "public playlist config clamps soundscape polyphony", () =>
+        Flags.getPlaylistFlag(playlist, "soundscapeMaxPolyphony") === 16
+      );
+      record(tests, "public playlist config rejects invalid boolean values", () =>
+        Flags.getPlaylistFlag(playlist, "crossfade") === false
+      );
+
+      const segments = Array.from({ length: 17 }, (_, index) => ({
+        label: `Boundary ${index + 1}`,
+        start: `00:${String(index).padStart(2, "0")}.000`,
+        end: `00:${String(index + 1).padStart(2, "0")}.000`,
+        crossfadeMs: index === 0 ? 0 : 250,
+        loopCount: index === 0 ? 2.9 : 0,
+        skipToNext: false,
+      }));
+      await api.updateLoopConfig(sound, {
+        enabled: true,
+        active: true,
+        startFromBeginning: true,
+        segments,
+      });
+      const rawLoop = sound.getFlag(MODULE_ID, "loopWithin") ?? {};
+      record(tests, "complete loop update caps persisted segments at sixteen", () =>
+        Array.isArray(rawLoop.segments) && rawLoop.segments.length === 16
+      );
+      record(tests, "complete loop update preserves explicit zero crossfade", () =>
+        rawLoop.segments?.[0]?.crossfadeMs === 0
+      );
+      record(tests, "complete loop update normalizes loop counts to integers", () =>
+        rawLoop.segments?.[0]?.loopCount === 2
+      );
+      record(tests, "complete loop update removes stale legacy and runtime keys", () =>
+        !["start", "end", "crossfadeMs", "loopCount", "startSec", "endSec"]
+          .some((key) => Object.prototype.hasOwnProperty.call(rawLoop, key)) &&
+        !rawLoop.segments.some((segment) => "startSec" in segment || "endSec" in segment)
+      );
+      record(tests, "current client matches deterministic automatic authority", () =>
+        PlaylistActionAuthority.isAuthorizedGM() &&
+        String(PlaylistActionAuthority.getAuthorizedGMId()) === String(game.user.id)
+      );
     } else if (scenario === "loopWithin") {
       playlist = await createFixturePlaylist(runId, scenario, {
         mode: playlistMode("SEQUENTIAL", 1),
@@ -929,6 +1235,36 @@ async function runScenario(api, scenario, runId) {
       api.startLoop(sound);
       await wait(150);
       record(tests, "loop state appears", () => api.isLooping(sound));
+      const looper = State.getActiveLooper(sound);
+      const loopPauseOffset = Number(sound.sound?.currentTime);
+      await sound.update({
+        playing: false,
+        pausedTime: Number.isFinite(loopPauseOffset) ? loopPauseOffset : 0,
+      });
+      await wait(120);
+      record(tests, "loop pause snapshots segment state", () =>
+        !!looper?.pausedSnapshot &&
+        looper.pausedSnapshot.loopsCompleted === looper.loopsCompleted
+      );
+      record(tests, "loop pause cancels every transition timer", () =>
+        !looper?.mainSchedule &&
+        !looper?.loopCrossfadeTimer &&
+        !looper?.handoffTimer &&
+        !looper?.finalTransitionTimer &&
+        looper?.isCrossfading === false
+      );
+      await sound.update({ playing: true });
+      await waitForPlayingSound(playlist, {
+        soundId: sound.id,
+        requireMedia: true,
+        timeoutMs: 2500,
+      });
+      await wait(100);
+      record(tests, "loop resume restores and re-arms the same looper", () =>
+        State.getActiveLooper(sound) === looper &&
+        !looper?.pausedSnapshot &&
+        !!sound.sound?.playing
+      );
       await api.breakLoop(sound);
       await api.cleanup(playlist, {
         cleanSilence: true,
@@ -1419,6 +1755,103 @@ async function runScenario(api, scenario, runId) {
       record(tests, "playlist stopAll clears soundscape bed and procedurals", () =>
         !playlist.playing &&
         Array.from(playlist.sounds ?? []).every((sound) => !sound.playing)
+      );
+    } else if (scenario === "soundscapeGroups") {
+      playlist = await createFixturePlaylist(runId, scenario, {
+        mode: playlistMode("DISABLED", -1),
+        fade: 0,
+        flags: {
+          soundscapeMode: true,
+          soundscapeMaxPolyphony: 3,
+          soundscapeGroups: [{
+            id: "weather",
+            name: "Weather",
+            maxPolyphony: 1,
+            cooldownSec: 2,
+          }],
+        },
+        sounds: [
+          fixtureSound("Grouped Rain", {
+            runId,
+            scenario,
+            path: createToneDataUri({ durationSec: 0.35, frequency: 330 }),
+            flags: {
+              isProcedural: true,
+              soundscapeGroupId: "weather",
+              minDelay: 10,
+              maxDelay: 10,
+              timingMode: "fixed",
+              playChance: 100,
+            },
+          }),
+          fixtureSound("Grouped Thunder", {
+            runId,
+            scenario,
+            path: createToneDataUri({ durationSec: 0.35, frequency: 440 }),
+            flags: {
+              isProcedural: true,
+              soundscapeGroupId: "weather",
+              minDelay: 10,
+              maxDelay: 10,
+              timingMode: "fixed",
+              playChance: 100,
+            },
+          }),
+        ],
+      });
+      const [rain, thunder] = Array.from(playlist.sounds);
+      await playlist.update({
+        playing: true,
+        sounds: [
+          { _id: rain.id, playing: true, pausedTime: null },
+          { _id: thunder.id, playing: true, pausedTime: null },
+        ],
+      });
+      await api.startSoundscape(playlist);
+      const engine = State.getSoundscapeEngine(playlist);
+      await wait(150);
+
+      record(tests, "group configuration and sound assignments round-trip", () =>
+        Flags.getSoundscapeGroups(playlist).length === 1 &&
+        Flags.getSoundscapeGroupForSound(rain)?.id === "weather" &&
+        Flags.getSoundscapeGroupForSound(thunder)?.id === "weather"
+      );
+
+      const rainFired = await engine.fireOneShotNow(rain.id);
+      const thunderBlockedByCap = await engine.fireOneShotNow(thunder.id);
+      record(tests, "group cap blocks a second concurrent member", () =>
+        rainFired === true &&
+        thunderBlockedByCap === false &&
+        engine.getGroupPolyphony("weather")?.occupied === 1
+      );
+
+      const rainCompleted = await waitForCondition(
+        () =>
+          engine.getActiveOneShotCount(rain.id) === 0 &&
+          Number(engine.getGroupPolyphony("weather")?.nextEligibleAt) > Date.now(),
+        { timeoutMs: 2000, intervalMs: 40 }
+      );
+      record(tests, "successful group member completion starts cooldown", () =>
+        rainCompleted === true &&
+        engine.getGroupPolyphony("weather")?.occupied === 0
+      );
+
+      const blockedBefore = engine.getGroupPolyphony("weather")?.blocked ?? 0;
+      const automaticDuringCooldown = await engine._fireOneShot(thunder, {
+        bypassChance: true,
+      });
+      record(tests, "automatic group fire respects cooldown", () =>
+        automaticDuringCooldown === false &&
+        (engine.getGroupPolyphony("weather")?.blocked ?? 0) > blockedBefore
+      );
+
+      const manualDuringCooldown = await engine.fireOneShotNow(thunder.id);
+      const groupDiagnostics = engine.getDiagnostics().groups?.[0];
+      record(tests, "Fire Now bypasses cooldown but still occupies the group cap", () =>
+        manualDuringCooldown === true &&
+        groupDiagnostics?.id === "weather" &&
+        groupDiagnostics?.occupied === 1 &&
+        groupDiagnostics?.max === 1
       );
     } else if (scenario === "shufflePatterns") {
       playlist = await createFixturePlaylist(runId, scenario, {
@@ -2235,6 +2668,14 @@ async function stopAllPlaylists(api) {
   await wait(250);
 }
 
+async function requirePlaylistSidebar() {
+  const result = await activatePlaylistSidebar();
+  if (!result.success) {
+    throw new Error("Unable to initialize Foundry's Playlists sidebar for audio automation: " + result.error);
+  }
+  return result;
+}
+
 function resolvePlaylist(args) {
   const playlistId = normalizeOptionalString(args.playlistId);
   const playlistName = normalizeOptionalString(args.playlistName ?? args.name);
@@ -2425,6 +2866,7 @@ function summarizePlaylist(playlist) {
       volume: Number(sound.volume ?? 0),
       isSilenceGap: Boolean(Flags.getSoundFlag(sound, "isSilenceGap")),
       isProcedural: Boolean(Flags.getSoundFlag(sound, "isProcedural")),
+      soundscapeGroupId: Flags.getSoundFlag(sound, "soundscapeGroupId") || null,
       hasLoopWithin: Boolean(Flags.getLoopConfig(sound)?.enabled),
     })),
   };

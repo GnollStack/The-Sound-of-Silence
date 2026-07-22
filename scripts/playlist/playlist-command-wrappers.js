@@ -5,6 +5,7 @@
 import {
   fadeOutAndStop,
 } from "../audio-fader.js";
+import { shouldUseNativeTrackCompletion } from "../core-helpers.js";
 import { performCrossfade, scheduleCrossfade } from "../cross-fade.js";
 import { Flags } from "../flag-service.js";
 import { scheduleLoopWithin } from "../internal-loop.js";
@@ -34,15 +35,29 @@ async function handleTrackCompletion(playlistSound) {
     State.clearEndOfTrackFade(playlistSound);
   }
   const mode = Flags.getPlaybackMode(playlist);
+  const isAuthority = PlaylistActionAuthority.isAuthorizedGM();
 
   if (mode.crossfade) {
-    return;
+    return shouldUseNativeTrackCompletion({
+      crossfade: true,
+      crossfadeMs: Flags.getCrossfadeDuration(playlist),
+      crossfadeStarted: playlistSound.playing === false,
+      isAuthority,
+    });
   }
 
   if (mode.silence) {
+    if (!isAuthority) return false;
     debug(`Injecting silent gap after "${playlistSound.name}" in "${playlist.name}".`);
-    Silence.playSilence(playlist, playlistSound);
+    const transition = await Silence.startGap(playlist, playlistSound);
+    return shouldUseNativeTrackCompletion({
+      silence: true,
+      silenceStarted: transition.started,
+      isAuthority,
+    });
   }
+
+  return true;
 }
 
 function isSequentialOrShuffle(playlist) {
@@ -117,7 +132,7 @@ export function registerPlaylistCommandWrappers() {
       ) {
         debug(`[LP] Restarting "${this.name}" inside simultaneous playlist "${playlist.name}"`);
         const endResult = wrapped(...args);
-        if (game.user.isGM) playlist.playSound(this);
+        if (PlaylistActionAuthority.isAuthorizedGM()) playlist.playSound(this);
         return endResult;
       }
 
@@ -127,7 +142,15 @@ export function registerPlaylistCommandWrappers() {
         return wrapped(...args);
       }
 
-      handleTrackCompletion(this);
+      return handleTrackCompletion(this)
+        .then((useNativeCompletion) => {
+          if (useNativeCompletion) return wrapped(...args);
+          return undefined;
+        })
+        .catch((err) => {
+          debug(`[Completion] SoS transition failed for "${this.name}"; using Foundry advancement.`, err?.message ?? err);
+          return PlaylistActionAuthority.isAuthorizedGM() ? wrapped(...args) : undefined;
+        });
     },
     "MIXED"
   );

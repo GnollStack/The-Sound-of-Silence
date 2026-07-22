@@ -2,6 +2,12 @@
 <div class="sos-proc-hover">
     <i class="fa-solid fa-dice-d20 sos-procedural-icon" inert></i>
     <span class="proc-name ellipsis">{{ name }}</span>
+    {{#if sos.proceduralGroup}}
+    <span class="sos-procedural-group-badge {{#if sos.proceduralGroup.coolingDown}}is-cooling-down{{/if}}"
+          data-tooltip="Soundscape group: {{ sos.proceduralGroup.name }}">
+        {{ sos.proceduralGroup.name }} {{ sos.proceduralGroup.occupied }}/{{ sos.proceduralGroup.max }}{{#if sos.proceduralGroup.coolingDown}} � cooldown {{ sos.proceduralGroup.cooldownRemainingSec }}s{{/if}}
+    </span>
+    {{/if}}
     <div class="ph-right">
         {{#if sos.showProceduralPlayChance}}
         <span class="sos-procedural-chance-badge"

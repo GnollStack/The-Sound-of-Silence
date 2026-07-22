@@ -6,7 +6,7 @@
  */
 import { MODULE_ID } from "./utils.js";
 import { debug } from "./utils.js";
-import { Flags } from "./flag-service.js";
+import { Flags, sanitizeSoundscapeGroups } from "./flag-service.js";
 import { SoundscapePreviewer } from "./soundscape-previewer.js";
 
 let wrappersRegistered = false;
@@ -30,6 +30,7 @@ const KEYS = {
   NORMALIZED_VOLUME: "normalizedVolume", // number (0-1)
   SOUNDSCAPE_MODE: "soundscapeMode",       // boolean
   SOUNDSCAPE_MAX_POLYPHONY: "soundscapeMaxPolyphony", // number (1-16)
+  SOUNDSCAPE_GROUPS: "soundscapeGroups",
   SOUNDSCAPE_PLAY_CHANCE_SCALING: "soundscapePlayChanceScaling", // "independent" | "scaled" | "soft"
   SOUNDSCAPE_DEFAULT_MIN_DELAY: "soundscapeDefaults.minDelay",
   SOUNDSCAPE_DEFAULT_MAX_DELAY: "soundscapeDefaults.maxDelay",
@@ -55,6 +56,7 @@ const DEFAULTS = {
   [KEYS.NORMALIZED_VOLUME]: 0.5,
   [KEYS.SOUNDSCAPE_MODE]: false,
   [KEYS.SOUNDSCAPE_MAX_POLYPHONY]: 4,
+  [KEYS.SOUNDSCAPE_GROUPS]: [],
   [KEYS.SOUNDSCAPE_PLAY_CHANCE_SCALING]: "independent",
   soundscapeDefaults: {
     minDelay: 15,
@@ -112,6 +114,39 @@ function formatProceduralCadenceSummary(min, max, timingMode) {
   if (timingMode === "fixed") return `Fixed ${min}s`;
   const modeLabel = timingMode === "natural" ? "Natural" : "Uniform";
   return `${modeLabel} ${min}-${max}s`;
+}
+
+function escapeHtml(value) {
+  const text = String(value ?? "");
+  return foundry.utils.escapeHTML ? foundry.utils.escapeHTML(text) : text;
+}
+
+function _buildSoundscapeGroupRow(group, index, fieldName, referenced = false) {
+  const prefix = `soundscapeGroups.${index}`;
+  const id = escapeHtml(group.id);
+  const name = escapeHtml(group.name);
+  const disabled = referenced ? "disabled" : "";
+  const tooltip = referenced
+    ? "Reassign sounds from this group before deleting it."
+    : "Delete group";
+  return `
+    <tr class="sos-soundscape-group-row" data-group-id="${id}">
+      <td>
+        <input type="hidden" data-group-field="id" name="${fieldName(`${prefix}.id`)}" value="${id}">
+        <input type="text" data-group-field="name" name="${fieldName(`${prefix}.name`)}" value="${name}" maxlength="48">
+      </td>
+      <td>
+        <input type="number" data-group-field="maxPolyphony" name="${fieldName(`${prefix}.maxPolyphony`)}" value="${group.maxPolyphony}" min="1" max="16" step="1">
+      </td>
+      <td>
+        <input type="number" data-group-field="cooldownSec" name="${fieldName(`${prefix}.cooldownSec`)}" value="${group.cooldownSec}" min="0" max="3600" step="0.1">
+      </td>
+      <td>
+        <button type="button" class="sos-soundscape-group-delete icon" data-tooltip="${tooltip}" ${disabled}>
+          <i class="fa-solid fa-trash"></i>
+        </button>
+      </td>
+    </tr>`;
 }
 
 /**
@@ -212,6 +247,37 @@ function _registerDocumentSheetV2Wrappers() {
       const scaling = raw[`${basePath}.${KEYS.SOUNDSCAPE_PLAY_CHANCE_SCALING}`];
       cleanFlags.soundscapePlayChanceScaling = sanitizePlayChanceScaling(scaling);
 
+      const groupRows = new Map();
+      const groupPattern = new RegExp(
+        "^flags\\." + MODULE_ID.replace(/[.*+?^$()|[\\]{}]/g, "\\$&") +
+        "\\.soundscapeGroups\\.(\\d+)\\.(id|name|maxPolyphony|cooldownSec)$"
+      );
+      for (const [path, value] of Object.entries({ ...formDataObj, ...raw })) {
+        const match = path.match(groupPattern);
+        if (!match) continue;
+        const index = Number(match[1]);
+        const row = groupRows.get(index) ?? {};
+        row[match[2]] = value;
+        groupRows.set(index, row);
+      }
+      const requestedGroups = sanitizeSoundscapeGroups(
+        Array.from(groupRows.entries())
+          .sort(([a], [b]) => a - b)
+          .map(([, group]) => group)
+      );
+      const referencedGroupIds = new Set(
+        Array.from(this.document?.sounds ?? [])
+          .map((sound) => Flags.getSoundFlag(sound, "soundscapeGroupId"))
+          .filter(Boolean)
+      );
+      const requestedIds = new Set(requestedGroups.map((group) => group.id));
+      const protectedGroups = Flags.getSoundscapeGroups(this.document)
+        .filter((group) => referencedGroupIds.has(group.id) && !requestedIds.has(group.id));
+      cleanFlags.soundscapeGroups = sanitizeSoundscapeGroups([
+        ...protectedGroups,
+        ...requestedGroups,
+      ]);
+
       const clampNum = (value, fallback, min, max) => {
         const n = Number(value);
         if (!Number.isFinite(n)) return fallback;
@@ -283,6 +349,17 @@ function _buildSoundscapePanel(playlist, sos, fieldName, visible) {
     .some((ps) => !Flags.getSoundFlag(ps, "isSilenceGap"));
   const previewDisabled = hasPreviewableContent ? "" : "disabled";
   const previewStatus = hasPreviewableContent ? "Ready" : "No Sounds";
+  const groups = sanitizeSoundscapeGroups(sos.soundscapeGroups);
+  const referencedGroupIds = new Set(
+    Array.from(playlist?.sounds ?? [])
+      .map((ps) => Flags.getSoundFlag(ps, "soundscapeGroupId"))
+      .filter(Boolean)
+  );
+  const groupRows = groups
+    .map((group, index) =>
+      _buildSoundscapeGroupRow(group, index, fieldName, referencedGroupIds.has(group.id))
+    )
+    .join("");
 
   const proceduralRows = (playlist?.sounds ?? [])
     .filter((ps) => !Flags.getSoundFlag(ps, "isSilenceGap") && Flags.getSoundFlag(ps, "isProcedural"))
@@ -293,6 +370,7 @@ function _buildSoundscapePanel(playlist, sos, fieldName, visible) {
       const initialFireMode = sanitizeProceduralInitialFireMode(Flags.resolveProceduralField(ps, "initialFireMode"));
       const chance = Flags.resolveProceduralField(ps, "playChance");
       const pan = Flags.resolveProceduralField(ps, "randomPan");
+      const groupName = Flags.getSoundscapeGroupForSound(ps)?.name ?? "None";
       const name = foundry.utils.escapeHTML ? foundry.utils.escapeHTML(ps.name ?? "(unnamed)") : (ps.name ?? "(unnamed)");
       const cadenceSummary = formatProceduralCadenceSummary(min, max, timingMode);
       return `
@@ -300,6 +378,7 @@ function _buildSoundscapePanel(playlist, sos, fieldName, visible) {
           <td class="sos-roster-name" title="${name}">${name}</td>
           <td class="sos-roster-num">${cadenceSummary}</td>
           <td class="sos-roster-num">${PROCEDURAL_INITIAL_FIRE_OPTIONS[initialFireMode]}</td>
+          <td class="sos-roster-num">${escapeHtml(groupName)}</td>
           <td class="sos-roster-num">${chance}%</td>
           <td class="sos-roster-pan">${pan ? '<i class="fas fa-arrows-left-right"></i>' : "&mdash;"}</td>
         </tr>`;
@@ -314,6 +393,7 @@ function _buildSoundscapePanel(playlist, sos, fieldName, visible) {
             <th>Procedural Sound</th>
             <th>Cadence</th>
             <th>First Fire</th>
+            <th>Group</th>
             <th>Chance</th>
             <th>Pan</th>
           </tr>
@@ -353,6 +433,26 @@ function _buildSoundscapePanel(playlist, sos, fieldName, visible) {
           <p class="notes sos-compact">Linear drops chance evenly as the cap fills. Soft keeps more chance alive until the soundscape starts getting crowded.</p>
         </div>
       </div>
+
+      <fieldset class="sos-soundscape-groups">
+        <legend>Groups</legend>
+        <p class="notes sos-compact">Optional shared polyphony and post-completion cooldown controls. Reassign referenced sounds before deleting a group.</p>
+        <table class="sos-soundscape-group-table">
+          <thead>
+            <tr>
+              <th>Name</th>
+              <th>Max</th>
+              <th>Cooldown (s)</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>${groupRows}</tbody>
+        </table>
+        <p class="notes sos-compact sos-soundscape-groups-empty" style="display: ${groupRows ? "none" : "block"};">No groups configured. Existing Soundscapes continue to use only the global cap.</p>
+        <button type="button" class="sos-soundscape-group-add">
+          <i class="fa-solid fa-plus"></i> Add Group
+        </button>
+      </fieldset>
 
       <fieldset class="sos-soundscape-defaults">
         <legend>Procedural Defaults</legend>
@@ -596,6 +696,10 @@ if (fadeRangePicker.length) {
   const soundscapePreviewStart = soundscapePreviewPanel.find('.sos-soundscape-preview-start');
   const soundscapePreviewStop = soundscapePreviewPanel.find('.sos-soundscape-preview-stop');
   const soundscapePreviewStatus = soundscapePreviewPanel.find('.sos-soundscape-preview-status');
+  const soundscapeGroupTable = $mainBlock.find('.sos-soundscape-group-table');
+  const soundscapeGroupBody = soundscapeGroupTable.find('tbody');
+  const soundscapeGroupAdd = $mainBlock.find('.sos-soundscape-group-add');
+  const soundscapeGroupsEmpty = $mainBlock.find('.sos-soundscape-groups-empty');
   const hasPreviewableSoundscapeContent = Array.from(app.document?.sounds ?? [])
     .some((ps) => !Flags.getSoundFlag(ps, "isSilenceGap"));
 
@@ -695,6 +799,41 @@ if (fadeRangePicker.length) {
     app._soundOfSilenceSoundscapePreview = false;
     refreshSoundscapePreviewControls();
   });
+
+  function refreshSoundscapeGroupRows() {
+    const rows = soundscapeGroupBody.find('.sos-soundscape-group-row');
+    rows.each((index, row) => {
+      $(row).find('[data-group-field]').each((_fieldIndex, field) => {
+        const key = field.dataset.groupField;
+        field.name = fieldName(`soundscapeGroups.${index}.${key}`);
+      });
+    });
+    soundscapeGroupsEmpty.toggle(rows.length === 0);
+    soundscapeGroupAdd.prop('disabled', rows.length >= 16);
+  }
+
+  soundscapeGroupAdd.on('click', (event) => {
+    event.preventDefault();
+    const index = soundscapeGroupBody.find('.sos-soundscape-group-row').length;
+    if (index >= 16) return;
+    const generatedId = foundry.utils.randomID?.() ??
+      ("group-" + Date.now().toString(36) + "-" + index);
+    soundscapeGroupBody.append(_buildSoundscapeGroupRow({
+      id: generatedId,
+      name: `Group ${index + 1}`,
+      maxPolyphony: 1,
+      cooldownSec: 0,
+    }, index, fieldName, false));
+    refreshSoundscapeGroupRows();
+  });
+
+  soundscapeGroupBody.on('click', '.sos-soundscape-group-delete', function (event) {
+    event.preventDefault();
+    if (this.disabled) return;
+    $(this).closest('.sos-soundscape-group-row').remove();
+    refreshSoundscapeGroupRows();
+  });
+  refreshSoundscapeGroupRows();
 
   crossfadeMaster.on('change', () => {
     crossfadeOptions.toggle(crossfadeMaster.is(':checked'));

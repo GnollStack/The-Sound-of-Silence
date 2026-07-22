@@ -18,6 +18,7 @@ import {
 const PLAYBACK_RECOVERY_IN_FLIGHT = new Set();
 const PLAYBACK_RECOVERY_SEEN = new Map();
 let playbackRecoveryWatchdog = null;
+let playbackRecoveryCleanupHookRegistered = false;
 
 function _describeActivePlaylists() {
   try {
@@ -257,6 +258,15 @@ export function runPlaybackRecoveryWatchdog(reason = "watchdog") {
 }
 
 export function startPlaybackRecoveryWatchdog() {
+  if (!playbackRecoveryCleanupHookRegistered) {
+    playbackRecoveryCleanupHookRegistered = true;
+    Hooks.on("deletePlaylist", (playlist) => {
+      const id = playlist?.id;
+      if (!id) return;
+      PLAYBACK_RECOVERY_IN_FLIGHT.delete(id);
+      PLAYBACK_RECOVERY_SEEN.delete(id);
+    });
+  }
   if (playbackRecoveryWatchdog || !globalThis.setInterval) return;
   playbackRecoveryWatchdog = globalThis.setInterval(
     () => runPlaybackRecoveryWatchdog("interval"),

@@ -3,6 +3,7 @@
  * @description Safe, allowlisted diagnostics actions for MCP bridge callers.
  */
 import { Flags } from "./flag-service.js";
+import { getPublicApiKeys } from "./core-helpers.js";
 import { Integrations } from "./integrations.js";
 import {
   FIXTURE_FLAG,
@@ -14,6 +15,7 @@ import {
   getPlaybackAutomationControlOperations,
   getPlaybackAutomationScenarios,
 } from "./diagnostics-playback-automation.js";
+import { getCrossfadePreloadDiagnostics } from "./playback/preload-coordinator.js";
 import {
   MODULE_ID,
   SoundOfSilenceDiagnostics,
@@ -61,12 +63,16 @@ const MODULE_ASSETS = Object.freeze([
   "module.json",
   "README.md",
   "scripts/main.js",
+  "scripts/core-helpers.js",
   "scripts/api.js",
   "scripts/settings.js",
   "scripts/diagnostics.js",
   "scripts/diagnostics-playback-automation.js",
+  "scripts/diagnostics-sidebar.js",
   "scripts/flag-service.js",
   "scripts/legacy-loop-migration.js",
+  "scripts/playback/preload-coordinator.js",
+  "scripts/playback/transition-session.js",
   "templates/diagnostics.hbs",
   "templates/remote-diagnostics.hbs",
   "styles/diagnostics.css",
@@ -370,7 +376,8 @@ function getStatus(api, _args, availability) {
     integrations: Integrations.diagnostics(),
     audio: getAudioSnapshot(playlists),
     playback: api.inspectAll(),
-    publicApiKeys: Object.keys(modulePackage?.api ?? {}).sort(),
+    crossfadePreloads: getCrossfadePreloadDiagnostics(),
+    publicApiKeys: getPublicApiKeys(modulePackage?.api),
   };
 }
 

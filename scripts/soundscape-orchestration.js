@@ -5,7 +5,7 @@
 import { Flags } from "./flag-service.js";
 import { startSoundscape, stopSoundscape } from "./procedural-ambience.js";
 import { State } from "./state-manager.js";
-import { debug, MODULE_ID } from "./utils.js";
+import { debug, MODULE_ID, PlaylistActionAuthority } from "./utils.js";
 
 let soundHooksRegistered = false;
 let playlistHooksRegistered = false;
@@ -78,6 +78,19 @@ export function registerSoundscapeSoundHooks() {
   // Arm or disarm a procedural sound's timer when its `playing` state flips.
   // Runs on every client so local RNG timers stay aligned with document state.
   Hooks.on("updatePlaylistSound", (soundDoc, changes) => {
+    const groupChanged = foundry.utils.hasProperty(
+      changes,
+      `flags.${MODULE_ID}.soundscapeGroupId`
+    );
+    if (groupChanged) {
+      State.notifyStateChanged({
+        soundscapeOnly: true,
+        reason: "soundscape-group-assignment",
+        playlistId: soundDoc.parent?.id ?? null,
+        soundId: soundDoc.id,
+      });
+    }
+
     if (!Object.prototype.hasOwnProperty.call(changes, "playing")) return;
 
     const playlist = soundDoc.parent;
@@ -92,7 +105,7 @@ export function registerSoundscapeSoundHooks() {
   // Individual stops accumulate until no sound is left, then the playlist
   // itself flips to stopped, which tears down the engine via updatePlaylist.
   Hooks.on("updatePlaylistSound", async (soundDoc, changes) => {
-    if (!game.user.isGM) return;
+    if (!PlaylistActionAuthority.isAuthorizedGM()) return;
     if (!Object.prototype.hasOwnProperty.call(changes, "playing")) return;
     if (changes.playing) return;
 
@@ -126,6 +139,21 @@ export function registerSoundscapePlaylistHooks() {
     const playingChanged = Object.prototype.hasOwnProperty.call(changes, "playing");
     const modeChanged = Object.prototype.hasOwnProperty.call(changes, "mode");
     const soundStatesChanged = Array.isArray(changes?.sounds);
+    const groupsChanged = foundry.utils.hasProperty(
+      changes,
+      `flags.${MODULE_ID}.soundscapeGroups`
+    );
+    const groupCapChanged = foundry.utils.hasProperty(
+      changes,
+      `flags.${MODULE_ID}.soundscapeMaxPolyphony`
+    );
+    if (groupsChanged || groupCapChanged) {
+      State.notifyStateChanged({
+        soundscapeOnly: true,
+        reason: "soundscape-group-config",
+        playlistId: playlist.id,
+      });
+    }
     if (!soundscapeChanged && !playingChanged && !modeChanged && !soundStatesChanged) return;
 
     scheduleSoundscapeReconcile(playlist, "playlist update");

@@ -72,6 +72,8 @@ Up to 16 segments per track with draggable handles, color-coded zones, crossfade
 
 The same curve used in Logic Pro and Ableton, with constant perceived power across the blend, no harsh cuts, and no mid-fade dips. Inherit the playlist's fade-out time, or override per playlist.
 
+Pausing during a blend safely commits the incoming track as the resumable track. Long blends also preload their next track earlier when Foundry's native preload window would be too late.
+
 ▶ **[Watch demo (1 min)](https://youtu.be/7K72lde_jus)**
 
 ---
@@ -88,7 +90,7 @@ Works in Sequential, Shuffle, and Simultaneous modes. Set a fixed gap, or a min/
 ### Soundscape Mode
 **Procedural ambience that runs itself.**
 
-Bed tracks loop while procedural one-shots are GM-authored and synced to players by default. Configure cadence (Uniform / Fixed / Natural), polyphony caps, pan, and play-chance per sound; players can opt out to use local procedural timing when needed.
+Bed tracks loop while procedural one-shots are GM-authored and synced to players by default. Configure cadence (Uniform / Fixed / Natural), global or named group polyphony caps, group cooldowns, pan, and play-chance per sound; players can opt out to use local procedural timing when needed.
 
 <img width="373" height="563" alt="Soundscape procedural roster and preview controls" src="https://github.com/user-attachments/assets/239080e1-500f-4753-963e-def61ae4ce47" />
 
@@ -134,7 +136,8 @@ Soundscape is the 5th option in the playback-mode picker, alongside Soundboard /
 - **Procedural cadence** — Uniform Random, Fixed Cadence, or Natural (center-weighted) timing per sound.
 - **Startup mode** — Use Cadence, Stagger First Fire, or Immediate First Fire.
 - **Polyphony cap** — limit overlapping one-shots, with Independent, Linear, or Soft chance-scaling.
-- **Synced procedural fires** - the GM client chooses each live one-shot recipe and synced players play that same sound, sequence, pan, variance, fade-in, and scheduled start.
+- **Soundscape groups** - assign related one-shots to a named shared cap and post-completion cooldown. Fire Now bypasses cooldown for testing, but still respects caps.
+- **Synced procedural fires** - the GM client chooses each live one-shot recipe and synced players play that same sound, sequence, group, pan, variance, fade-in, and scheduled start.
 - **Client opt-out** - players can disable synced procedural events for local procedural RNG while beds and document playback state remain synced.
 - **Audition** — test the full mix from the playlist's Preview control, or any procedural from its sound sheet. Both are local-only and neither affects live state.
 - **Soundboard control** — play or stop any sound individually; auto-stops the playlist when the last sound ends.

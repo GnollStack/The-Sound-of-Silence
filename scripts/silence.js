@@ -5,7 +5,15 @@
  * @description Manages the "Sound of Silence" feature by creating, playing,
  * and cleaning up temporary silent audio tracks to serve as gaps between playlist sounds.
  */
-import { debug, waitForMedia, MODULE_ID, logFeature, LogSymbols, warn } from "./utils.js";
+import {
+  debug,
+  waitForMedia,
+  MODULE_ID,
+  logFeature,
+  LogSymbols,
+  PlaylistActionAuthority,
+  warn,
+} from "./utils.js";
 import { Flags } from "./flag-service.js";
 import { State } from "./state-manager.js";
 import { maybeLoopPlaylist } from "./playlist-loop.js";
@@ -188,21 +196,25 @@ export async function completeSilenceGap(playlist, state = State.getSilenceState
   const sourceSound = state.sourceSound;
   const wasPlaying = playlist.playing;
 
-  await teardownGap(playlist, state);
+  try {
+    await teardownGap(playlist, state);
 
-  if (game.user.isGM && wasPlaying && sourceSound) {
-    const order = playlist.playbackOrder;
-    const idx = order.indexOf(sourceSound.id) + 1;
-    const next = playlist.sounds.get(order[idx]);
+    if (PlaylistActionAuthority.isAuthorizedGM() && wasPlaying && sourceSound) {
+      const order = playlist.playbackOrder;
+      const idx = order.indexOf(sourceSound.id) + 1;
+      const next = playlist.sounds.get(order[idx]);
 
-    if (next) {
-      playlist.playSound(next);
-    } else if (!maybeLoopPlaylist(playlist)) {
-      playlist.stopAll();
+      if (next) {
+        await playlist.playSound(next);
+      } else if (!maybeLoopPlaylist(playlist)) {
+        await playlist.stopAll();
+      }
     }
+  } catch (err) {
+    warn(`[Silence] Failed to advance "${playlist.name}" after its gap:`, err);
+  } finally {
+    state.resolve?.(false);
   }
-
-  state.resolve?.(false);
   return true;
 }
 
@@ -211,9 +223,68 @@ export async function completeSilenceGap(playlist, state = State.getSilenceState
 // Public API
 // ============================================
 
+/**
+ * Attempt to start a silent gap without changing the public playSilence result contract.
+ * @param {Playlist} playlist
+ * @param {PlaylistSound} sourceSound
+ * @returns {Promise<{started: boolean, completion: Promise<boolean>, reason: string, gapMs: number}>}
+ */
+export async function startSilenceGap(playlist, sourceSound) {
+  if (!PlaylistActionAuthority.isAuthorizedGM()) {
+    return { started: false, completion: Promise.resolve(false), reason: "not-authority", gapMs: 0 };
+  }
+
+  const gapMs = Flags.getSilenceDuration(playlist);
+  if (playlist.mode === CONST.PLAYLIST_MODES.SIMULTANEOUS) {
+    debug(`[${MODULE_ID}] Simultaneous mode - skipping silence.`);
+    return { started: false, completion: Promise.resolve(false), reason: "simultaneous", gapMs };
+  }
+  if (gapMs <= 0) {
+    debug("Gap skipped (duration is zero).");
+    return { started: false, completion: Promise.resolve(false), reason: "zero-duration", gapMs };
+  }
+
+  debug(`Gap of ${gapMs}ms will be created.`);
+  const gap = await createAndPlayGap(playlist, gapMs);
+  if (!gap) {
+    debug(`[${MODULE_ID}] Gap creation failed; native advancement may continue.`);
+    return { started: false, completion: Promise.resolve(false), reason: "creation-failed", gapMs };
+  }
+
+  Hooks.callAll('the-sound-of-silence.silenceStart', { playlist, duration: gapMs });
+
+  let resolveCompletion;
+  const completion = new Promise((resolve) => {
+    resolveCompletion = resolve;
+  });
+  const timer = new AudioTimeout(gapMs);
+  const now = Date.now();
+  const state = {
+    gap,
+    cancelled: false,
+    timer,
+    resolve: resolveCompletion,
+    sourceSound,
+    gapMs,
+    startedAt: now,
+    expectedEndAt: now + gapMs
+  };
+  State.setSilenceState(playlist, state);
+
+  timer.complete
+    .then(() => completeSilenceGap(playlist, state, { reason: "timer" }))
+    .catch((err) => {
+      warn("[Silence] Gap timer failed; completing through the recovery path:", err);
+      return completeSilenceGap(playlist, state, { reason: "timer-error" });
+    });
+
+  return { started: true, completion, reason: "started", gapMs };
+}
+
 export const Silence = {
   FLAG_KEY,
   completeGap: completeSilenceGap,
+  startGap: startSilenceGap,
 
   /**
    * Injects a silent track into the given playlist. This is the main entry point for the feature.
@@ -223,62 +294,7 @@ export const Silence = {
    * @returns {Promise<boolean>} A promise resolving to true if cancelled, false otherwise.
    */
   async playSilence(playlist, sourceSound) {
-    // Only GMs should ever create the temporary silent gap document.
-    if (!game.user.isGM) return Promise.resolve(false);
-
-    // Get the final, calculated gap duration from our centralized service.
-    const gapMs = Flags.getSilenceDuration(playlist);
-
-    // Silence is not applicable to simultaneous playback mode.
-    if (playlist.mode === CONST.PLAYLIST_MODES.SIMULTANEOUS) {
-      debug(`[${MODULE_ID}] ⭕ Simultaneous mode – skipping silence.`);
-      return Promise.resolve(false);
-    }
-
-    if (gapMs <= 0) {
-      debug("Gap skipped (duration is zero).");
-      return Promise.resolve(false);
-    } else {
-      debug(`Gap of ${gapMs}ms will be created.`);
-    }
-
-    const gap = await createAndPlayGap(playlist, gapMs);
-
-    // Handle the case where gap creation failed
-    if (!gap) {
-      debug(`[${MODULE_ID}] Gap creation failed, resolving immediately.`);
-      return Promise.resolve(false);
-    }
-
-    // Emit silence start event
-    Hooks.callAll('the-sound-of-silence.silenceStart', {
-      playlist,
-      duration: gapMs
-    });
-
-    return new Promise(resolve => {
-      // Use AudioTimeout for precise, audio-context-synchronized timing.
-      const timer = new AudioTimeout(gapMs);
-
-      const state = {
-        gap,
-        cancelled: false,
-        timer: timer,
-        resolve,
-        sourceSound, // Add the source sound to the state
-        gapMs,
-        startedAt: Date.now(),
-        expectedEndAt: Date.now() + gapMs
-      };
-      State.setSilenceState(playlist, state);
-
-      // Await the completion of the precise timer.
-      timer.complete.then(async () => {
-        return completeSilenceGap(playlist, state, { reason: "timer" });
-
-        debug(`[${MODULE_ID}] ⏱ Silent gap of ${gapMs} ms expired for "${playlist.name}"`);
-
-      });
-    });
+    const transition = await startSilenceGap(playlist, sourceSound);
+    return transition.completion;
   }
 };

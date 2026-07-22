@@ -482,6 +482,27 @@ body.theme-light .sos-proc-hover:hover .proc-name {
   display: none !important;
 }
 
+.sos-procedural-group-badge {
+  max-width: 150px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.62rem;
+  padding: 1px 5px;
+  border-radius: 8px;
+  color: #b8c9dd;
+  border: 1px solid rgba(120, 160, 210, 0.3);
+  background: rgba(65, 100, 145, 0.18);
+  font-variant-numeric: tabular-nums;
+  flex: 0 1 auto;
+}
+
+.sos-procedural-group-badge.is-cooling-down {
+  color: var(--sos-checkbox-accent, #ee9b3a);
+  border-color: rgba(238, 155, 58, 0.35);
+  background: rgba(238, 155, 58, 0.12);
+}
+
 /* ========================================================= */
 /*   Currently Playing - Version D Compact Card Overrides    */
 /* ========================================================= */

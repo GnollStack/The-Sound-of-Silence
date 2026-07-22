@@ -449,6 +449,7 @@ button.sos-loop-preview-segment.sos-compact i {
 }
 
 .sos-soundscape-defaults,
+.sos-soundscape-groups,
 .sos-procedural-roster {
   border: 1px solid var(--sos-border-light);
   border-radius: var(--sos-radius-sm);
@@ -458,6 +459,7 @@ button.sos-loop-preview-segment.sos-compact i {
 }
 
 .sos-soundscape-defaults legend,
+.sos-soundscape-groups legend,
 .sos-procedural-roster legend {
   font-size: var(--sos-text-md);
   font-weight: 600;
@@ -850,6 +852,39 @@ button.sos-loop-preview-segment.sos-compact i {
   min-width: 0;
   align-items: center;
   gap: 6px;
+}
+
+.sos-soundscape-group-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: var(--sos-space-xs) 0 var(--sos-space-sm);
+}
+
+.sos-soundscape-group-table th {
+  color: var(--sos-text-secondary);
+  font-size: var(--sos-text-xs);
+  text-align: left;
+}
+
+.sos-soundscape-group-table td {
+  padding: 2px;
+}
+
+.sos-soundscape-group-table td:nth-child(2) input {
+  width: 54px;
+}
+
+.sos-soundscape-group-table td:nth-child(3) input {
+  width: 90px;
+}
+
+.sos-soundscape-group-table .sos-soundscape-group-delete {
+  width: 30px;
+  min-width: 30px;
+}
+
+.sos-soundscape-group-add {
+  width: auto;
 }
 
 .segment-toggle-icon {

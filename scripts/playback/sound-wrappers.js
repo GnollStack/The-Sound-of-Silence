@@ -6,7 +6,7 @@ import {
   cancelActiveFade,
   scheduleEndOfTrackFade,
 } from "../audio-fader.js";
-import { scheduleCrossfade } from "../cross-fade.js";
+import { cancelCrossfade, scheduleCrossfade } from "../cross-fade.js";
 import { applyFadeIn } from "../fade-in.js";
 import { Flags } from "../flag-service.js";
 import {
@@ -16,6 +16,11 @@ import {
   scheduleLoopWithin,
 } from "../internal-loop.js";
 import { PlaybackClock } from "../playback-clock.js";
+import {
+  cancelCrossfadePreload,
+  scheduleCrossfadePreload,
+} from "./preload-coordinator.js";
+import { settleCrossfadeSession } from "./transition-session.js";
 import { State } from "../state-manager.js";
 import { AdvancedShuffle } from "../advanced-shuffle.js";
 import {
@@ -75,6 +80,37 @@ function _shouldDeferSyncForCrossfade(ps) {
   );
 }
 
+function _preparePauseSync(ps) {
+  const pausedTime = Number(ps?.pausedTime);
+  const isPausedUpdate =
+    ps?.playing === false &&
+    ps?.pausedTime !== null &&
+    Number.isFinite(pausedTime);
+  if (!isPausedUpdate) return false;
+
+  pauseLoopWithin(ps);
+  cancelCrossfade(ps.parent);
+  cancelCrossfadePreload(ps.parent, {
+    sourceSoundId: ps.id,
+    reason: "paused",
+  });
+
+  const pendingFade = State.getEndOfTrackFade(ps);
+  if (pendingFade) {
+    pendingFade.cancel?.();
+    State.clearEndOfTrackFade(ps);
+  }
+
+  if (ps.sound) cancelActiveFade(ps.sound);
+  settleCrossfadeSession(ps.parent, {
+    mode: "pause",
+    reason: "document pause:" + ps.id,
+  }).catch((err) => {
+    debug(`[Pause] Failed to settle crossfade for "${ps.name}":`, err?.message ?? err);
+  });
+  return true;
+}
+
 function _schedulePostPlayActions(ps, sound, { fromCrossfade = false } = {}) {
   const playlist = ps.parent;
   if (!fromCrossfade && ps?.playing !== true) {
@@ -124,6 +160,7 @@ function _schedulePostPlayActions(ps, sound, { fromCrossfade = false } = {}) {
       debug(`[PostPlay] Skipping playlist crossfade schedule for "${ps.name}" - internal loop owns playback.`);
     } else {
       scheduleCrossfade(playlist, ps, { force: isResume });
+      scheduleCrossfadePreload(playlist, ps);
     }
 
     if (typeof ps._cancelFadeOut === "function") {
@@ -209,8 +246,23 @@ export function registerSoundPlaybackWrappers() {
 
       if (ps instanceof PlaylistSound) {
         pauseLoopWithin(ps);
+        cancelCrossfade(ps.parent);
+        cancelCrossfadePreload(ps.parent, {
+          sourceSoundId: ps.id,
+          reason: "paused",
+        });
+        cancelActiveFade(this);
       }
-      return wrapped.call(this, options);
+      const result = wrapped.call(this, options);
+      if (ps instanceof PlaylistSound) {
+        settleCrossfadeSession(ps.parent, {
+          mode: "pause",
+          reason: "direct media pause:" + ps.id,
+        }).catch((err) => {
+          debug(`[Pause] Failed to settle direct crossfade pause for "${ps.name}":`, err?.message ?? err);
+        });
+      }
+      return result;
     },
     "WRAPPER"
   );
@@ -319,6 +371,7 @@ export function registerSoundPlaybackWrappers() {
     MODULE_ID,
     "PlaylistSound.prototype.sync",
     function (wrapped) {
+      _preparePauseSync(this);
       if (
         Flags.getPlaybackMode(this.parent).soundscape &&
         Flags.getSoundFlag(this, "isProcedural")

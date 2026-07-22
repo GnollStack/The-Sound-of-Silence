@@ -853,6 +853,9 @@ export function registerCurrentlyPlaying() {
 
     // Hook into renderPlaylistDirectory to attach event delegation
     Hooks.on("renderPlaylistDirectory", _onRenderPlaylistDirectory);
+    Hooks.on("deletePlaylistSound", (sound) => {
+        if (sound?.uuid) _timestampProxyWarnings.delete(sound.uuid);
+    });
 
     debug("[CurrentlyPlaying] Registered custom templates and wrappers.");
     if (Integrations.hasConflictingModules) {
@@ -973,6 +976,7 @@ async function _wrapPreparePlayingContext(wrapped, context, options) {
         let proceduralPlayChance = null;
         let showProceduralPlayChance = false;
         let soundscapePolyphony = null;
+        let proceduralGroup = null;
         if (soundscapeActive && isProcedural) {
             const proceduralStatus = _getSoundscapeProceduralStatus(playlist, ps);
             proceduralEta = proceduralStatus.eta;
@@ -988,6 +992,19 @@ async function _wrapPreparePlayingContext(wrapped, context, options) {
             if (engine?.getPolyphony) {
                 soundscapePolyphony = engine.getPolyphony();
                 playlistPolyphony.set(playlist.id, soundscapePolyphony);
+            }
+            const group = Flags.getSoundscapeGroupForSound(ps);
+            const groupState = group ? engine?.getGroupPolyphony?.(group.id) : null;
+            if (group) {
+                const remainingMs = Math.max(0, Number(groupState?.nextEligibleAt) - Date.now());
+                proceduralGroup = {
+                    id: group.id,
+                    name: group.name,
+                    occupied: groupState?.occupied ?? 0,
+                    max: group.maxPolyphony,
+                    coolingDown: remainingMs > 0,
+                    cooldownRemainingSec: Math.ceil(remainingMs / 1000),
+                };
             }
         }
 
@@ -1019,6 +1036,7 @@ async function _wrapPreparePlayingContext(wrapped, context, options) {
             proceduralArmed,
             proceduralPlayChance,
             showProceduralPlayChance,
+            proceduralGroup,
             soundscapePolyphony,
 
             // Normalization
@@ -1462,7 +1480,24 @@ function _updateSoundscapeReadouts(app) {
 
                 const fireButton = row.querySelector('.sos-procedural-fire-btn[data-sos-action="soundscapeFireNow"]');
                 if (fireButton) {
-                    fireButton.disabled = !status.armed || !game.user?.isGM;
+                    const group = Flags.getSoundscapeGroupForSound(ps);
+                    const groupState = group ? engine?.getGroupPolyphony?.(group.id) : null;
+                    const globalFull = !!polyphony && polyphony.active >= polyphony.max;
+                    const groupFull = !!groupState && groupState.occupied >= groupState.max;
+                    fireButton.disabled = !status.armed || !game.user?.isGM || globalFull || groupFull;
+                }
+
+                const groupBadge = row.querySelector(".sos-procedural-group-badge");
+                const group = Flags.getSoundscapeGroupForSound(ps);
+                const groupState = group ? engine?.getGroupPolyphony?.(group.id) : null;
+                if (groupBadge && group && groupState) {
+                    const remainingMs = Math.max(0, Number(groupState.nextEligibleAt) - Date.now());
+                    const cooldownText = remainingMs > 0
+                        ? ` � cooldown ${Math.ceil(remainingMs / 1000)}s`
+                        : "";
+                    groupBadge.textContent =
+                        `${group.name} ${groupState.occupied}/${groupState.max}${cooldownText}`;
+                    groupBadge.classList.toggle("is-cooling-down", remainingMs > 0);
                 }
 
                 updated = true;
@@ -1813,7 +1848,11 @@ const _persistPersonalTrackVolumeChange = foundry.utils.debounce(async ({ playli
     if (!sound || !Flags.isPersonalAudioMixEnabled()) return;
 
     debug(`[CurrentlyPlaying] Setting personal track volume for "${sound.name}" to ${value}`);
-    await Flags.setPersonalTrackVolume(sound, value);
+    try {
+        await Flags.setPersonalTrackVolume(sound, value);
+    } catch (err) {
+        debug(`[CurrentlyPlaying] Failed to persist personal track volume for "${sound.name}":`, err?.message ?? err);
+    }
 }, 75);
 
 const _persistPersonalPlaylistVolumeChange = foundry.utils.debounce(async ({ playlistId, value } = {}) => {
@@ -1821,8 +1860,12 @@ const _persistPersonalPlaylistVolumeChange = foundry.utils.debounce(async ({ pla
     if (!playlist || !Flags.isPersonalAudioMixEnabled()) return;
 
     debug(`[CurrentlyPlaying] Setting personal playlist volume for "${playlist.name}" to ${value}`);
-    await Flags.setPersonalPlaylistVolume(playlist, value);
-    await Flags.clearPersonalTrackVolumesForPlaylist(playlist);
+    try {
+        await Flags.setPersonalPlaylistVolume(playlist, value);
+        await Flags.clearPersonalTrackVolumesForPlaylist(playlist);
+    } catch (err) {
+        debug(`[CurrentlyPlaying] Failed to persist personal playlist volume for "${playlist.name}":`, err?.message ?? err);
+    }
 }, 75);
 
 function _attachPlaylistDirectoryWheelGuard(root) {

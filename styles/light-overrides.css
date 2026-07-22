@@ -164,6 +164,7 @@ body.theme-light .sos-soundscape-panel {
 }
 
 body.theme-light .sos-soundscape-defaults,
+body.theme-light .sos-soundscape-groups,
 body.theme-light .sos-soundscape-preview,
 body.theme-light .sos-procedural-roster,
 body.theme-light .sos-procedural-fieldset {
@@ -172,6 +173,7 @@ body.theme-light .sos-procedural-fieldset {
 }
 
 body.theme-light .sos-soundscape-defaults legend,
+body.theme-light .sos-soundscape-groups legend,
 body.theme-light .sos-soundscape-preview legend,
 body.theme-light .sos-procedural-roster legend,
 body.theme-light .sos-procedural-fieldset legend {

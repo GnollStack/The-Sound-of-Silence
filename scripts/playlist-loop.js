@@ -3,7 +3,7 @@
  * @description Provides the logic to automatically restart a playlist when it reaches its natural end,
  * if the "Loop Entire Playlist" flag is enabled.
  */
-import { MODULE_ID } from "./utils.js";
+import { MODULE_ID, PlaylistActionAuthority } from "./utils.js";
 import { cancelCrossfade } from "./cross-fade.js";
 import { debug } from "./utils.js";
 
@@ -20,8 +20,8 @@ const PM = CONST.PLAYLIST_MODES;
 export function maybeLoopPlaylist(playlist) {
     if (!playlist) return false;
 
-    // Only the GM (or the playlist's owner) should control the restart action.
-    if (!game.user.isGM && !playlist.isOwner) return false;
+    // Automatic restarts are authored by one deterministic active GM.
+    if (!playlist.isOwner || !PlaylistActionAuthority.isAuthorizedGM()) return false;
 
     // Check if the playlist mode is one that supports looping.
     const ALLOWED = [PM.SEQUENTIAL, PM.SHUFFLE, PM.SIMULTANEOUS];
