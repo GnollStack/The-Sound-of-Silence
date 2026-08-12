@@ -8,6 +8,7 @@ import { debug, MODULE_ID } from "./utils.js";
 
 export function registerSettings({
   applyPersonalPlaylistVolumesToActiveSounds,
+  reconcileSoundscapeEngines,
 } = {}) {
   const applyPersonalMix = () => {
     applyPersonalPlaylistVolumesToActiveSounds?.();
@@ -89,6 +90,9 @@ export function registerSettings({
     config: true,
     type: Boolean,
     default: true,
+    onChange: () => {
+      reconcileSoundscapeEngines?.("procedural sync preference changed");
+    },
   });
 
   game.settings.register(MODULE_ID, "shufflePattern", {

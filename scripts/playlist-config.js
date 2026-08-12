@@ -737,24 +737,34 @@ if (fadeRangePicker.length) {
     let defMax = readNumber(fieldName(KEYS.SOUNDSCAPE_DEFAULT_MAX_DELAY), 60, 0, 3600);
     if (defMax < defMin) [defMin, defMax] = [defMax, defMin];
 
+    const unsavedGroups = Array.from(soundscapeGroupBody.find('.sos-soundscape-group-row')).map((row) => ({
+      id: row.querySelector('[data-group-field="id"]')?.value,
+      name: row.querySelector('[data-group-field="name"]')?.value,
+      maxPolyphony: row.querySelector('[data-group-field="maxPolyphony"]')?.value,
+      cooldownSec: row.querySelector('[data-group-field="cooldownSec"]')?.value,
+    }));
+
     return {
       fade: readNumber("fade", app.document?.fade ?? 0, 0),
       flags: {
-        fadeIn: readNumber(fieldName(KEYS.FADE_IN), 0, 0),
-        soundscapeMaxPolyphony: readNumber(fieldName(KEYS.SOUNDSCAPE_MAX_POLYPHONY), 4, 1, 16),
-        soundscapePlayChanceScaling: sanitizePlayChanceScaling(
-          $mainBlock.find(`input[name="${fieldName(KEYS.SOUNDSCAPE_PLAY_CHANCE_SCALING)}"]:checked`).val()
-        ),
-        volumeNormalizationEnabled: normalizationMaster.is(':checked'),
-        normalizedVolume: readNumber(fieldName(KEYS.NORMALIZED_VOLUME), 0.5, 0, 1),
-        soundscapeDefaults: {
-          minDelay: defMin,
-          maxDelay: defMax,
-          timingMode: sanitizeProceduralTimingMode(readNamedValue(fieldName(KEYS.SOUNDSCAPE_DEFAULT_TIMING_MODE), "uniform")),
-          initialFireMode: sanitizeProceduralInitialFireMode(readNamedValue(fieldName(KEYS.SOUNDSCAPE_DEFAULT_INITIAL_FIRE_MODE), "normal")),
-          volumeVariance: readNumber(fieldName(KEYS.SOUNDSCAPE_DEFAULT_VARIANCE), 0, 0, 1),
-          playChance: readNumber(fieldName(KEYS.SOUNDSCAPE_DEFAULT_PLAY_CHANCE), 100, 0, 100),
-          randomPan: !!$mainBlock.find(`input[name="${fieldName(KEYS.SOUNDSCAPE_DEFAULT_RANDOM_PAN)}"]`).is(':checked')
+        [MODULE_ID]: {
+          fadeIn: readNumber(fieldName(KEYS.FADE_IN), 0, 0),
+          soundscapeMaxPolyphony: readNumber(fieldName(KEYS.SOUNDSCAPE_MAX_POLYPHONY), 4, 1, 16),
+          soundscapePlayChanceScaling: sanitizePlayChanceScaling(
+            $mainBlock.find(`input[name="${fieldName(KEYS.SOUNDSCAPE_PLAY_CHANCE_SCALING)}"]:checked`).val()
+          ),
+          volumeNormalizationEnabled: normalizationMaster.is(':checked'),
+          normalizedVolume: readNumber(fieldName(KEYS.NORMALIZED_VOLUME), 0.5, 0, 1),
+          soundscapeGroups: sanitizeSoundscapeGroups(unsavedGroups),
+          soundscapeDefaults: {
+            minDelay: defMin,
+            maxDelay: defMax,
+            timingMode: sanitizeProceduralTimingMode(readNamedValue(fieldName(KEYS.SOUNDSCAPE_DEFAULT_TIMING_MODE), "uniform")),
+            initialFireMode: sanitizeProceduralInitialFireMode(readNamedValue(fieldName(KEYS.SOUNDSCAPE_DEFAULT_INITIAL_FIRE_MODE), "normal")),
+            volumeVariance: readNumber(fieldName(KEYS.SOUNDSCAPE_DEFAULT_VARIANCE), 0, 0, 1),
+            playChance: readNumber(fieldName(KEYS.SOUNDSCAPE_DEFAULT_PLAY_CHANCE), 100, 0, 100),
+            randomPan: !!$mainBlock.find(`input[name="${fieldName(KEYS.SOUNDSCAPE_DEFAULT_RANDOM_PAN)}"]`).is(':checked')
+          }
         }
       }
     };
@@ -909,10 +919,9 @@ if (fadeRangePicker.length) {
   });
 
   Hooks.on("closePlaylistConfig", (app) => {
-    if (!app?._soundOfSilenceSoundscapePreview) return;
-    if (SoundscapePreviewer.isPreviewing(app.document)) {
+    if (app?.document && SoundscapePreviewer.isPreviewing(app.document)) {
       SoundscapePreviewer.stop(app.document, { notify: false });
     }
-    app._soundOfSilenceSoundscapePreview = false;
+    if (app) app._soundOfSilenceSoundscapePreview = false;
   });
 }

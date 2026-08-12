@@ -102,9 +102,17 @@ async function _advanceAfterTrack(playlist, sourceSound, reason = "clock recover
   debug(`[ClockRecovery] Advancing "${playlist.name}" after "${sourceSound.name}" (${reason}).`);
   if (next) {
     await playlist.playSound(next);
-  } else if (!maybeLoopPlaylist(playlist)) {
-    await playlist.stopAll();
+    return true;
   }
+
+  const loopRestart = maybeLoopPlaylist(playlist);
+  if (loopRestart) {
+    await loopRestart;
+    return true;
+  }
+
+  await playlist.stopAll();
+  return true;
 }
 
 async function _bootstrapPlaybackClock(playlist, activeSound, reason) {
@@ -217,7 +225,6 @@ async function _recoverOverduePlaylist(playlist, reason = "watchdog") {
     if (!PlaybackClock.isOverdue(playlist, clock)) return false;
 
     const mode = Flags.getPlaybackMode(playlist);
-    _markClockRecovered(playlist, clock);
 
     if (mode.crossfade) {
       if (State.isPlaylistCrossfading(playlist)) {
@@ -225,8 +232,9 @@ async function _recoverOverduePlaylist(playlist, reason = "watchdog") {
         return false;
       }
       debug(`[ClockRecovery] Triggering overdue crossfade for "${activeSound.name}" in "${playlist.name}".`);
-      await performCrossfade(playlist, activeSound, { recovery: true, reason });
-      return true;
+      const recovered = await performCrossfade(playlist, activeSound, { recovery: true, reason });
+      if (recovered) _markClockRecovered(playlist, clock);
+      return recovered === true;
     }
 
     if (mode.silence) {
@@ -236,11 +244,14 @@ async function _recoverOverduePlaylist(playlist, reason = "watchdog") {
         pendingFade.cancel?.();
         State.clearEndOfTrackFade(activeSound);
       }
-      Silence.playSilence(playlist, activeSound);
-      return true;
+      const transition = await Silence.startGap(playlist, activeSound);
+      if (transition.started) _markClockRecovered(playlist, clock);
+      return transition.started;
     }
 
-    await _advanceAfterTrack(playlist, activeSound, reason);
+    const advanced = await _advanceAfterTrack(playlist, activeSound, reason);
+    if (!advanced) return false;
+    _markClockRecovered(playlist, clock);
     return true;
   } catch (err) {
     debug(`[ClockRecovery] Failed recovery for "${playlist?.name}":`, err?.message ?? err);

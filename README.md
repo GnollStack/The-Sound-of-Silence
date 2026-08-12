@@ -37,8 +37,8 @@
 
 1. Install and enable **The Sound of Silence** in your world.
 2. Open the **Playlists** sidebar and expand any playlist.
-3. Use the playlist header toggles for silence gaps, auto-crossfade, playlist looping, or playback mode.
-4. Right-click a playlist or sound and choose **Configure** for deeper setup, including internal loops and Soundscape defaults.
+3. Use the playlist header toggles for silence gaps and auto-crossfade, or use Foundry's playback-mode control.
+4. Right-click a playlist or sound and choose **Configure** for playlist looping and deeper setup, including internal loops and Soundscape defaults.
 
 <img width="397" height="751" alt="Playlist configuration settings" src="https://github.com/user-attachments/assets/ec6abdae-3136-4bc3-98d8-13e86482760a" />
 
@@ -164,7 +164,7 @@ Soundscape is the 5th option in the playback-mode picker, alongside Soundboard /
 <summary><strong>Advanced shuffle, fades, normalization</strong></summary>
 
 **Shuffle:** Foundry Default, Exhaustive, Weighted Random, Round-Robin.
-**Fade-in curves:** Logarithmic, Linear, S-Curve, Steep — per playlist.
+**Fade-in curves:** Logarithmic, Linear, S-Curve, Steep — configured world-wide.
 **Fade-out:** exponential curves for perceptually linear volume reduction.
 **Volume normalization:** per-playlist target with per-sound opt-out.
 **Playlist looping:** integrates with silence gaps and crossfading.
@@ -222,7 +222,7 @@ https://github.com/GnollStack/The-Sound-of-Silence/releases/latest/download/modu
 
 | Requirement | Version |
 | --- | --- |
-| Foundry VTT | v13 - v14 (verified on v13.531 and v14.363) |
+| Foundry VTT | v13 - v14 (verified on v13.351 and v14.363) |
 | [libWrapper](https://github.com/ruipin/fvtt-lib-wrapper) | Latest |
 
 ---
@@ -293,7 +293,7 @@ Intro plays once, jumps to Phase 1. Click *break* when the boss enters Phase 2. 
 
 **Module ID:** `playlistenchantment` · Compatible with caveats.
 
-**Overridden by SoS:** Currently Playing UI, cross-playlist crossfade, volume normalization, fade-in/out, playlist loop toggle, global play/stop/skip-all.
+**Overridden by SoS:** Currently Playing UI, volume normalization, fade-in/out, playlist loop toggle, global play/stop/skip-all.
 
 **Still works alongside:** drag-drop audio upload, prehear preview, hotbar macros, hotbar hover popup.
 

@@ -5,7 +5,7 @@
     {{#if sos.proceduralGroup}}
     <span class="sos-procedural-group-badge {{#if sos.proceduralGroup.coolingDown}}is-cooling-down{{/if}}"
           data-tooltip="Soundscape group: {{ sos.proceduralGroup.name }}">
-        {{ sos.proceduralGroup.name }} {{ sos.proceduralGroup.occupied }}/{{ sos.proceduralGroup.max }}{{#if sos.proceduralGroup.coolingDown}} � cooldown {{ sos.proceduralGroup.cooldownRemainingSec }}s{{/if}}
+        {{ sos.proceduralGroup.name }} {{ sos.proceduralGroup.occupied }}/{{ sos.proceduralGroup.max }}{{#if sos.proceduralGroup.coolingDown}} — cooldown {{ sos.proceduralGroup.cooldownRemainingSec }}s{{/if}}
     </span>
     {{/if}}
     <div class="ph-right">
@@ -18,7 +18,7 @@
             <button type="button" class="sos-transport-btn sos-procedural-fire-btn icon fa-solid fa-bolt"
                     data-sos-action="soundscapeFireNow" data-sound-id="{{ id }}" data-playlist-id="{{ playlistId }}"
                     {{#unless sos.proceduralArmed}}disabled{{/unless}}
-                    data-tooltip="Fire Now (GM testing - client-local)"
+                    data-tooltip="Fire Now (synchronized when Soundscape sync is enabled)"
                     aria-label="Fire Now"></button>
             <button type="button" class="sos-transport-btn sos-stop-btn icon fa-solid fa-square"
                     data-action="soundStop" data-sound-id="{{ id }}" data-playlist-id="{{ playlistId }}"

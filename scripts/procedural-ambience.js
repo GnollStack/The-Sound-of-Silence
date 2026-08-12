@@ -45,6 +45,18 @@ function _getSocketId() {
     return game.socket?.id ?? game.socket?.socket?.id ?? null;
 }
 
+function _createPublisherSessionId() {
+    return foundry.utils?.randomID?.(16) ??
+        `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}`;
+}
+
+function _isAuthenticatedPublisher(senderUserId, { manualFire = false } = {}) {
+    const senderId = String(senderUserId ?? "");
+    if (!senderId) return false;
+    if (manualFire) return PlaylistActionAuthority.isActiveGMId(senderId);
+    return senderId === String(PlaylistActionAuthority.getAuthorizedGMId() ?? "");
+}
+
 function _clamp01(value, fallback = 0) {
     const n = Number(value);
     if (!Number.isFinite(n)) return fallback;
@@ -126,6 +138,9 @@ export class SoundscapeEngine {
         /** @type {Set<string>} ids of configured bed sounds in this playlist */
         this.bedSoundIds = new Set();
 
+        // Sequences are ordered within one publisher browser session. A new
+        // session id lets failover/reload safely restart at sequence 1.
+        this.publisherSessionId = _createPublisherSessionId();
         this.syncedFireSeq = 0;
         this.processedSyncedEventIds = new Set();
         this.lastSyncedSeqBySound = new Map();
@@ -146,8 +161,11 @@ export class SoundscapeEngine {
     }
 
     get syncMode() {
-        if (!this.soundscapeSyncEnabled) return "local";
-        return PlaylistActionAuthority.isAuthorizedGM() ? "authority" : "synced";
+        // Publisher authority is independent of this client's listening
+        // preference. The primary GM must keep authoring recipes even when
+        // that GM has opted into local procedural playback.
+        if (PlaylistActionAuthority.isAuthorizedGM()) return "authority";
+        return this.soundscapeSyncEnabled ? "synced" : "local";
     }
 
     _shouldArmLocalProcedurals() {
@@ -156,6 +174,14 @@ export class SoundscapeEngine {
 
     _shouldEmitSyncedFires() {
         return this.syncMode === "authority";
+    }
+
+    _isLiveProceduralSound(ps) {
+        if (this.isDestroyed || !ps?.id || !ps.playing) return false;
+        const sounds = this.playlist?.sounds;
+        const current = sounds?.get?.(ps.id) ??
+            Array.from(sounds ?? []).find((sound) => String(sound?.id) === String(ps.id));
+        return current === ps && Flags.getSoundFlag(ps, "isProcedural");
     }
 
     /**
@@ -225,7 +251,7 @@ export class SoundscapeEngine {
         if (this.isDestroyed) return;
         // Only arm for procedurals the user has marked active on the document.
         // Covers the updatePlaylistSound disarm path and all internal re-arms.
-        if (!ps.playing) return;
+        if (!this._isLiveProceduralSound(ps)) return;
 
         // Cancel any existing timer for this sound (defensive).
         const existing = this.oneShotTimers.get(ps.id);
@@ -244,10 +270,17 @@ export class SoundscapeEngine {
         );
 
         timer.complete.then(() => {
-            if (this.isDestroyed) return;
+            // Foundry v14 resolves `complete` after cancellation because its
+            // internal cancellation rejection is deliberately swallowed.
+            // Verify map ownership too, so an old timer cannot fire after a
+            // replacement was armed for the same sound.
+            const current = this.oneShotTimers.get(ps.id);
+            if (this.isDestroyed || timer.cancelled || current?.timer !== timer) return;
             this._fireOneShot(ps).catch((err) => {
                 warn(`[Soundscape] Fire failed for "${ps.name}":`, err?.message);
-                if (!this.isDestroyed && ps.playing) this._armOneShot(ps, { minimumDelayMs: RETRY_BACKOFF_MS });
+                if (this._isLiveProceduralSound(ps)) {
+                    this._armOneShot(ps, { minimumDelayMs: RETRY_BACKOFF_MS });
+                }
             });
         }).catch(() => {
             // Timer cancelled — intentional, nothing to do.
@@ -362,7 +395,7 @@ export class SoundscapeEngine {
         this.oneShotTimers.delete(ps.id);
         _notifySoundscapeUi(this.playlist, "soundscape-one-shot-timer", ps.id);
 
-        if (!ps.playing) {
+        if (!this._isLiveProceduralSound(ps)) {
             debug(`[Soundscape] Skipping "${ps.name}" because it is no longer active`);
             return false;
         }
@@ -396,12 +429,13 @@ export class SoundscapeEngine {
             return false;
         }
 
-        const synced = this._shouldEmitSyncedFires() || (
+        const manualFire = Boolean(
             allowGmAuthorship &&
             game.user?.isGM &&
             this.soundscapeSyncEnabled
         );
-        const recipe = this._createFireRecipe(ps, { synced });
+        const synced = this._shouldEmitSyncedFires() || manualFire;
+        const recipe = this._createFireRecipe(ps, { synced, manualFire });
         if (synced) this._emitSyncedFire(recipe);
         return this._playOneShotRecipe(ps, recipe, {
             rearmAfter: true,
@@ -410,7 +444,7 @@ export class SoundscapeEngine {
         });
     }
 
-    _createFireRecipe(ps, { synced = false } = {}) {
+    _createFireRecipe(ps, { synced = false, manualFire = false } = {}) {
         const baseVol = Flags.resolveSharedTargetVolume(ps);
         const variancePct = Flags.resolveProceduralField(ps, "volumeVariance") ?? 0;
         let sharedTargetVol = baseVol;
@@ -432,7 +466,11 @@ export class SoundscapeEngine {
             soundId: ps.id,
             groupId,
             seq,
-            eventId: synced ? `${this.playlist.id}:${ps.id}:${seq}:${game.user?.id ?? "gm"}:${now}` : null,
+            manualFire: Boolean(synced && manualFire),
+            publisherSessionId: synced ? this.publisherSessionId : null,
+            eventId: synced
+                ? `${this.playlist.id}:${ps.id}:${seq}:${game.user?.id ?? "gm"}:${this.publisherSessionId}`
+                : null,
             startAtMs: synced ? now + SYNCED_FIRE_LEAD_MS : now,
             leadMs: synced ? SYNCED_FIRE_LEAD_MS : 0,
             sharedTargetVol,
@@ -454,12 +492,17 @@ export class SoundscapeEngine {
         const fadeIn = Number(recipe?.fadeInMs);
         const requestedGroupId = recipe?.groupId ?? Flags.getSoundFlag(ps, "soundscapeGroupId");
         const groupId = Flags.getSoundscapeGroup(this.playlist, requestedGroupId)?.id ?? null;
+        const publisherSessionId = typeof recipe?.publisherSessionId === "string"
+            ? recipe.publisherSessionId.slice(0, 128)
+            : null;
         return {
             action: SYNCED_FIRE_ACTION,
             playlistId: recipe?.playlistId ?? this.playlist.id,
             soundId: recipe?.soundId ?? ps.id,
             groupId,
             seq: Number.isFinite(seq) ? seq : null,
+            manualFire: recipe?.manualFire === true,
+            publisherSessionId,
             eventId: recipe?.eventId ? String(recipe.eventId) : null,
             startAtMs: Number.isFinite(startAt) ? startAt : Date.now(),
             leadMs: Number.isFinite(lead) ? lead : 0,
@@ -482,6 +525,8 @@ export class SoundscapeEngine {
             soundId: recipe?.soundId ?? null,
             groupId: recipe?.groupId ?? null,
             seq: Number.isFinite(Number(recipe?.seq)) ? Number(recipe.seq) : null,
+            manualFire: recipe?.manualFire === true,
+            publisherSessionId: recipe?.publisherSessionId ?? null,
             eventId: recipe?.eventId ?? null,
             startAtMs: Number.isFinite(startAtMs) ? startAtMs : null,
             receivedDeltaMs: Number.isFinite(startAtMs) ? now - startAtMs : null,
@@ -529,9 +574,37 @@ export class SoundscapeEngine {
             this.processedSyncedEventIds.delete(first);
         }
         if (Number.isFinite(Number(recipe.seq))) {
-            const previous = this.lastSyncedSeqBySound.get(recipe.soundId) ?? 0;
-            this.lastSyncedSeqBySound.set(recipe.soundId, Math.max(previous, Number(recipe.seq)));
+            const key = this._getSyncedSequenceKey(recipe);
+            const previous = this.lastSyncedSeqBySound.get(key) ?? 0;
+            this.lastSyncedSeqBySound.set(key, Math.max(previous, Number(recipe.seq)));
         }
+    }
+
+    _getSyncedSequenceKey(recipe) {
+        const gmId = String(recipe?.gmId ?? "unknown-gm");
+        const sessionId = String(recipe?.publisherSessionId ?? "legacy-session");
+        const soundId = String(recipe?.soundId ?? "unknown-sound");
+        return `${gmId}:${sessionId}:${soundId}`;
+    }
+
+    _getSyncedRecipeIdentityError(recipe) {
+        const sessionId = recipe?.publisherSessionId;
+        if (typeof sessionId !== "string" || !/^[A-Za-z0-9_-]{8,128}$/.test(sessionId)) {
+            return "invalid-publisher-session";
+        }
+
+        const seq = Number(recipe?.seq);
+        if (!Number.isSafeInteger(seq) || seq < 1) return "invalid-sequence";
+
+        const expectedEventId = [
+            this.playlist.id,
+            recipe.soundId,
+            seq,
+            recipe.gmId,
+            sessionId,
+        ].join(":");
+        if (recipe?.eventId !== expectedEventId) return "invalid-event-id";
+        return null;
     }
 
     _emitSyncedFire(recipe) {
@@ -553,33 +626,39 @@ export class SoundscapeEngine {
         return null;
     }
 
-    async executeSyncedFire(recipe = {}) {
+    async executeSyncedFire(recipe = {}, { senderUserId = null } = {}) {
         if (this.isDestroyed) return false;
         if (!this.soundscapeSyncEnabled) return false;
+        if (!_isAuthenticatedPublisher(senderUserId, { manualFire: recipe?.manualFire === true })) {
+            return false;
+        }
         if (String(recipe.playlistId ?? "") !== String(this.playlist.id)) return false;
 
         const ps = this.playlist.sounds.get(recipe.soundId);
         if (!ps || !Flags.getSoundFlag(ps, "isProcedural")) return false;
 
-        const normalized = this._normalizeFireRecipe(recipe, ps);
-        if (!PlaylistActionAuthority.isActiveGMId(normalized.gmId)) {
-            this._recordMissedSyncedEvent(normalized, "invalid-gm");
-            return false;
-        }
-        if (!normalized.eventId) {
-            this._recordMissedSyncedEvent(normalized, "missing-event-id");
+        // Use the sender identity attached by Foundry's custom socket server;
+        // never trust a user id claimed inside the message payload.
+        const normalized = this._normalizeFireRecipe({
+            ...recipe,
+            gmId: String(senderUserId),
+        }, ps);
+        const identityError = this._getSyncedRecipeIdentityError(normalized);
+        if (identityError) {
+            this._recordMissedSyncedEvent(normalized, identityError);
             return false;
         }
         if (this.processedSyncedEventIds.has(normalized.eventId)) return false;
 
-        const previousSeq = this.lastSyncedSeqBySound.get(normalized.soundId) ?? 0;
+        const sequenceKey = this._getSyncedSequenceKey(normalized);
+        const previousSeq = this.lastSyncedSeqBySound.get(sequenceKey) ?? 0;
         if (Number.isFinite(Number(normalized.seq)) && normalized.seq <= previousSeq) {
             this._recordMissedSyncedEvent(normalized, "stale-sequence");
             return false;
         }
         this._rememberSyncedEvent(normalized);
 
-        if (!ps.playing) {
+        if (!this._isLiveProceduralSound(ps)) {
             this._recordMissedSyncedEvent(normalized, "inactive-document");
             return false;
         }
@@ -606,7 +685,9 @@ export class SoundscapeEngine {
     } = {}) {
         const normalized = this._normalizeFireRecipe(recipe, ps);
         const isSyncedEvent = Boolean(normalized.eventId);
-        const canRearm = () => rearmAfter && this._shouldArmLocalProcedurals();
+        const canRearm = () => rearmAfter &&
+            this._shouldArmLocalProcedurals() &&
+            this._isLiveProceduralSound(ps);
 
         if (this._getOccupiedPolyphony() >= this.maxPolyphony) {
             if (isSyncedEvent) this._recordMissedSyncedEvent(normalized, "polyphony");
@@ -658,7 +739,7 @@ export class SoundscapeEngine {
             }
         }
 
-        if (this.isDestroyed || !ps.playing) {
+        if (!this._isLiveProceduralSound(ps)) {
             releaseReservation();
             if (isSyncedEvent) this._recordMissedSyncedEvent(normalized, "aborted-before-load");
             return false;
@@ -702,7 +783,7 @@ export class SoundscapeEngine {
             return false;
         }
 
-        if (this.isDestroyed || !ps.playing) {
+        if (!this._isLiveProceduralSound(ps)) {
             releaseReservation();
             safeStop(sound, "soundscape fire aborted");
             if (isSyncedEvent) this._recordMissedSyncedEvent(normalized, "aborted-after-load");
@@ -758,7 +839,7 @@ export class SoundscapeEngine {
             return false;
         }
 
-        if (this.isDestroyed || !ps.playing) {
+        if (!this._isLiveProceduralSound(ps)) {
             safeStop(sound, "soundscape fire aborted post-play");
             this.activeOneShots.delete(sound);
             this.oneShotSharedTargetVolumes.delete(sound);
@@ -1122,7 +1203,9 @@ export class SoundscapeEngine {
             });
         } catch (err) {
             warn(`[Soundscape] fireOneShotNow failed for "${ps.name}":`, err?.message);
-            if (!this.isDestroyed && ps.playing) this._armOneShot(ps, { minimumDelayMs: RETRY_BACKOFF_MS });
+            if (this._isLiveProceduralSound(ps)) {
+                this._armOneShot(ps, { minimumDelayMs: RETRY_BACKOFF_MS });
+            }
             return false;
         }
     }
@@ -1139,6 +1222,24 @@ export class SoundscapeEngine {
         if (!this._shouldArmLocalProcedurals()) return;
         if (this.oneShotTimers.has(ps.id)) return;
         this._armOneShot(ps, { initial: true });
+    }
+
+    /**
+     * Reconcile this engine after deterministic primary-GM authority changes.
+     * @param {string|null} previousAuthorityId
+     * @param {string|null} nextAuthorityId
+     */
+    handlePublisherAuthorityChange(previousAuthorityId, nextAuthorityId) {
+        if (this.isDestroyed || !this.isStarted) return;
+        const localUserId = String(game.user?.id ?? "");
+        const becamePublisher = localUserId &&
+            String(nextAuthorityId ?? "") === localUserId &&
+            String(previousAuthorityId ?? "") !== localUserId;
+        if (becamePublisher) {
+            this.publisherSessionId = _createPublisherSessionId();
+            this.syncedFireSeq = 0;
+        }
+        this.syncProceduralSounds();
     }
 
     /**
@@ -1199,6 +1300,25 @@ export class SoundscapeEngine {
             }
         }
         _notifySoundscapeUi(this.playlist, "soundscape-one-shot-disarmed", ps.id);
+    }
+
+    /**
+     * Remove all local runtime ownership for a deleted PlaylistSound.
+     * Pending async work observes the missing embedded document and aborts at
+     * its next guarded boundary instead of starting orphaned audio.
+     * @param {PlaylistSound} ps
+     */
+    removePlaylistSound(ps) {
+        if (this.isDestroyed || !ps?.id) return;
+        this.bedSoundIds.delete(ps.id);
+        if (Flags.getSoundFlag(ps, "isProcedural")) {
+            this.disarmProceduralSound(ps);
+        }
+        const suffix = `:${String(ps.id)}`;
+        for (const key of Array.from(this.lastSyncedSeqBySound.keys())) {
+            if (String(key).endsWith(suffix)) this.lastSyncedSeqBySound.delete(key);
+        }
+        _notifySoundscapeUi(this.playlist, "soundscape-sound-deleted", ps.id);
     }
 
     /**
@@ -1345,11 +1465,14 @@ export function isSoundscapeActive(playlist) {
  * Handle a transient GM-authored procedural fire recipe received over the
  * module socket. This is intentionally not persisted to world documents.
  * @param {Object} data
+ * @param {string|null} senderUserId Authenticated sender id supplied by Foundry's socket server
  * @returns {Promise<boolean>}
  */
-export async function handleSoundscapeProceduralFire(data = {}) {
+export async function handleSoundscapeProceduralFire(data = {}, senderUserId = null) {
     if (!isSoundscapeProceduralSyncEnabled()) return false;
-    if (!PlaylistActionAuthority.isActiveGMId(data.gmId)) return false;
+    if (!_isAuthenticatedPublisher(senderUserId, { manualFire: data?.manualFire === true })) {
+        return false;
+    }
     const playlist = game.playlists?.get?.(data.playlistId);
     if (!playlist || !Flags.getPlaybackMode(playlist).soundscape) return false;
 
@@ -1357,5 +1480,5 @@ export async function handleSoundscapeProceduralFire(data = {}) {
     if (!engine || engine.isDestroyed) {
         engine = await startSoundscape(playlist);
     }
-    return engine?.executeSyncedFire?.(data) ?? false;
+    return engine?.executeSyncedFire?.(data, { senderUserId }) ?? false;
 }

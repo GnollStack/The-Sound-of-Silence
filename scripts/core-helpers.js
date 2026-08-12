@@ -56,12 +56,37 @@ export function selectPrimaryActiveGmId(users) {
 }
 
 /**
+ * Create a small deterministic PRNG from any stable string-like seed.
+ * This keeps client-local playlist ordering identical without consuming the
+ * shared/global Math.random stream.
+ * @param {unknown} seed
+ * @returns {() => number} Values in the range [0, 1).
+ */
+export function createDeterministicRandom(seed) {
+  const text = String(seed ?? "");
+  let state = 2166136261;
+  for (let index = 0; index < text.length; index++) {
+    state ^= text.charCodeAt(index);
+    state = Math.imul(state, 16777619);
+  }
+  state >>>= 0;
+
+  return () => {
+    state = (state + 0x6D2B79F5) >>> 0;
+    let value = state;
+    value = Math.imul(value ^ (value >>> 15), value | 1);
+    value ^= value + Math.imul(value ^ (value >>> 7), value | 61);
+    return ((value ^ (value >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+/**
  * Decide whether Foundry's native _onEnd handler should run for an SoS mode.
  * Non-authority clients suppress feature-owned automatic document mutations.
  * @param {object} options
  * @param {boolean} [options.crossfade=false]
  * @param {boolean} [options.silence=false]
-* @param {unknown} [options.crossfadeMs=0]
+ * @param {unknown} [options.crossfadeMs=0]
  * @param {boolean} [options.crossfadeStarted=true]
  * @param {boolean} [options.silenceStarted=false]
  * @param {boolean} [options.isAuthority=false]
@@ -70,7 +95,7 @@ export function selectPrimaryActiveGmId(users) {
 export function shouldUseNativeTrackCompletion({
   crossfade = false,
   silence = false,
- crossfadeMs = 0,
+  crossfadeMs = 0,
   crossfadeStarted = true,
   silenceStarted = false,
   isAuthority = false,

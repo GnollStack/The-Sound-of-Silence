@@ -1,7 +1,7 @@
 // soundscape-previewer.js
 
 import { advancedFade, fadeOutAndStop } from "./audio-fader.js";
-import { Flags } from "./flag-service.js";
+import { Flags, sanitizeSoundscapeGroups } from "./flag-service.js";
 import { State } from "./state-manager.js";
 import {
     MODULE_ID,
@@ -20,7 +20,12 @@ let hooksRegistered = false;
 
 function _getOverrideFlag(configOverrides, key) {
     if (!configOverrides?.flags) return undefined;
-    return configOverrides.flags?.[MODULE_ID]?.[key];
+    const namespaced = configOverrides.flags?.[MODULE_ID]?.[key];
+    if (namespaced !== null && typeof namespaced !== "undefined") return namespaced;
+
+    // Accept the legacy flat preview shape so an already-open Playlist sheet remains
+    // safe across a hot reload. Newly collected overrides are always namespaced.
+    return configOverrides.flags?.[key];
 }
 
 function _resolveFadeOutMs(playlist, configOverrides = null) {
@@ -60,7 +65,7 @@ function _isLivePlaylistPlaying(playlist) {
     return !!(playlist?.playing || State.hasSoundscapeEngine(playlist));
 }
 
-class SoundscapePreviewSession {
+export class SoundscapePreviewSession {
     constructor(playlist, { configOverrides = null } = {}) {
         this.playlist = playlist;
         this.playlistId = playlist.id;
@@ -76,6 +81,9 @@ class SoundscapePreviewSession {
 
         this.pendingOneShotTotal = 0;
         this.pendingOneShotCounts = new Map();
+        this.activeGroupCounts = new Map();
+        this.pendingGroupCounts = new Map();
+        this.groupCooldowns = new Map();
     }
 
     get maxPolyphony() {
@@ -203,15 +211,22 @@ class SoundscapePreviewSession {
         if (this.isDestroyed) return;
 
         const existing = this.oneShotTimers.get(ps.id);
-        if (existing?.timer) safeCancelTimer(existing.timer, `preview rearm ${ps.name}`);
+        if (existing?.timer) {
+            existing.cancelled = true;
+            safeCancelTimer(existing.timer, `preview rearm ${ps.name}`);
+        }
 
         const delayMs = Math.max(minimumDelayMs, this._pickDelayMs(ps, { initial }));
         const eta = Date.now() + delayMs;
         const timer = new AudioTimeout(delayMs);
 
-        this.oneShotTimers.set(ps.id, { timer, eta });
+        const entry = { timer, eta, cancelled: false };
+        this.oneShotTimers.set(ps.id, entry);
         timer.complete.then(() => {
-            if (this.isDestroyed) return;
+            if (
+                entry.cancelled || timer.cancelled || this.isDestroyed ||
+                this.oneShotTimers.get(ps.id) !== entry
+            ) return;
             this._fireOneShot(ps).catch((err) => {
                 warn(`[SoundscapePreview] Fire failed for "${ps.name}":`, err?.message);
                 if (!this.isDestroyed) this._armOneShot(ps, { minimumDelayMs: RETRY_BACKOFF_MS });
@@ -284,18 +299,31 @@ class SoundscapePreviewSession {
             return false;
         }
 
+        const group = this._resolveGroup(ps);
+        const groupGate = this._getGroupGate(group);
+        if (groupGate) {
+            debug(
+                `[SoundscapePreview] ${groupGate.reason} blocked "${ps.name}" in "${group.name}"`
+            );
+            if (!this.isDestroyed) {
+                this._armOneShot(ps, { minimumDelayMs: groupGate.retryMs });
+            }
+            return false;
+        }
+
         const effectiveChance = this._resolveEffectivePlayChance(ps);
         if (effectiveChance < 100 && (Math.random() * 100) >= effectiveChance) {
             if (!this.isDestroyed) this._armOneShot(ps, { minimumDelayMs: RETRY_BACKOFF_MS });
             return false;
         }
 
-        this._reserveOneShot(ps.id);
+        const groupId = group?.id ?? null;
+        this._reserveOneShot(ps.id, groupId);
         let reservationActive = true;
         const releaseReservation = () => {
             if (!reservationActive) return;
             reservationActive = false;
-            this._releaseOneShotReservation(ps.id);
+            this._releaseOneShotReservation(ps.id, groupId);
         };
 
         let sound;
@@ -323,6 +351,7 @@ class SoundscapePreviewSession {
 
         this.activeOneShots.add(sound);
         sound._sosSoundscapePreviewOneShot = true;
+        this._incrementActiveGroup(groupId);
         releaseReservation();
 
         let cleanedUp = false;
@@ -330,6 +359,8 @@ class SoundscapePreviewSession {
             if (cleanedUp) return;
             cleanedUp = true;
             this.activeOneShots.delete(sound);
+            this._decrementActiveGroup(groupId);
+            this._markGroupCompleted(groupId);
             this._detachPanner(sound);
             if (sound.playing) safeStop(sound, "soundscape preview one-shot cleanup");
             if (!this.isDestroyed) {
@@ -374,7 +405,9 @@ class SoundscapePreviewSession {
             }
             return true;
         } catch (err) {
+            cleanedUp = true;
             this.activeOneShots.delete(sound);
+            this._decrementActiveGroup(groupId);
             this._detachPanner(sound);
             warn(`[SoundscapePreview] Failed to play one-shot "${ps.name}":`, err?.message);
             if (!this.isDestroyed) this._armOneShot(ps, { minimumDelayMs: RETRY_BACKOFF_MS });
@@ -404,13 +437,75 @@ class SoundscapePreviewSession {
         return this.activeOneShots.size + this.pendingOneShotTotal;
     }
 
-    _reserveOneShot(soundId) {
-        this.pendingOneShotTotal += 1;
-        this.pendingOneShotCounts.set(soundId, (this.pendingOneShotCounts.get(soundId) ?? 0) + 1);
+    _getSoundscapeGroups() {
+        const groups = this._getPlaylistFlag("soundscapeGroups");
+        return sanitizeSoundscapeGroups(groups);
     }
 
-    _releaseOneShotReservation(soundId) {
+    _resolveGroup(ps) {
+        const requestedId = Flags.getSoundFlag(ps, "soundscapeGroupId");
+        if (!requestedId) return null;
+        return this._getSoundscapeGroups().find((group) => group.id === requestedId) ?? null;
+    }
+
+    _getGroupOccupied(groupId) {
+        if (!groupId) return 0;
+        return (this.activeGroupCounts.get(groupId) ?? 0) +
+            (this.pendingGroupCounts.get(groupId) ?? 0);
+    }
+
+    _getGroupGate(group) {
+        if (!group) return null;
+        if (this._getGroupOccupied(group.id) >= group.maxPolyphony) {
+            return { reason: "group-polyphony", retryMs: RETRY_BACKOFF_MS };
+        }
+
+        const nextEligibleAt = Number(this.groupCooldowns.get(group.id)?.nextEligibleAt);
+        const remainingMs = Math.max(0, nextEligibleAt - Date.now());
+        if (remainingMs > 0) {
+            return { reason: "group-cooldown", retryMs: remainingMs };
+        }
+        return null;
+    }
+
+    _markGroupCompleted(groupId) {
+        if (!groupId || this.isDestroyed) return;
+        const group = this._getSoundscapeGroups().find((candidate) => candidate.id === groupId);
+        if (!group) return;
+        const completedAt = Date.now();
+        this.groupCooldowns.set(groupId, {
+            lastCompletedAt: completedAt,
+            nextEligibleAt: completedAt + (group.cooldownSec * 1000),
+        });
+    }
+
+    _incrementActiveGroup(groupId) {
+        if (!groupId) return;
+        this.activeGroupCounts.set(groupId, (this.activeGroupCounts.get(groupId) ?? 0) + 1);
+    }
+
+    _decrementActiveGroup(groupId) {
+        if (!groupId) return;
+        const active = this.activeGroupCounts.get(groupId) ?? 0;
+        if (active <= 1) this.activeGroupCounts.delete(groupId);
+        else this.activeGroupCounts.set(groupId, active - 1);
+    }
+
+    _reserveOneShot(soundId, groupId = null) {
+        this.pendingOneShotTotal += 1;
+        this.pendingOneShotCounts.set(soundId, (this.pendingOneShotCounts.get(soundId) ?? 0) + 1);
+        if (groupId) {
+            this.pendingGroupCounts.set(groupId, (this.pendingGroupCounts.get(groupId) ?? 0) + 1);
+        }
+    }
+
+    _releaseOneShotReservation(soundId, groupId = null) {
         this.pendingOneShotTotal = Math.max(0, this.pendingOneShotTotal - 1);
+        if (groupId) {
+            const pending = this.pendingGroupCounts.get(groupId) ?? 0;
+            if (pending <= 1) this.pendingGroupCounts.delete(groupId);
+            else this.pendingGroupCounts.set(groupId, pending - 1);
+        }
         const current = this.pendingOneShotCounts.get(soundId) ?? 0;
         if (current <= 1) this.pendingOneShotCounts.delete(soundId);
         else this.pendingOneShotCounts.set(soundId, current - 1);
@@ -455,11 +550,15 @@ class SoundscapePreviewSession {
         this.isDestroyed = true;
 
         for (const [, entry] of this.oneShotTimers) {
+            entry.cancelled = true;
             safeCancelTimer(entry.timer, "soundscape preview stop");
         }
         this.oneShotTimers.clear();
         this.pendingOneShotTotal = 0;
         this.pendingOneShotCounts.clear();
+        this.activeGroupCounts.clear();
+        this.pendingGroupCounts.clear();
+        this.groupCooldowns.clear();
 
         const fadeMs = _resolveFadeOutMs(this.playlist, this.configOverrides);
         const stopSound = (sound, context) => {
@@ -500,11 +599,19 @@ export const SoundscapePreviewer = {
         _sessions.set(playlist.id, session);
         try {
             await session.start();
+            if (session.isDestroyed || _sessions.get(playlist.id) !== session) return false;
             ui.notifications?.info(`Previewing soundscape: ${playlist.name}`);
             return true;
         } catch (err) {
-            _sessions.delete(playlist.id);
+            const stillOwnsPreview = _sessions.get(playlist.id) === session;
+            if (stillOwnsPreview) {
+                _sessions.delete(playlist.id);
+            }
             session.stop();
+            if (!stillOwnsPreview) {
+                debug(`[SoundscapePreview] Ignoring failure from superseded preview "${playlist.name}".`);
+                return false;
+            }
             error(`[SoundscapePreview] Failed to start "${playlist.name}":`, err);
             ui.notifications?.error(`Failed to preview soundscape: ${playlist.name}`);
             return false;

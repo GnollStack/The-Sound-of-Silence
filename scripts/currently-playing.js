@@ -1493,7 +1493,7 @@ function _updateSoundscapeReadouts(app) {
                 if (groupBadge && group && groupState) {
                     const remainingMs = Math.max(0, Number(groupState.nextEligibleAt) - Date.now());
                     const cooldownText = remainingMs > 0
-                        ? ` � cooldown ${Math.ceil(remainingMs / 1000)}s`
+                        ? ` — cooldown ${Math.ceil(remainingMs / 1000)}s`
                         : "";
                     groupBadge.textContent =
                         `${group.name} ${groupState.occupied}/${groupState.max}${cooldownText}`;

@@ -9,6 +9,8 @@ import { debug, MODULE_ID, PlaylistActionAuthority } from "./utils.js";
 
 let soundHooksRegistered = false;
 let playlistHooksRegistered = false;
+let authorityHooksRegistered = false;
+let lastPublisherAuthorityId = null;
 
 function _getActiveSoundscapeSounds(playlist) {
   if (!playlist?.sounds) return [];
@@ -62,6 +64,54 @@ export function scheduleSoundscapeReconcile(playlist, reason = "unknown") {
   }
 }
 
+export function reconcileAllSoundscapeEngines(reason = "global reconcile") {
+  for (const playlist of game.playlists ?? []) {
+    if (!shouldRunSoundscapeEngine(playlist) && !State.getSoundscapeEngine(playlist)) continue;
+    scheduleSoundscapeReconcile(playlist, reason);
+  }
+}
+
+function _reconcilePublisherAuthority(reason) {
+  const previousAuthorityId = lastPublisherAuthorityId;
+  const nextAuthorityId = PlaylistActionAuthority.getAuthorizedGMId();
+  if (String(previousAuthorityId ?? "") === String(nextAuthorityId ?? "")) return;
+  lastPublisherAuthorityId = nextAuthorityId;
+
+  debug(
+    `[Soundscape] Publisher authority changed ` +
+    `${previousAuthorityId ?? "none"} -> ${nextAuthorityId ?? "none"} (${reason}).`
+  );
+  for (const playlist of game.playlists ?? []) {
+    const engine = State.getSoundscapeEngine(playlist);
+    engine?.handlePublisherAuthorityChange?.(previousAuthorityId, nextAuthorityId);
+    if (engine || shouldRunSoundscapeEngine(playlist)) {
+      scheduleSoundscapeReconcile(playlist, `publisher authority: ${reason}`);
+    }
+  }
+}
+
+function _schedulePublisherAuthorityReconcile(reason) {
+  const run = () => _reconcilePublisherAuthority(reason);
+  if (globalThis.setTimeout) setTimeout(run, 0);
+  else globalThis.queueMicrotask?.(run);
+}
+
+function _registerSoundscapeAuthorityHooks() {
+  if (authorityHooksRegistered) return;
+  authorityHooksRegistered = true;
+  lastPublisherAuthorityId = PlaylistActionAuthority.getAuthorizedGMId();
+
+  Hooks.on("userConnected", (user) => {
+    if (!user?.isGM) return;
+    _schedulePublisherAuthorityReconcile("GM connection changed");
+  });
+
+  Hooks.on("updateUser", (user, changes) => {
+    if (!user?.isGM && !Object.prototype.hasOwnProperty.call(changes ?? {}, "role")) return;
+    _schedulePublisherAuthorityReconcile("GM role changed");
+  });
+}
+
 export function bootstrapSoundscapeEngines() {
   // If a client joins or reloads while a soundscape playlist is already live,
   // bootstrap the local engine from the replicated playlist state.
@@ -101,6 +151,26 @@ export function registerSoundscapeSoundHooks() {
     );
   });
 
+  Hooks.on("deletePlaylistSound", (soundDoc) => {
+    const playlist = soundDoc.parent;
+    if (!playlist) return;
+
+    const engine = State.getSoundscapeEngine(playlist);
+    engine?.removePlaylistSound?.(soundDoc);
+    scheduleSoundscapeReconcile(playlist, `sound deleted: ${soundDoc.name}`);
+
+    if (!PlaylistActionAuthority.isAuthorizedGM()) return;
+    if (!Flags.getPlaybackMode(playlist).soundscape || !playlist.playing) return;
+    const stillPlaying = playlist.sounds.some(
+      (sound) => sound.playing && !Flags.getSoundFlag(sound, "isSilenceGap")
+    );
+    if (!stillPlaying) {
+      playlist.update({ playing: false }).catch((err) =>
+        debug(`[Soundscape] Failed to stop empty playlist after deletion:`, err?.message)
+      );
+    }
+  });
+
   // Auto-stop a Soundscape playlist when its last playing sound goes idle.
   // Individual stops accumulate until no sound is left, then the playlist
   // itself flips to stopped, which tears down the engine via updatePlaylist.
@@ -127,6 +197,7 @@ export function registerSoundscapeSoundHooks() {
 export function registerSoundscapePlaylistHooks() {
   if (playlistHooksRegistered) return;
   playlistHooksRegistered = true;
+  _registerSoundscapeAuthorityHooks();
 
   // Keep every client's local soundscape engine aligned with replicated
   // playlist state. This covers initial playback, live flag toggles, and late

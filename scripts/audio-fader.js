@@ -565,7 +565,7 @@ export function scheduleEndOfTrackFade(ps) {
 
   timer.complete.then(() => {
     // Verify the timer wasn't cancelled and the sound is still playing
-    if (!State.getEndOfTrackFade(ps) || !sound.playing || ps.playing !== true) return;
+    if (State.getEndOfTrackFade(ps) !== timer || !sound.playing || ps.playing !== true) return;
 
     State.clearEndOfTrackFade(ps);
     debug(`[Fade] Starting end-of-track configured fade-out for "${ps.name}"`);

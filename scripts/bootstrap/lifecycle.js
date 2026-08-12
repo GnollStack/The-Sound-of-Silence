@@ -11,7 +11,12 @@ import { registerSoundCacheHooks } from "../sound-cache.js";
 import { registerPlaylistUiHooks } from "../playlist-ui.js";
 import { registerSoundscapePreviewerHooks } from "../soundscape-previewer.js";
 import { registerSettings } from "../settings.js";
-import { info, MODULE_ID, registerSequenceCleanupHooks } from "../utils.js";
+import { debug, info, MODULE_ID, registerSequenceCleanupHooks } from "../utils.js";
+import { cleanupPlaylistState } from "../state-manager.js";
+import {
+  bootstrapSilenceGapRecovery,
+  registerSilenceRecoveryHooks,
+} from "../silence.js";
 import { registerFlagServiceHooks } from "../flag-service.js";
 import {
   applyPersonalPlaylistVolumesToActiveSounds,
@@ -20,6 +25,7 @@ import { startPlaybackRecoveryWatchdog } from "../playback-recovery.js";
 import { registerPlaybackClockCleanupHooks } from "../playback-clock.js";
 import {
   bootstrapSoundscapeEngines,
+  reconcileAllSoundscapeEngines,
   registerSoundscapePlaylistHooks,
   registerSoundscapeSoundHooks,
 } from "../soundscape-orchestration.js";
@@ -48,6 +54,7 @@ export function registerLifecycleHooks() {
     registerSoundCacheHooks();
     registerSettings({
       applyPersonalPlaylistVolumesToActiveSounds,
+      reconcileSoundscapeEngines: reconcileAllSoundscapeEngines,
     });
   });
 
@@ -63,11 +70,27 @@ export function registerLifecycleHooks() {
       module.api = API;
     }
 
-    game.socket.on(`module.${MODULE_ID}`, (data) => API._handleSocketMessage(data));
+    game.socket.on(
+      `module.${MODULE_ID}`,
+      (data, senderUserId) => API._handleSocketMessage(data, senderUserId)
+    );
 
     Integrations.registerAudioGuards();
 
     registerSoundscapePreviewerHooks();
+    registerSilenceRecoveryHooks();
+    Hooks.on("deletePlaylist", (playlist) => {
+      cleanupPlaylistState(playlist, {
+        cleanSilence: true,
+        cleanCrossfade: true,
+        cleanLoopers: true,
+        cleanSoundscape: true,
+        allowFadeOut: false,
+        final: true,
+      }).catch((err) =>
+        debug(`[State] Failed final cleanup for deleted playlist "${playlist?.name}":`, err?.message ?? err)
+      );
+    });
     registerPlaylistSheetWrappers();
     registerSoundConfigWrappers();
     registerPlaylistUiHooks();
@@ -88,5 +111,8 @@ export function registerLifecycleHooks() {
     registerShuffleHooks();
     registerSoundscapePlaylistHooks();
     registerNormalizationHooks();
+    bootstrapSilenceGapRecovery().catch((err) =>
+      debug("[Silence] Ready recovery failed:", err?.message ?? err)
+    );
   });
 }

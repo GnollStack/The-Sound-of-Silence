@@ -2,12 +2,24 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
+  createDeterministicRandom,
   formatTimeValue,
   getPublicApiKeys,
   normalizeNonNegativeNumber,
   selectPrimaryActiveGmId,
   shouldUseNativeTrackCompletion,
 } from "../scripts/core-helpers.js";
+
+test("deterministic random streams are stable and seed-specific", () => {
+  const first = createDeterministicRandom("playlist:42:cycle:1");
+  const second = createDeterministicRandom("playlist:42:cycle:1");
+  const different = createDeterministicRandom("playlist:42:cycle:2");
+  const firstValues = Array.from({ length: 8 }, () => first());
+
+  assert.deepEqual(firstValues, Array.from({ length: 8 }, () => second()));
+  assert.notDeepEqual(firstValues, Array.from({ length: 8 }, () => different()));
+  assert.equal(firstValues.every((value) => value >= 0 && value < 1), true);
+});
 
 test("formatTimeValue carries rounded milliseconds across minute boundaries", () => {
   assert.equal(formatTimeValue(59.9996), "01:00.000");

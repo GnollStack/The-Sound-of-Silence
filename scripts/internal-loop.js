@@ -86,9 +86,27 @@ export function scheduleLoopWithin(ps) {
   // Start the looper with a small delay to avoid race conditions with Foundry's audio system.
   // Uses AudioTimeout to avoid browser throttling in background tabs.
   AudioTimeout.wait(50).then(() => {
-    if (!looper.isDestroyed) {
-      looper.start();
-    }
+    if (looper.isDestroyed) return;
+    return looper.start().then((started) => {
+      // LoopingSound.start returns false for a failed or cancelled startup.
+      // Cancellation already restored/retained its caller-owned lifecycle;
+      // initialization failure needs to return ownership to standard playback.
+      if (started !== false || looper.isAborted) return;
+      debug(`[Manager] LoopingSound failed to initialize for "${ps.name}". Restoring standard playback.`);
+      if (State.getActiveLooper(ps) === looper) {
+        looper.isAborted = true;
+        if (!looper.isDestroyed) looper.destroy(false);
+        State.clearActiveLooper(ps);
+      }
+      restoreStandardTransitionScheduling(ps);
+    });
+  }).catch((err) => {
+    if (State.getActiveLooper(ps) !== looper) return;
+    debug(`[Manager] LoopingSound startup rejected for "${ps.name}":`, err?.message ?? err);
+    looper.isAborted = true;
+    looper.destroy(false);
+    State.clearActiveLooper(ps);
+    restoreStandardTransitionScheduling(ps);
   });
 
   return true;

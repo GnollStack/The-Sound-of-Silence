@@ -504,6 +504,10 @@ function _registerSoundConfigHooks() {
 
   Hooks.on("renderPlaylistSoundConfig", (app, htmlRaw, data) => {
   const html = htmlRaw instanceof HTMLElement ? $(htmlRaw) : htmlRaw;
+  const previousPreviewer = app._soundOfSilencePreviewer;
+  if (previousPreviewer?.destroy) previousPreviewer.destroy();
+  else previousPreviewer?.stopAll?.();
+  app._soundOfSilencePreviewer = null;
   const loop = data.loopWithin ?? Flags.getLoopConfig(app.document);
   const allowVolumeOverride = Flags.getSoundFlag(app.document, "allowVolumeOverride");
   const documentVolume = Number(app.document.volume);
@@ -557,7 +561,7 @@ function _registerSoundConfigHooks() {
           <input type="checkbox" name="${rootField("isProcedural")}" ${isProcedural ? "checked" : ""}>
           <span class="sos-feature-label">Procedural One-Shot</span>
         </label>
-        <p class="notes sos-compact">Fires on client-local timers when this playlist is in Soundscape Mode. Delays are measured after each fire ends. Mutually exclusive with Internal Loop.</p>
+        <p class="notes sos-compact">By default, the primary GM schedules synchronized fire recipes for all clients. Each client can opt out and use local timers instead. Delays are measured after each fire ends. Mutually exclusive with Internal Loop.</p>
       </div>
       <div class="sos-procedural-body sos-subsection" style="display: ${isProcedural ? "block" : "none"};">
 
@@ -884,8 +888,8 @@ function _registerSoundConfigHooks() {
   });
 
   const previewer = new LoopPreviewer(app, html, data);
-  previewer.init();
   app._soundOfSilencePreviewer = previewer;
+  void previewer.init();
 
   app._soundOfSilenceProceduralAuditioner?.destroy?.();
   app._soundOfSilenceProceduralAuditioner = null;
@@ -1062,9 +1066,11 @@ function _registerSoundConfigHooks() {
 
   Hooks.on("closePlaylistSoundConfig", (app) => {
     const previewer = app._soundOfSilencePreviewer;
-    if (previewer?.stopAll) {
-      debug("[Previewer] Config window closed. Calling stopAll.");
-      previewer.stopAll();
+    if (previewer) {
+      debug("[Previewer] Config window closed. Destroying previewer.");
+      if (previewer.destroy) previewer.destroy();
+      else previewer.stopAll?.();
+      app._soundOfSilencePreviewer = null;
     }
 
     const auditioner = app._soundOfSilenceProceduralAuditioner;

@@ -299,13 +299,15 @@ class StateManager {
      * Clear the silent gap state for a playlist
      * @param {Playlist} playlist
      */
-    clearSilenceState(playlist) {
+    clearSilenceState(playlist, expectedState = null) {
+        if (expectedState && this._silentGaps.get(playlist) !== expectedState) return false;
         const had = this._silentGaps.has(playlist);
         this._silentGaps.delete(playlist);
         if (had) {
             debug(`[State] Cleared silence state for "${playlist.name}"`);
             this._emitStateChange();
         }
+        return had;
     }
 
     /**
@@ -627,6 +629,7 @@ class StateManager {
      * @param {boolean} [options.cleanSoundscape=true] - Destroy soundscape engine
      * @param {PlaylistSound} [options.onlySound=null] - If provided, only clean this sound's looper
      * @param {boolean} [options.allowFadeOut=false] - Allow sounds to fade out naturally instead of stopping immediately
+     * @param {boolean} [options.final=false] - Permanently discard all remaining local state for a deleted playlist
      * @returns {Promise<void>}
      */
     async cleanup(playlist, options = {}) {
@@ -636,7 +639,8 @@ class StateManager {
             cleanLoopers = true,
             cleanSoundscape = true,
             onlySound = null,
-            allowFadeOut = false
+            allowFadeOut = false,
+            final = false
         } = options;
 
         debug(`[State] Cleanup requested for "${playlist?.name}"`, options);
@@ -646,19 +650,21 @@ class StateManager {
         if (cleanCrossfade) {
             try {
                 const session = this.getCrossfadeSession(playlist);
+                const timer = this.getCrossfadeTimer(playlist);
+                const waiter = this.getPlayWaiter(playlist);
                 if (session?.settle) {
                     await session.settle({ mode: "cancel", reason: "playlist cleanup" });
                 }
 
-                const timer = this.getCrossfadeTimer(playlist);
                 if (timer?.timeout?.cancel) {
                     timer.timeout.cancel();
                 } else if (timer?.cancel) {
                     timer.cancel();
                 }
-                this.clearCrossfadeTimer(playlist);
+                if (this.getCrossfadeTimer(playlist) === timer) {
+                    this.clearCrossfadeTimer(playlist);
+                }
 
-                const waiter = this.getPlayWaiter(playlist);
                 if (waiter?.sound) {
                     try {
                         waiter.sound.removeEventListener("play", waiter.onPlay);
@@ -666,8 +672,13 @@ class StateManager {
                         debug('[State] Failed to remove play listener:', listenerErr.message);
                     }
                 }
-                this.clearPlayWaiter(playlist);
-                this.clearCrossfadeSession(playlist);
+                if (this.getPlayWaiter(playlist) === waiter) {
+                    this.clearPlayWaiter(playlist);
+                }
+                // settle() already compare-clears its own session. Keep this
+                // identity guard for malformed legacy sessions without ever
+                // deleting a replacement installed while async cleanup ran.
+                if (session) this.clearCrossfadeSession(playlist, session);
             } catch (err) {
                 warn(`[State] Error during crossfade cleanup for "${playlist?.name}":`, err);
             }
@@ -685,11 +696,12 @@ class StateManager {
                     const gap = silenceState.gap;
                     if (gap) {
                         this.markGapAsCancelled(gap);
-                        if (gap.id && PlaylistActionAuthority.isAuthorizedGM()) {
-                            // No need to await, let it delete in the background
-                            gap.delete().catch(err => {
+                        if (!final && gap.id && PlaylistActionAuthority.isAuthorizedGM()) {
+                            try {
+                                await gap.delete();
+                            } catch (err) {
                                 debug(`[State] Failed to delete silent gap "${gap?.name}":`, err.message);
-                            });
+                            }
                         }
                     }
 
@@ -704,7 +716,7 @@ class StateManager {
                         this.recordSilence(gapMs, true);
                         silenceState.resolve(true); // Resolve the promise immediately
                     }
-                    this.clearSilenceState(playlist); // Clean up the state
+                    this.clearSilenceState(playlist, silenceState); // Clean up only the state we cancelled
                 }
             } catch (err) {
                 warn(`[State] Error during silence cleanup for "${playlist?.name}":`, err);
@@ -733,12 +745,24 @@ class StateManager {
             try {
                 const engine = this.getSoundscapeEngine(playlist);
                 if (engine) {
-                    engine.destroy({ stopBeds: !allowFadeOut });
+                    // A deleted playlist can no longer receive a follow-up
+                    // document update, so final cleanup must stay local-only.
+                    engine.destroy({ stopBeds: final ? false : !allowFadeOut });
                     this.clearSoundscapeEngine(playlist);
                 }
             } catch (err) {
                 warn(`[State] Error during soundscape cleanup for "${playlist?.name}":`, err);
             }
+        }
+
+        if (final) {
+            for (const sound of Array.from(playlist.sounds ?? [])) {
+                const pendingFade = this.getEndOfTrackFade(sound);
+                pendingFade?.cancel?.();
+                this.clearEndOfTrackFade(sound);
+            }
+            this.clearStoppingFlag(playlist);
+            this.clearShuffleState(playlist);
         }
 
         debug(`[State] Cleanup complete for "${playlist.name}"`);
@@ -949,12 +973,16 @@ class StateManager {
         };
         if (!current) return normalizedNext;
 
-        const reasons = new Set([
-            ...(Array.isArray(current.reasons) ? current.reasons : []),
-            current.reason,
-            ...(Array.isArray(normalizedNext.reasons) ? normalizedNext.reasons : []),
-            normalizedNext.reason,
-        ].filter(Boolean));
+        // Once reasons have been normalized, do not feed their comma-joined
+        // display string back into the next merge. Repeated state changes in a
+        // single debounce window would otherwise grow that string exponentially.
+        const currentReasons = Array.isArray(current.reasons)
+            ? current.reasons
+            : [current.reason];
+        const nextReasons = Array.isArray(normalizedNext.reasons)
+            ? normalizedNext.reasons
+            : [normalizedNext.reason];
+        const reasons = new Set([...currentReasons, ...nextReasons].filter(Boolean));
 
         const samePlaylist = current.playlistId && current.playlistId === normalizedNext.playlistId;
         const sameSound = current.soundId && current.soundId === normalizedNext.soundId;

@@ -175,28 +175,53 @@ async function runPlaybackAutomation(api, args) {
   const cleanupAfter = args.cleanupAfter !== false && args.leaveFixtures !== true;
   const cleanupBefore = args.cleanupBefore !== false;
   const runId = String(args.runId || foundry.utils.randomID(8));
-  const playlistSidebar = await requirePlaylistSidebar();
-  const beforeCounts = getWorldDocumentCounts();
   const results = [];
   const createdPlaylistIds = [];
+  let playlistSidebar = null;
+  let beforeCounts = null;
   let beforeCleanup = { skipped: true, playlistsDeleted: 0, foldersDeleted: 0 };
-
-  if (cleanupBefore) {
-    beforeCleanup = await cleanupPlaybackFixtures(api, { runId, stopFirst: true });
-  }
-  await stopAllPlaylists(api);
-
-  for (const scenario of scenarioNames) {
-    const result = await runScenario(api, scenario, runId);
-    results.push(result);
-    if (result.playlistId) createdPlaylistIds.push(result.playlistId);
-    await stopAllPlaylists(api);
-  }
-
   let cleanup = { skipped: true, playlistsDeleted: 0, foldersDeleted: 0 };
-  if (cleanupAfter) {
-    cleanup = await cleanupPlaybackFixtures(api, { runId, stopFirst: true });
+  let runFailure;
+  let cleanupFailure;
+  let hasRunFailure = false;
+  let hasCleanupFailure = false;
+
+  try {
+    playlistSidebar = await requirePlaylistSidebar();
+    beforeCounts = getWorldDocumentCounts();
+
+    if (cleanupBefore) {
+      beforeCleanup = await cleanupPlaybackFixtures(api, { runId, stopFirst: true });
+    }
+    await stopAllPlaylists(api);
+
+    for (const scenario of scenarioNames) {
+      const result = await runScenario(api, scenario, runId);
+      results.push(result);
+      if (result.playlistId) createdPlaylistIds.push(result.playlistId);
+      await stopAllPlaylists(api);
+    }
+  } catch (err) {
+    hasRunFailure = true;
+    runFailure = err;
+  } finally {
+    if (cleanupAfter) {
+      try {
+        cleanup = await cleanupPlaybackFixtures(api, { runId, stopFirst: true });
+      } catch (err) {
+        hasCleanupFailure = true;
+        cleanupFailure = err;
+      }
+    }
   }
+
+  throwAutomationFailures({
+    hasRunFailure,
+    runFailure,
+    hasCleanupFailure,
+    cleanupFailure,
+    runId,
+  });
 
   const afterCounts = getWorldDocumentCounts();
   const failed = results.filter((result) => !result.success);
@@ -232,62 +257,71 @@ async function runClientSyncAutomation(api, args = {}) {
   const cleanupAfter = args.cleanupAfter !== false && args.leaveFixtures !== true;
   const cleanupBefore = args.cleanupBefore !== false;
   const runId = String(args.runId || foundry.utils.randomID(8));
-  const playlistSidebar = await requirePlaylistSidebar();
-  const beforeCounts = getWorldDocumentCounts();
   const results = [];
   const createdPlaylistIds = [];
+  let playlistSidebar = null;
+  let beforeCounts = null;
   let beforeCleanup = { skipped: true, playlistsDeleted: 0, foldersDeleted: 0 };
-
-  if (cleanupBefore) {
-    beforeCleanup = await cleanupPlaybackFixtures(api, { runId, stopFirst: true });
-  }
-  await stopAllPlaylists(api);
-
-  const preflight = await collectSyncDiagnostics(api, { timeoutMs, playlistIds: [] });
-  const responderResult = buildResponderScenarioResult(preflight, expectedNonGmCount);
-  if (scenarioNames.includes("responder")) results.push(responderResult);
-
-  if (responderResult.failed > 0) {
-    const skipped = scenarioNames.filter((scenario) => scenario !== "responder");
-    if (skipped.length > 0) {
-      results.push(finalizeSyncScenario("clientSyncPreflight", null, [{
-        name: `missing active non-GM client(s); skipped ${skipped.join(", ")}`,
-        pass: false,
-        expectedNonGmCount,
-        actualNonGmCount: preflight.nonGmClients.length,
-      }], { skippedScenarios: skipped }));
-    }
-
-    const cleanup = cleanupAfter
-      ? await cleanupPlaybackFixtures(api, { runId, stopFirst: true })
-      : { skipped: true, playlistsDeleted: 0, foldersDeleted: 0 };
-    return finalizeClientSyncRun({
-      runId,
-      scenarioNames,
-      expectedNonGmCount,
-      timeoutMs,
-      beforeCounts,
-      results,
-      createdPlaylistIds,
-      beforeCleanup,
-      cleanup,
-      preflight,
-      playlistSidebar,
-    });
-  }
-
-  for (const scenario of scenarioNames) {
-    if (scenario === "responder") continue;
-    const result = await runClientSyncScenario(api, scenario, runId, { timeoutMs });
-    results.push(result);
-    if (result.playlistId) createdPlaylistIds.push(result.playlistId);
-    await stopAllPlaylists(api);
-  }
-
   let cleanup = { skipped: true, playlistsDeleted: 0, foldersDeleted: 0 };
-  if (cleanupAfter) {
-    cleanup = await cleanupPlaybackFixtures(api, { runId, stopFirst: true });
+  let preflight = null;
+  let runFailure;
+  let cleanupFailure;
+  let hasRunFailure = false;
+  let hasCleanupFailure = false;
+
+  try {
+    playlistSidebar = await requirePlaylistSidebar();
+    beforeCounts = getWorldDocumentCounts();
+
+    if (cleanupBefore) {
+      beforeCleanup = await cleanupPlaybackFixtures(api, { runId, stopFirst: true });
+    }
+    await stopAllPlaylists(api);
+
+    preflight = await collectSyncDiagnostics(api, { timeoutMs, playlistIds: [] });
+    const responderResult = buildResponderScenarioResult(preflight, expectedNonGmCount);
+    if (scenarioNames.includes("responder")) results.push(responderResult);
+
+    if (responderResult.failed > 0) {
+      const skipped = scenarioNames.filter((scenario) => scenario !== "responder");
+      if (skipped.length > 0) {
+        results.push(finalizeSyncScenario("clientSyncPreflight", null, [{
+          name: `missing active non-GM client(s); skipped ${skipped.join(", ")}`,
+          pass: false,
+          expectedNonGmCount,
+          actualNonGmCount: preflight.nonGmClients.length,
+        }], { skippedScenarios: skipped }));
+      }
+    } else {
+      for (const scenario of scenarioNames) {
+        if (scenario === "responder") continue;
+        const result = await runClientSyncScenario(api, scenario, runId, { timeoutMs });
+        results.push(result);
+        if (result.playlistId) createdPlaylistIds.push(result.playlistId);
+        await stopAllPlaylists(api);
+      }
+    }
+  } catch (err) {
+    hasRunFailure = true;
+    runFailure = err;
+  } finally {
+    if (cleanupAfter) {
+      try {
+        cleanup = await cleanupPlaybackFixtures(api, { runId, stopFirst: true });
+      } catch (err) {
+        hasCleanupFailure = true;
+        cleanupFailure = err;
+      }
+    }
   }
+
+  throwAutomationFailures({
+    hasRunFailure,
+    runFailure,
+    hasCleanupFailure,
+    cleanupFailure,
+    runId,
+  });
 
   return finalizeClientSyncRun({
     runId,
@@ -340,6 +374,25 @@ function finalizeClientSyncRun({
       after: getWorldDocumentCounts(),
     },
   };
+}
+
+function throwAutomationFailures({
+  hasRunFailure,
+  runFailure,
+  hasCleanupFailure,
+  cleanupFailure,
+  runId,
+}) {
+  if (hasRunFailure && hasCleanupFailure) {
+    const runMessage = runFailure instanceof Error ? runFailure.message : String(runFailure);
+    const cleanupMessage = cleanupFailure instanceof Error ? cleanupFailure.message : String(cleanupFailure);
+    throw new AggregateError(
+      [runFailure, cleanupFailure],
+      `Playback automation run ${runId} failed: ${runMessage}. Fixture cleanup also failed: ${cleanupMessage}.`
+    );
+  }
+  if (hasRunFailure) throw runFailure;
+  if (hasCleanupFailure) throw cleanupFailure;
 }
 
 async function runClientSyncScenario(api, scenario, runId, { timeoutMs }) {
@@ -1882,8 +1935,24 @@ async function runScenario(api, scenario, runId) {
           await setGameSetting("shufflePattern", pattern);
           resetShufflePlaylist(playlist);
 
+          // Persisted inactive silence gaps are intentionally removed by the
+          // runtime recovery hook. Recreate this disposable fixture for each
+          // synchronous shuffle assertion instead of depending on an orphan
+          // document surviving across setting-update awaits.
+          let gap = Array.from(playlist.sounds ?? [])
+            .find((sound) => Flags.getSoundFlag(sound, "isSilenceGap"));
+          if (!gap) {
+            [gap] = await playlist.createEmbeddedDocuments("PlaylistSound", [
+              fixtureSound("Shuffle Gap", {
+                runId,
+                scenario,
+                frequency: 660,
+                flags: { isSilenceGap: true },
+              }),
+            ]);
+          }
+
           const playableIds = getPlayableFixtureIds(playlist);
-          const gap = Array.from(playlist.sounds ?? []).find((sound) => Flags.getSoundFlag(sound, "isSilenceGap"));
           const order = getPlaybackOrder(playlist);
 
           record(tests, `${pattern} order includes each playable track once`, () => hasSameMembers(order, playableIds));

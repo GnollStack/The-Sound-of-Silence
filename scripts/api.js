@@ -850,9 +850,15 @@ class SoundOfSilenceAPI {
     }
 
     _resolveActiveGMSocketSender(senderId) {
+        const sender = this._resolveActiveSocketSender(senderId);
+        if (!sender?.isGM) return null;
+        return sender;
+    }
+
+    _resolveActiveSocketSender(senderId) {
         if (typeof senderId !== "string" || !senderId.trim()) return null;
         const sender = game.users?.get?.(senderId.trim());
-        if (!sender?.isGM || sender.active === false) return null;
+        if (!sender || sender.active === false) return null;
         return sender;
     }
 
@@ -1158,8 +1164,11 @@ class SoundOfSilenceAPI {
 
         if (includeSelf) addDiagnostics(this._gatherLocalDiagnostics({ playlistIds }));
 
-        const handler = (data) => {
+        const handler = (data, senderUserId) => {
             if (data?.action !== "diagnostics-response" || data.requestId !== requestId) return;
+            const sender = this._resolveActiveSocketSender(senderUserId);
+            if (!sender) return;
+            if (String(data.diagnostics?.client?.userId ?? "") !== String(sender.id)) return;
             addDiagnostics(data.diagnostics);
         };
 
@@ -1231,21 +1240,24 @@ class SoundOfSilenceAPI {
      * Handle incoming socket messages for the module.
      * Currently supports diagnostics-request for remote state queries.
      * @param {Object} data - The socket message payload
+     * @param {string|null} senderUserId - Authenticated sender id supplied by Foundry
      * @private
      */
-    _handleSocketMessage(data) {
+    _handleSocketMessage(data, senderUserId = null) {
+        if (!data || typeof data !== "object") return;
+
         if (data.action === "soundscape-procedural-fire") {
             if (data.senderSocketId && data.senderSocketId === this._getSocketId()) {
                 return;
             }
-            handleSoundscapeProceduralFire(data).catch((err) => {
+            handleSoundscapeProceduralFire(data, senderUserId).catch((err) => {
                 debug("[Soundscape Sync] Failed to process procedural fire:", err?.message);
             });
             return;
         }
 
         if (data.action === "diagnostics-client-setting-request") {
-            this._handleDiagnosticsClientSettingRequest(data).catch((err) => {
+            this._handleDiagnosticsClientSettingRequest(data, senderUserId).catch((err) => {
                 debug("[Remote Diagnostics] Failed to apply client setting request:", err?.message);
             });
             return;
@@ -1257,7 +1269,7 @@ class SoundOfSilenceAPI {
             }
             if (!this._isDiagnosticsRequestIdValid(data.requestId)) return;
             if (!this._isRemoteDiagnosticsGateOpen()) return;
-            if (!this._resolveActiveGMSocketSender(data.senderId)) return;
+            if (!this._resolveActiveGMSocketSender(senderUserId)) return;
 
             debug("[Remote Diagnostics] Received request, sending local state...");
             game.socket.emit(`module.${this.ID}`, {
@@ -1268,11 +1280,12 @@ class SoundOfSilenceAPI {
         }
     }
 
-    async _handleDiagnosticsClientSettingRequest(data) {
-        const sender = game.users?.get?.(data.senderUserId);
+    async _handleDiagnosticsClientSettingRequest(data, senderUserId = null) {
+        const sender = this._resolveActiveGMSocketSender(senderUserId);
         const requestId = data.requestId;
         const targetUserId = data.targetUserId ? String(data.targetUserId) : null;
-        if (!sender?.isGM || sender.active === false) return;
+        if (!sender) return;
+        if (!this._isDiagnosticsRequestIdValid(requestId)) return;
         if (targetUserId && targetUserId !== String(game.user?.id)) return;
 
         const diagnosticsEnabled = Boolean(game.settings?.get(this.ID, "enableMcpDiagnostics"));

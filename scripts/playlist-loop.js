@@ -15,7 +15,7 @@ const PM = CONST.PLAYLIST_MODES;
  * It is triggered when a playlist naturally concludes (i.e., its last track finishes).
  *
  * @param {Playlist} playlist The playlist document to potentially loop.
- * @returns {boolean} Returns `true` if the playlist restart was triggered, otherwise `false`.
+ * @returns {boolean|Promise<unknown>} The playAll result when a restart is triggered, otherwise false.
  */
 export function maybeLoopPlaylist(playlist) {
     if (!playlist) return false;
@@ -42,6 +42,5 @@ export function maybeLoopPlaylist(playlist) {
     cancelCrossfade(playlist);
 
     // `playAll()` handles all modes correctly and regenerates the playback order for Shuffle mode.
-    playlist.playAll();
-    return true;
+    return playlist.playAll();
 }

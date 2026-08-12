@@ -5,6 +5,7 @@
 import {
   fadeOutAndStop,
 } from "../audio-fader.js";
+import { AdvancedShuffle } from "../advanced-shuffle.js";
 import { shouldUseNativeTrackCompletion } from "../core-helpers.js";
 import { performCrossfade, scheduleCrossfade } from "../cross-fade.js";
 import { Flags } from "../flag-service.js";
@@ -121,6 +122,15 @@ export function registerPlaylistCommandWrappers() {
         return;
       }
 
+      if (
+        playlist.mode === CONST.PLAYLIST_MODES.SHUFFLE &&
+        AdvancedShuffle.isEnabled() &&
+        !PlaylistActionAuthority.isAuthorizedGM()
+      ) {
+        debug(`_onEnd: Non-authority client suppressing advanced-shuffle advancement for "${playlist.name}".`);
+        return;
+      }
+
       if (State.isPlaylistCrossfading(playlist)) {
         debug("_onEnd: Bailing because an automatic crossfade is in progress.");
         return;
@@ -180,8 +190,7 @@ export function registerPlaylistCommandWrappers() {
           "Stop",
           `Track -> Playlist: ${sound.name}. Escalating to stop the entire playlist.`
         );
-        playlist.stopAll();
-        return;
+        return playlist.stopAll();
       }
 
       return wrapped.call(this, sound, ...args);
@@ -204,6 +213,9 @@ export function registerPlaylistCommandWrappers() {
       const playingSounds = this.sounds.filter(
         (s) => s.playing && !Flags.getSoundFlag(s, "isSilenceGap")
       );
+      const gapSounds = this.sounds.filter((s) =>
+        Flags.getSoundFlag(s, "isSilenceGap")
+      );
       const silenceState = State.getSilenceState(this);
       const sourceSound = silenceState?.sourceSound;
 
@@ -220,6 +232,18 @@ export function registerPlaylistCommandWrappers() {
         cleanLoopers: true,
         allowFadeOut: fadeDuration > 0,
       });
+
+      // State cleanup owns the active generation. Remove any older persisted
+      // gap documents as well so Stop All cannot leave a reload-recoverable
+      // orphan behind.
+      for (const gap of gapSounds) {
+        if (!gap?.id || !this.sounds.has(gap.id)) continue;
+        try {
+          await gap.delete();
+        } catch (err) {
+          debug(`[Stop] Failed to remove stale silent gap "${gap?.name}":`, err?.message ?? err);
+        }
+      }
 
       const updates = soundIdsToStop.map((id) => ({
         _id: id,
@@ -265,7 +289,8 @@ export function registerPlaylistCommandWrappers() {
         }
       }
 
-      ui.playlists.render();
+      ui.playlists?.render();
+      return this;
     },
     "OVERRIDE"
   );
@@ -280,6 +305,10 @@ export function registerPlaylistCommandWrappers() {
         mode: Flags.getPlaybackMode(playlist).effective,
         args,
       });
+
+      if (!Flags.getSoundFlag(soundToPlay, "isSilenceGap")) {
+        State.clearStoppingFlag(playlist);
+      }
 
       if (State.isPlaylistCrossfading(playlist)) {
         return await wrapped.call(playlist, soundToPlay, ...args);

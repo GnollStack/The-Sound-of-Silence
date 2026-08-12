@@ -7,6 +7,7 @@ import { State } from "../state-manager.js";
 import { debug, safeCancelTimer, safeStop } from "../utils.js";
 
 const AudioTimeout = foundry.audio.AudioTimeout;
+const latestSessions = new WeakMap();
 
 function makeSessionId() {
   return foundry.utils?.randomID?.() ?? Math.random().toString(36).slice(2);
@@ -43,6 +44,7 @@ export function createCrossfadeSession({
     incomingTargetVolume: 1,
     source,
     status: "preparing",
+    settlementMode: null,
     startedAt: null,
     completionTimer: null,
     fadeTokens: null,
@@ -53,6 +55,7 @@ export function createCrossfadeSession({
     settleCrossfadeSession(playlist, { session, ...options });
 
   State.setCrossfadeSession(playlist, session);
+  latestSessions.set(playlist, session);
   return session;
 }
 
@@ -60,6 +63,10 @@ export function isCurrentCrossfadeSession(session) {
   return !!session &&
     State.getCrossfadeSession(session.playlist) === session &&
     !["completed", "paused", "cancelled"].includes(session.status);
+}
+
+export function isLatestCrossfadeSession(session) {
+  return !!session && latestSessions.get(session.playlist) === session;
 }
 
 export function activateCrossfadeSession(session, {
@@ -82,9 +89,19 @@ export function activateCrossfadeSession(session, {
   const timer = new AudioTimeout(session.durationMs + 50);
   session.completionTimer = timer;
   timer.complete
-    .then(() => session.settle({ mode: "complete", reason: "fade timer completed" }))
+    .then(() => {
+      // Foundry v14 resolves AudioTimeout.complete after cancellation. Only the
+      // timer that still owns this active session may complete the crossfade.
+      if (timer.cancelled || session.completionTimer !== timer || !isCurrentCrossfadeSession(session)) {
+        return false;
+      }
+      return session.settle({ mode: "complete", reason: "fade timer completed" });
+    })
     .catch((err) => {
       debug("[Crossfade Session] Completion timer failed:", err?.message ?? err);
+      if (timer.cancelled || session.completionTimer !== timer || !isCurrentCrossfadeSession(session)) {
+        return false;
+      }
       return session.settle({ mode: "complete", reason: "fade timer failed" });
     });
   return true;
@@ -98,6 +115,7 @@ export async function settleCrossfadeSession(playlist, {
   if (!session || session.playlist !== playlist) return false;
   if (["settling", "completed", "paused", "cancelled"].includes(session.status)) return false;
 
+  session.settlementMode = mode;
   session.status = "settling";
   safeCancelTimer(session.completionTimer, "crossfade session completion");
   session.completionTimer = null;

@@ -4,6 +4,7 @@
  */
 import { MODULE_ID, debug } from "../utils.js";
 import { PlaybackClock } from "../playback-clock.js";
+import { State } from "../state-manager.js";
 import {
   debugPlaybackTrace,
   describeSoundAudio,
@@ -35,6 +36,10 @@ export function registerPlaybackDocumentHooks() {
       foundry.utils.hasProperty(changes ?? {}, `flags.${MODULE_ID}.soundscapeMode`) ||
       foundry.utils.hasProperty(changes ?? {}, `flags.${MODULE_ID}.${PlaybackClock.FLAG_KEY}`);
     if (!relevant) return;
+
+    if (changes.playing === true || changes.sounds?.some?.((sound) => sound?.playing === true)) {
+      State.clearStoppingFlag(playlist);
+    }
 
     const flatSoundscapeFlagKey = `flags.${MODULE_ID}.soundscapeMode`;
     const soundscapeFlag = Object.prototype.hasOwnProperty.call(changes ?? {}, flatSoundscapeFlagKey)
@@ -74,6 +79,7 @@ export function registerPlaybackDocumentHooks() {
 
   Hooks.on("updatePlaylistSound", (soundDoc, changes, options, userId) => {
     if (!Object.prototype.hasOwnProperty.call(changes ?? {}, "playing")) return;
+    if (changes.playing === true) State.clearStoppingFlag(soundDoc.parent);
     debugPlaybackTrace("updatePlaylistSound", soundDoc.parent, {
       sound: soundDoc.name,
       user: game.users.get(userId)?.name ?? userId,

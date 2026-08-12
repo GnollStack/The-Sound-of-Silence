@@ -4,6 +4,7 @@ import { debug, toSec, formatTime, MODULE_ID, SEGMENT_COLORS, error } from "./ut
 import { equalPowerCrossfade } from "./audio-fader.js";
 
 const LOOP_SEGMENT_LABEL_MAX_LENGTH = 48;
+let nextPreviewerInstanceId = 0;
 
 function defaultLoopSegmentLabel(index = 0) {
     const safeIndex = Number(index);
@@ -20,6 +21,33 @@ function sanitizeLoopSegmentLabel(value, index = 0) {
         .slice(0, LOOP_SEGMENT_LABEL_MAX_LENGTH)
         .trim();
     return text || fallback;
+}
+
+export function getLoopSegmentDurationError(segment, duration, index = 0) {
+    const trackDuration = Number(duration);
+    if (!Number.isFinite(trackDuration) || trackDuration <= 0) return null;
+
+    const startSec = Number(segment?.startSec);
+    const endSec = Number(segment?.endSec);
+    const crossfadeMs = Number(segment?.crossfadeMs);
+    const prefix = `Segment ${index + 1}`;
+    const epsilon = 0.001;
+
+    if (Number.isFinite(startSec) && startSec >= trackDuration - epsilon) {
+        return `${prefix}: Start must be before the end of the audio`;
+    }
+    if (Number.isFinite(endSec) && endSec > trackDuration + epsilon) {
+        return `${prefix}: End exceeds the audio duration`;
+    }
+    if (
+        Number.isFinite(startSec) &&
+        Number.isFinite(endSec) &&
+        Number.isFinite(crossfadeMs) &&
+        crossfadeMs > Math.max(0, endSec - startSec) * 1000 + 1
+    ) {
+        return `${prefix}: Crossfade longer than segment`;
+    }
+    return null;
 }
 
 export class LoopPreviewer {
@@ -40,12 +68,19 @@ export class LoopPreviewer {
         this.activeDrag = null;
         this.hasValidationError = false;
         this.loopEnabled = false;
+        this._generation = 0;
+        this._destroyed = false;
+        this._dragNamespace = `.loopeditor${++nextPreviewerInstanceId}`;
+        this._boundHandleMouseMove = this._onHandleMouseMove.bind(this);
+        this._boundHandleMouseUp = this._onHandleMouseUp.bind(this);
     }
 
     async init() {
         debug("[Previewer] Initializing...");
+        const generation = this._generation;
         if (!this._cacheDOM()) return;
-        if (!(await this._loadAudioMetadata())) return;
+        if (!(await this._loadAudioMetadata(generation))) return;
+        if (!this._isCurrent(generation)) return;
 
         this.rescanSegments();
         this._attachGlobalListeners();
@@ -78,14 +113,31 @@ export class LoopPreviewer {
         return true;
     }
 
-    async _loadAudioMetadata() {
-        const audioPath = this.data.document.path;
+    _isCurrent(generation) {
+        return !this._destroyed && generation === this._generation;
+    }
+
+    _stopSound(sound) {
         try {
-            const sound = new foundry.audio.Sound(audioPath);
+            const result = sound?.stop?.();
+            result?.catch?.(() => {});
+        } catch (_) { }
+    }
+
+    async _loadAudioMetadata(generation = this._generation) {
+        const audioPath = this.data.document.path;
+        let sound = null;
+        try {
+            sound = new foundry.audio.Sound(audioPath);
             await sound.load();
+            if (!this._isCurrent(generation)) {
+                this._stopSound(sound);
+                return false;
+            }
             this.duration = sound.duration;
             debug(`[Previewer] Sound loaded. Duration: ${this.duration.toFixed(2)}s`);
         } catch (err) {
+            if (!this._isCurrent(generation)) return false;
             this.$fallback.html(`<p class="error">Could not load audio file.</p>`).show();
             this.$editor.find(".sos-loop-buttons-row").hide();
             return false;
@@ -264,11 +316,12 @@ export class LoopPreviewer {
     }
 
     _attachGlobalListeners() {
-        this.$playPauseBtn.on("click", this._onPlayPause.bind(this));
-        this.$stopBtn.on("click", () => this.stopAll());
-        this.$volumeSlider.on("input change", () => this._applyPreviewVolume());
-        this.$container.on("click", this._onTimelineClick.bind(this));
-        this.$container.on("mousedown", ".sos-loop-timeline-handle", this._onHandleMouseDown.bind(this));
+        this.$playPauseBtn.off(".previewer").on("click.previewer", this._onPlayPause.bind(this));
+        this.$stopBtn.off(".previewer").on("click.previewer", () => this.stopAll());
+        this.$volumeSlider.off(".previewer").on("input.previewer change.previewer", () => this._applyPreviewVolume());
+        this.$container.off(".previewer")
+            .on("click.previewer", this._onTimelineClick.bind(this))
+            .on("mousedown.previewer", ".sos-loop-timeline-handle", this._onHandleMouseDown.bind(this));
     }
 
     _getPreviewVolume() {
@@ -321,19 +374,22 @@ export class LoopPreviewer {
 
 
     stopAll(resetVisuals = true) {
+        this._generation++;
         if (this.animationFrameId) cancelAnimationFrame(this.animationFrameId);
+        this.animationFrameId = null;
         this.timeoutIds.forEach(clearTimeout);
         this.timeoutIds = [];
 
         // Proper cleanup of sounds
-        try { this.soundA?.stop(); } catch (_) { }
-        try { this.soundB?.stop(); } catch (_) { }
+        this._stopSound(this.soundA);
+        this._stopSound(this.soundB);
         this.soundA = null;
         this.soundB = null;
 
         this.isPlaying = false;
         this.isPreviewingLoop = false;
-        this.$playIcon.removeClass("fa-pause").addClass("fa-play");
+        this.pausedTime = 0;
+        this.$playIcon?.removeClass?.("fa-pause")?.addClass?.("fa-play");
 
         // Re-enable ALL buttons
         this.segments.forEach(s => {
@@ -342,19 +398,45 @@ export class LoopPreviewer {
         });
 
         // Reset the timer display
-        this.$timer.text(`${formatTime(0, false)} / ${formatTime(this.duration, false)}`);
+        this.$timer?.text?.(`${formatTime(0, false)} / ${formatTime(this.duration, false)}`);
 
         if (resetVisuals) this._updateVisuals();
     }
 
-    _tick() {
-        if (!this.isPlaying) return;
+    destroy() {
+        if (this._destroyed) return;
+        this._destroyed = true;
+        this.stopAll();
+
+        this.$playPauseBtn?.off?.(".previewer");
+        this.$stopBtn?.off?.(".previewer");
+        this.$volumeSlider?.off?.(".previewer");
+        this.$container?.off?.(".previewer");
+        this.segments.forEach((segment) => {
+            segment.$startInput?.off?.(".previewer");
+            segment.$endInput?.off?.(".previewer");
+            segment.$crossfadeInput?.off?.(".previewer");
+            segment.$previewBtn?.off?.(".previewer");
+            segment.$previewPointBtn?.off?.(".previewer");
+            segment.$form?.find?.("button.loop-stop")?.off?.(".previewer");
+        });
+        if (this.activeDrag?.animationFrame !== null && this.activeDrag?.animationFrame !== undefined) {
+            cancelAnimationFrame(this.activeDrag.animationFrame);
+        }
+        this.activeDrag = null;
+        if (typeof globalThis.$ === "function" && globalThis.document) {
+            globalThis.$(globalThis.document).off(this._dragNamespace);
+        }
+    }
+
+    _tick(generation = this._generation) {
+        if (!this._isCurrent(generation) || !this.isPlaying) return;
         const activeSound = this.isA_Active ? this.soundA : this.soundB;
         if (activeSound) {
             this.$timer.text(`${formatTime(activeSound.currentTime, false)} / ${formatTime(this.duration, false)}`);
         }
         this._updateVisuals();
-        this.animationFrameId = requestAnimationFrame(this._tick.bind(this));
+        this.animationFrameId = requestAnimationFrame(() => this._tick(generation));
     }
 
     _updateVisuals() {
@@ -396,6 +478,13 @@ export class LoopPreviewer {
             if (current.endSec <= current.startSec) {
                 hasError = true;
                 errorMessage = `Segment ${i + 1}: End must be after start`;
+                break;
+            }
+
+            const durationError = getLoopSegmentDurationError(current, this.duration, i);
+            if (durationError) {
+                hasError = true;
+                errorMessage = durationError;
                 break;
             }
 
@@ -486,7 +575,7 @@ export class LoopPreviewer {
         this._updateTooltip(this.activeDrag.segment, false);
 
         // Cancel any pending frame to prevent a final update after mouse up
-        if (this.activeDrag.animationFrame) {
+        if (this.activeDrag.animationFrame !== null) {
             cancelAnimationFrame(this.activeDrag.animationFrame);
         }
 
@@ -500,7 +589,7 @@ export class LoopPreviewer {
         debug(`[Previewer] Drag complete for segment ${segment.index}: ${formatTime(segment.startSec, true)} - ${formatTime(segment.endSec, true)}`);
 
         this.activeDrag = null;
-        $(document).off(".loopeditor");
+        $(document).off(this._dragNamespace);
 
         // Validate the final state ONCE at the end of the drag.
         this._validateAllSegments();
@@ -534,18 +623,40 @@ export class LoopPreviewer {
 
     async _seekAndPlay(time) {
         this.stopAll();
-        this.soundA = new foundry.audio.Sound(this.data.document.path);
-        await this.soundA.load();
-        this.soundA.addEventListener("end", this._onSoundEnd.bind(this), { once: true });
-        this.soundA.play({ offset: time, volume: this._getPreviewVolume() });
-        this.isA_Active = true;
-        this.isPlaying = true;
-        this.$playIcon.removeClass("fa-play").addClass("fa-pause");
-        this._tick();
+        const generation = this._generation;
+        if (!this._isCurrent(generation)) return;
+
+        const sound = new foundry.audio.Sound(this.data.document.path);
+        try {
+            await sound.load();
+            if (!this._isCurrent(generation)) {
+                this._stopSound(sound);
+                return;
+            }
+
+            this.soundA = sound;
+            this.isA_Active = true;
+            sound.addEventListener("end", () => this._onSoundEnd(generation), { once: true });
+            await sound.play({ offset: time, volume: this._getPreviewVolume() });
+            if (!this._isCurrent(generation)) {
+                this._stopSound(sound);
+                if (this.soundA === sound) this.soundA = null;
+                return;
+            }
+
+            this.isPlaying = true;
+            this.$playIcon.removeClass("fa-play").addClass("fa-pause");
+            this._tick(generation);
+        } catch (err) {
+            this._stopSound(sound);
+            if (!this._isCurrent(generation)) return;
+            error("[Previewer] Error starting audio preview:", err);
+            this.stopAll();
+        }
     }
 
-    _onSoundEnd() {
-        if (this.isPreviewingLoop) return;
+    _onSoundEnd(generation = this._generation) {
+        if (!this._isCurrent(generation) || this.isPreviewingLoop) return;
         this.isPlaying = false;
         this.$playIcon.removeClass("fa-pause").addClass("fa-play");
         this._updateVisuals();
@@ -553,6 +664,8 @@ export class LoopPreviewer {
 
     async _onPreviewLoop(segment) {
         this.stopAll(false);
+        const generation = this._generation;
+        if (!this._isCurrent(generation)) return;
         this.isPreviewingLoop = true;
         this.segments.forEach(s => s.$previewBtn.prop('disabled', true));
 
@@ -573,53 +686,94 @@ export class LoopPreviewer {
         const safeCrossfadeMs = Math.min(crossfadeMs, segmentDuration * 1000);
 
         const performCrossfade = async () => {
-            if (!this.isPreviewingLoop) return;
+            if (!this._isCurrent(generation) || !this.isPreviewingLoop) return;
 
-            const sourceSound = this.isA_Active ? this.soundA : this.soundB;
-            let targetSound = this.isA_Active ? this.soundB : this.soundA;
+            let targetSound = null;
+            try {
+                const activeWasA = this.isA_Active;
+                const sourceSound = activeWasA ? this.soundA : this.soundB;
+                targetSound = activeWasA ? this.soundB : this.soundA;
+                if (!sourceSound) return;
 
-            if (!targetSound) {
-                targetSound = new foundry.audio.Sound(this.data.document.path);
-                await targetSound.load();
-                if (this.isA_Active) this.soundB = targetSound;
-                else this.soundA = targetSound;
+                if (!targetSound) {
+                    const loadedTarget = new foundry.audio.Sound(this.data.document.path);
+                    await loadedTarget.load();
+                    if (!this._isCurrent(generation) || !this.isPreviewingLoop) {
+                        this._stopSound(loadedTarget);
+                        return;
+                    }
+                    targetSound = loadedTarget;
+                    if (activeWasA) this.soundB = targetSound;
+                    else this.soundA = targetSound;
+                }
+
+                // Use _fromLoop to bypass playlist fade effects
+                const previewVolume = this._getPreviewVolume();
+                await targetSound.play({ offset: startSec, volume: 0, _fromLoop: true });
+                if (!this._isCurrent(generation) || !this.isPreviewingLoop) {
+                    this._stopSound(targetSound);
+                    return;
+                }
+
+                equalPowerCrossfade(sourceSound, targetSound, safeCrossfadeMs, { targetVolIn: previewVolume });
+
+                this.timeoutIds.push(setTimeout(() => {
+                    const activeSound = this.isA_Active ? this.soundA : this.soundB;
+                    if (this._isCurrent(generation) && sourceSound !== activeSound) {
+                        this._stopSound(sourceSound);
+                    }
+                }, safeCrossfadeMs + 100));
+
+                this.isA_Active = !activeWasA;
+
+                const loopDurationMs = (endSec - startSec) * 1000;
+                const delayUntilNextFade = Math.max(50, loopDurationMs - safeCrossfadeMs);
+
+                this.timeoutIds.push(setTimeout(() => {
+                    if (this._isCurrent(generation)) void performCrossfade();
+                }, delayUntilNextFade));
+            } catch (err) {
+                if (!this._isCurrent(generation)) {
+                    this._stopSound(targetSound);
+                    return;
+                }
+                error("[Previewer] Error during full loop preview:", err);
+                this.stopAll(true);
             }
-
-            // Use _fromLoop to bypass playlist fade effects
-            const previewVolume = this._getPreviewVolume();
-            await targetSound.play({ offset: startSec, volume: 0, _fromLoop: true });
-
-            equalPowerCrossfade(sourceSound, targetSound, safeCrossfadeMs, { targetVolIn: previewVolume });
-
-            this.timeoutIds.push(setTimeout(() => {
-                try { sourceSound.stop(); } catch (_) { }
-            }, safeCrossfadeMs + 100));
-
-            this.isA_Active = !this.isA_Active;
-
-            const loopDurationMs = (endSec - startSec) * 1000;
-            const delayUntilNextFade = Math.max(50, loopDurationMs - safeCrossfadeMs);
-
-            this.timeoutIds.push(setTimeout(performCrossfade, delayUntilNextFade));
         };
 
-        // Create sound and start playing
-        this.soundA = new foundry.audio.Sound(this.data.document.path);
-        await this.soundA.load();
-        this.isA_Active = true;
+        const initialSound = new foundry.audio.Sound(this.data.document.path);
+        try {
+            await initialSound.load();
+            if (!this._isCurrent(generation) || !this.isPreviewingLoop) {
+                this._stopSound(initialSound);
+                return;
+            }
+            this.soundA = initialSound;
+            this.isA_Active = true;
 
-        // Start playing
-        await this.soundA.play({ offset: startSec, volume: this._getPreviewVolume(), _fromLoop: true });
-        this.isPlaying = true;
-        this._tick();
+            await initialSound.play({ offset: startSec, volume: this._getPreviewVolume(), _fromLoop: true });
+            if (!this._isCurrent(generation) || !this.isPreviewingLoop) {
+                this._stopSound(initialSound);
+                return;
+            }
+            this.isPlaying = true;
+            this._tick(generation);
 
-        // Calculate when to start the first crossfade
-        const loopDurationMs = (endSec - startSec) * 1000;
-        const delayUntilFirstFade = Math.max(50, loopDurationMs - safeCrossfadeMs);
+            const loopDurationMs = (endSec - startSec) * 1000;
+            const delayUntilFirstFade = Math.max(50, loopDurationMs - safeCrossfadeMs);
 
-        debug(`[Previewer] Starting preview loop "${label}". Segment: ${startSec}-${endSec}, Duration: ${loopDurationMs}ms, First fade in: ${delayUntilFirstFade}ms`);
+            debug(`[Previewer] Starting preview loop "${label}". Segment: ${startSec}-${endSec}, Duration: ${loopDurationMs}ms, First fade in: ${delayUntilFirstFade}ms`);
 
-        this.timeoutIds.push(setTimeout(performCrossfade, delayUntilFirstFade));
+            this.timeoutIds.push(setTimeout(() => {
+                if (this._isCurrent(generation)) void performCrossfade();
+            }, delayUntilFirstFade));
+        } catch (err) {
+            this._stopSound(initialSound);
+            if (!this._isCurrent(generation)) return;
+            error("[Previewer] Error starting full loop preview:", err);
+            this.stopAll(true);
+        }
     }
 
     /**
@@ -627,6 +781,8 @@ export class LoopPreviewer {
      */
     async _onPreviewLoopPoint(segment) {
         this.stopAll(false);
+        const generation = this._generation;
+        if (!this._isCurrent(generation)) return;
         this.isPreviewingLoop = true;
 
         // Disable all buttons during preview
@@ -649,7 +805,8 @@ export class LoopPreviewer {
         }
 
         const PREVIEW_WINDOW = 3.0; // the amount in seconds window before and after Loop Segment in the loop preview
-        const crossfadeSec = crossfadeMs / 1000;
+        const safeCrossfadeMs = Math.min(crossfadeMs, segmentDuration * 1000);
+        const crossfadeSec = safeCrossfadeMs / 1000;
 
         // Calculate where the crossfade starts (end of segment minus crossfade duration)
         const crossfadeStartSec = endSec - crossfadeSec;
@@ -659,15 +816,23 @@ export class LoopPreviewer {
 
         debug(`[Previewer] Preview loop point "${label}": playing from ${playFromSec.toFixed(2)}s, crossfade at ${crossfadeStartSec.toFixed(2)}s`);
 
+        const initialSound = new foundry.audio.Sound(this.data.document.path);
         try {
-            // Create and start the first sound
-            this.soundA = new foundry.audio.Sound(this.data.document.path);
-            await this.soundA.load();
+            await initialSound.load();
+            if (!this._isCurrent(generation) || !this.isPreviewingLoop) {
+                this._stopSound(initialSound);
+                return;
+            }
+            this.soundA = initialSound;
             this.isA_Active = true;
 
-            await this.soundA.play({ offset: playFromSec, volume: this._getPreviewVolume(), _fromLoop: true });
+            await initialSound.play({ offset: playFromSec, volume: this._getPreviewVolume(), _fromLoop: true });
+            if (!this._isCurrent(generation) || !this.isPreviewingLoop) {
+                this._stopSound(initialSound);
+                return;
+            }
             this.isPlaying = true;
-            this._tick();
+            this._tick(generation);
 
             // Schedule the crossfade at the right moment
             const delayUntilCrossfade = Math.max(0, (crossfadeStartSec - playFromSec) * 1000);
@@ -675,54 +840,64 @@ export class LoopPreviewer {
             debug(`[Previewer] Crossfade will trigger in ${delayUntilCrossfade}ms`);
 
             this.timeoutIds.push(setTimeout(async () => {
-                if (!this.isPreviewingLoop) return;
+                if (!this._isCurrent(generation) || !this.isPreviewingLoop) return;
 
                 debug("[Previewer] Triggering crossfade now");
 
-                const sourceSound = this.isA_Active ? this.soundA : this.soundB;
-                let targetSound = this.isA_Active ? this.soundB : this.soundA;
+                let targetSound = null;
+                try {
+                    const activeWasA = this.isA_Active;
+                    const sourceSound = activeWasA ? this.soundA : this.soundB;
+                    targetSound = activeWasA ? this.soundB : this.soundA;
+                    if (!sourceSound) return;
 
-                // Create target sound if needed
-                if (!targetSound) {
-                    targetSound = new foundry.audio.Sound(this.data.document.path);
-                    await targetSound.load();
-                    if (this.isA_Active) {
-                        this.soundB = targetSound;
-                    } else {
-                        this.soundA = targetSound;
+                    if (!targetSound) {
+                        const loadedTarget = new foundry.audio.Sound(this.data.document.path);
+                        await loadedTarget.load();
+                        if (!this._isCurrent(generation) || !this.isPreviewingLoop) {
+                            this._stopSound(loadedTarget);
+                            return;
+                        }
+                        targetSound = loadedTarget;
+                        if (activeWasA) this.soundB = targetSound;
+                        else this.soundA = targetSound;
                     }
-                }
 
-                // Start target sound at loop start point
-                const previewVolume = this._getPreviewVolume();
-                await targetSound.play({ offset: startSec, volume: 0, _fromLoop: true });
+                    const previewVolume = this._getPreviewVolume();
+                    await targetSound.play({ offset: startSec, volume: 0, _fromLoop: true });
+                    if (!this._isCurrent(generation) || !this.isPreviewingLoop) {
+                        this._stopSound(targetSound);
+                        return;
+                    }
 
-                // Perform crossfade
-                equalPowerCrossfade(sourceSound, targetSound, crossfadeMs, { targetVolIn: previewVolume });
+                    equalPowerCrossfade(sourceSound, targetSound, safeCrossfadeMs, { targetVolIn: previewVolume });
 
-                // Stop source sound after crossfade completes
-                this.timeoutIds.push(setTimeout(() => {
-                    try { sourceSound.stop(); } catch (_) { }
-                }, crossfadeMs + 100));
+                    this.timeoutIds.push(setTimeout(() => {
+                        if (this._isCurrent(generation)) this._stopSound(sourceSound);
+                    }, safeCrossfadeMs + 100));
 
-                // Switch active sound
-                this.isA_Active = !this.isA_Active;
+                    this.isA_Active = !activeWasA;
 
-                // The total time to wait from the start of the crossfade is the
-                // crossfade duration PLUS the post-fade preview window.
-                const stopDelayMs = crossfadeMs + (PREVIEW_WINDOW * 1000);
+                    const stopDelayMs = safeCrossfadeMs + (PREVIEW_WINDOW * 1000);
+                    debug(`[Previewer] Preview will stop in ${stopDelayMs}ms (crossfade ${safeCrossfadeMs}ms + preview ${PREVIEW_WINDOW * 1000}ms)`);
 
-                debug(`[Previewer] Preview will stop in ${stopDelayMs}ms (crossfade ${crossfadeMs}ms + preview ${PREVIEW_WINDOW * 1000}ms)`);
-
-                // Stop the preview after the crossfade and the final preview window have finished.
-                this.timeoutIds.push(setTimeout(() => {
-                    debug("[Previewer] Preview complete, stopping");
+                    this.timeoutIds.push(setTimeout(() => {
+                        if (!this._isCurrent(generation)) return;
+                        debug("[Previewer] Preview complete, stopping");
+                        this.stopAll(true);
+                    }, stopDelayMs));
+                } catch (err) {
+                    this._stopSound(targetSound);
+                    if (!this._isCurrent(generation)) return;
+                    error("[Previewer] Error during loop point crossfade:", err);
                     this.stopAll(true);
-                }, stopDelayMs));
+                }
 
             }, delayUntilCrossfade));
 
         } catch (err) {
+            this._stopSound(initialSound);
+            if (!this._isCurrent(generation)) return;
             error("[Previewer] Error during loop point preview:", err);
             this.stopAll(true);
         }
@@ -760,8 +935,10 @@ export class LoopPreviewer {
         this.activeDrag.animationFrame = null;
         this.activeDrag.latestEvent = ev;
 
-        $(document).on("mousemove.loopeditor", this._onHandleMouseMove.bind(this));
-        $(document).on("mouseup.loopeditor", this._onHandleMouseUp.bind(this));
+        const $document = $(document);
+        $document.off(this._dragNamespace);
+        $document.on(`mousemove${this._dragNamespace}`, this._boundHandleMouseMove);
+        $document.on(`mouseup${this._dragNamespace}`, this._boundHandleMouseUp);
     }
 
     /**

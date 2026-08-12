@@ -5,9 +5,13 @@
 import { AdvancedShuffle } from "../advanced-shuffle.js";
 import { cancelLoopWithin } from "../internal-loop.js";
 import { PlaybackClock } from "../playback-clock.js";
-import { debug, MODULE_ID } from "../utils.js";
+import { debug, MODULE_ID, PlaylistActionAuthority } from "../utils.js";
+
+let lastShuffleAuthorityId = null;
+let shuffleAuthorityCheckQueued = false;
 
 export function registerShuffleHooks() {
+  lastShuffleAuthorityId = PlaylistActionAuthority.getAuthorizedGMId();
   libWrapper.register(
     MODULE_ID,
     "Playlist.prototype.playbackOrder",
@@ -84,13 +88,52 @@ export function registerShuffleHooks() {
     }
   });
 
-  Hooks.on("stopPlaylist", (playlist) => {
-    PlaybackClock.clear(playlist, "stopPlaylist").catch((err) =>
+  Hooks.on("updatePlaylist", (playlist, changes) => {
+    const nestedFlags = changes?.flags?.[MODULE_ID];
+    const hasStopTransition = Object.prototype.hasOwnProperty.call(
+      changes ?? {},
+      `flags.${MODULE_ID}.stopTransition`
+    ) || Object.prototype.hasOwnProperty.call(nestedFlags ?? {}, "stopTransition");
+    const stopped = changes?.playing === false || hasStopTransition;
+    if (!stopped) return;
+
+    PlaybackClock.clear(playlist, "playlist stopped").catch((err) =>
       debug(`[Clock] Failed to clear stopped playlist clock:`, err?.message ?? err)
     );
     if (playlist.mode === CONST.PLAYLIST_MODES.SHUFFLE) {
       AdvancedShuffle.reset(playlist);
       debug(`[Shuffle] Reset state for "${playlist.name}" on stop`);
     }
+  });
+
+  const queueShuffleAuthorityCheck = () => {
+    if (shuffleAuthorityCheckQueued) return;
+    shuffleAuthorityCheckQueued = true;
+    globalThis.setTimeout?.(() => {
+      shuffleAuthorityCheckQueued = false;
+      const nextAuthorityId = PlaylistActionAuthority.getAuthorizedGMId();
+      if (nextAuthorityId === lastShuffleAuthorityId) return;
+      const previousAuthorityId = lastShuffleAuthorityId;
+      lastShuffleAuthorityId = nextAuthorityId;
+
+      // A newly elected primary GM may inherit playback mid-cycle. Reset every
+      // client's local cache to the same deterministic cycle before it advances.
+      if (!AdvancedShuffle.isEnabled()) return;
+      for (const playlist of Array.from(game.playlists ?? [])) {
+        if (playlist.mode !== CONST.PLAYLIST_MODES.SHUFFLE) continue;
+        AdvancedShuffle.reset(playlist);
+      }
+      debug(`[Shuffle] Reset local cycles after authority changed ${previousAuthorityId ?? "none"} -> ${nextAuthorityId ?? "none"}.`);
+    }, 0);
+  };
+
+  Hooks.on("userConnected", (user) => {
+    if (!user?.isGM) return;
+    queueShuffleAuthorityCheck();
+  });
+  Hooks.on("updateUser", (user, changes) => {
+    if (!Object.prototype.hasOwnProperty.call(changes ?? {}, "role")) return;
+    // Role promotion or demotion can both change the elected authority.
+    queueShuffleAuthorityCheck();
   });
 }

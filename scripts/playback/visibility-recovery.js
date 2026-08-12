@@ -20,7 +20,12 @@ export function registerVisibilityRecovery() {
     for (const playlist of game.playlists) {
       if (!playlist.playing) continue;
 
-      if (State.isPlaylistCrossfading(playlist) && !State.getCrossfadeTimer(playlist)) {
+      const crossfadeSession = State.getCrossfadeSession(playlist);
+      if (
+        State.isPlaylistCrossfading(playlist) &&
+        !State.getCrossfadeTimer(playlist) &&
+        !crossfadeSession
+      ) {
         debug(`[Visibility] Clearing stale crossfading flag for "${playlist.name}"`);
         State.clearPlaylistCrossfading(playlist);
       }
@@ -36,7 +41,12 @@ export function registerVisibilityRecovery() {
       }
 
       const mode = Flags.getPlaybackMode(playlist);
-      if (mode.crossfade && !State.getCrossfadeTimer(playlist)) {
+      if (
+        mode.crossfade &&
+        !State.getCrossfadeTimer(playlist) &&
+        !State.getCrossfadeSession(playlist) &&
+        !State.isPlaylistCrossfading(playlist)
+      ) {
         const currentlyPlaying = playlist.sounds.find((s) =>
           s.playing && !Flags.getSoundFlag(s, "isSilenceGap")
         );

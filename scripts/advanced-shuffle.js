@@ -8,6 +8,7 @@
 
 import { MODULE_ID, debug, logFeature, LogSymbols } from "./utils.js";
 import { State } from "./state-manager.js";
+import { createDeterministicRandom } from "./core-helpers.js";
 
 // =========================================================================
 // Shuffle Pattern Types
@@ -104,12 +105,23 @@ function getPlayableTrackIds(playlist) {
  * @param {Array} array Array to shuffle (modified in place)
  * @returns {Array} The shuffled array
  */
-function fisherYatesShuffle(array) {
+function fisherYatesShuffle(array, random = Math.random) {
     for (let i = array.length - 1; i > 0; i--) {
-        const j = Math.floor(Math.random() * (i + 1));
+        const j = Math.floor(random() * (i + 1));
         [array[i], array[j]] = [array[j], array[i]];
     }
     return array;
+}
+
+function createCycleRandom(playlist, state, cycleNumber) {
+    // Foundry publishes Playlist.seed so all clients share the same shuffle
+    // generation. The module adds its pattern/cycle to that synchronized seed.
+    return createDeterministicRandom([
+        playlist?.id ?? "playlist",
+        playlist?.seed ?? 0,
+        state?.pattern ?? "shuffle",
+        cycleNumber,
+    ].join(":"));
 }
 
 /**
@@ -137,9 +149,13 @@ class ExhaustiveShuffle {
         if (state.currentCycle.length === 0 || state.playedThisCycle.size >= allTrackIds.length) {
             logFeature(LogSymbols.LOOP, 'Shuffle', `Exhaustive: New cycle for "${playlist.name}" (Cycle #${state.cycleNumber + 1})`);
 
-            state.currentCycle = fisherYatesShuffle([...allTrackIds]);
+            const nextCycle = state.cycleNumber + 1;
+            state.currentCycle = fisherYatesShuffle(
+                [...allTrackIds],
+                createCycleRandom(playlist, state, nextCycle)
+            );
             state.playedThisCycle.clear();
-            state.cycleNumber++;
+            state.cycleNumber = nextCycle;
             state.lastShuffleTime = Date.now();
         }
 
@@ -212,13 +228,16 @@ class WeightedRandomShuffle {
             const order = [];
             const availableTracks = [...allTrackIds];
 
+            const nextCycle = state.cycleNumber + 1;
+            const random = createCycleRandom(playlist, state, nextCycle);
             while (availableTracks.length > 0) {
-                const selected = this._selectWeightedRandom(availableTracks, state.trackWeights);
+                const selected = this._selectWeightedRandom(availableTracks, state.trackWeights, random);
                 order.push(selected);
                 availableTracks.splice(availableTracks.indexOf(selected), 1);
             }
 
             state.currentCycle = order;
+            state.cycleNumber = nextCycle;
             logFeature(LogSymbols.LOOP, 'Shuffle', `Weighted Random: Generated order for "${playlist.name}"`);
         }
 
@@ -232,14 +251,14 @@ class WeightedRandomShuffle {
      * @param {Map<string, number>} weights - Map of track ID to weight (0.1-1.0)
      * @returns {string} Selected track ID
      */
-    static _selectWeightedRandom(tracks, weights) {
+    static _selectWeightedRandom(tracks, weights, random = Math.random) {
         const totalWeight = tracks.reduce((sum, id) => sum + (weights.get(id) || this.MAX_WEIGHT), 0);
-        let random = Math.random() * totalWeight;
+        let roll = random() * totalWeight;
 
         for (const trackId of tracks) {
             const weight = weights.get(trackId) || this.MAX_WEIGHT;
-            random -= weight;
-            if (random <= 0) {
+            roll -= weight;
+            if (roll <= 0) {
                 return trackId;
             }
         }
@@ -367,13 +386,16 @@ class RoundRobinShuffle {
             const order = [];
             const sortedCounts = Array.from(groups.keys()).sort((a, b) => a - b);
 
+            const nextCycle = state.cycleNumber + 1;
+            const random = createCycleRandom(playlist, state, nextCycle);
             sortedCounts.forEach(count => {
                 const group = groups.get(count);
-                fisherYatesShuffle(group);
+                fisherYatesShuffle(group, random);
                 order.push(...group);
             });
 
             state.currentCycle = order;
+            state.cycleNumber = nextCycle;
             logFeature(LogSymbols.LOOP, 'Shuffle', `Round-Robin: Generated order for "${playlist.name}"`);
         }
 

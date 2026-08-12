@@ -20,6 +20,7 @@ import {
   activateCrossfadeSession,
   createCrossfadeSession,
   isCurrentCrossfadeSession,
+  isLatestCrossfadeSession,
 } from "./playback/transition-session.js";
 import { State } from "./state-manager.js";
 
@@ -147,35 +148,36 @@ export async function prepareIncomingCrossfadeMedia(ps) {
  * @param {boolean} [options.recovery=false] Allow document advancement even if the owner media clock stalled.
  * @param {PlaylistSound} [options.incomingSound=null] Explicit incoming sound for manual targeted crossfades.
  * @param {string} [options.reason="auto"] Diagnostic reason for the transition.
+ * @returns {Promise<boolean>} Whether a transition or terminal stop was successfully committed.
  */
 export async function performCrossfade(playlist, soundToFade, { recovery = false, incomingSound = null, reason = "auto" } = {}) {
   const soundOut = soundToFade?.sound;
-  if (!playlist || !soundToFade) return;
+  if (!playlist || !soundToFade) return false;
 
   // Automatic transitions are authored by one deterministic GM. Explicit
   // user actions remain available to any GM who owns the playlist.
   const automatic = recovery || reason === "auto";
   if (!playlist.isOwner || !game.user?.isGM || (automatic && !PlaylistActionAuthority.isAuthorizedGM())) {
     debug(`[CF] Non-authority client skipping crossfade execution for "${soundToFade.name}".`);
-    return;
+    return false;
   }
 
   if (State.isPlaylistCrossfading(playlist)) {
     debug(`[CF] Skipping ${reason} crossfade for "${soundToFade.name}" because another crossfade is already active.`);
-    return;
+    return false;
   }
 
   if (!soundToFade.playing || (!soundOut?.playing && !recovery)) {
     debug(`[CF] Skipping crossfade for "${soundToFade.name}" because it is no longer actively playing.`);
     cancelCrossfade(playlist);
-    return;
+    return false;
   }
   if (recovery && !soundOut?.playing) {
     debug(`[CF] Recovery crossfade proceeding for "${soundToFade.name}" without live outgoing media (${reason}).`);
   }
 
   const fadeMs = Flags.getCrossfadeDuration(playlist);
-  if (fadeMs <= 0) return;
+  if (fadeMs <= 0) return false;
 
   cancelCrossfade(playlist);
 
@@ -189,7 +191,7 @@ export async function performCrossfade(playlist, soundToFade, { recovery = false
 
   if (soundToPlay?.id === soundToFade.id) {
     debug(`[CF] Skipping crossfade because incoming and outgoing sound are the same.`);
-    return;
+    return false;
   }
 
   if (!soundToPlay && !incomingSound) {
@@ -202,7 +204,14 @@ export async function performCrossfade(playlist, soundToFade, { recovery = false
   if (!soundToPlay) {
     debug(`[CF] No next track found. Fading out "${soundToFade.name}" and stopping.`);
     const stopPlaylist = () => {
-      if (!playlist.playing) return;
+      // The terminal fade is delayed. A manual play during that window owns
+      // the playlist now and must not be stopped by this stale completion.
+      const hasReplacement = playlist.sounds.some((sound) =>
+        sound.id !== soundToFade.id &&
+        sound.playing &&
+        !Flags.getSoundFlag(sound, "isSilenceGap")
+      );
+      if (!playlist.playing || hasReplacement) return;
       Promise.resolve(playlist.stopAll()).catch((err) =>
         debug(`[CF] Failed to stop "${playlist.name}" at playlist end:`, err?.message ?? err)
       );
@@ -215,7 +224,7 @@ export async function performCrossfade(playlist, soundToFade, { recovery = false
     } else if (playlist.playing) {
       stopPlaylist();
     }
-    return;
+    return true;
   }
 
   // 2. Start playing the next track directly, bypassing Foundry's "stop current first" behavior.
@@ -240,16 +249,20 @@ export async function performCrossfade(playlist, soundToFade, { recovery = false
     },
   });
   let crossfadeSuccessful = false;
+  const incomingWasPlaying = soundToPlay.playing === true;
+  let incomingDocumentCommitted = false;
+  let outgoingDocumentCommitted = false;
 
   try {
     // Update the document to reflect the new playing state without triggering stopSound
     await soundToPlay.update({ playing: true, pausedTime: null }, { render: false });
+    incomingDocumentCommitted = true;
 
     // Directly load and play the audio, bypassing native sync/autoplay.
     const soundIn = await prepareIncomingCrossfadeMedia(soundToPlay);
     if (!isCurrentCrossfadeSession(transitionSession)) {
       if (soundIn?.playing) safeStop(soundIn, "stale incoming crossfade media");
-      return;
+      return false;
     }
     transitionSession.incomingSound = soundIn;
     transitionSession.incomingTargetVolume = targetVolIn;
@@ -303,7 +316,7 @@ export async function performCrossfade(playlist, soundToFade, { recovery = false
       fadeTokens,
     })) {
       if (soundIn?.playing) safeStop(soundIn, "cancelled crossfade activation");
-      return;
+      return false;
     }
 
     // 4. Replicate the crossfade to non-GM clients BEFORE marking the outgoing sound
@@ -318,10 +331,24 @@ export async function performCrossfade(playlist, soundToFade, { recovery = false
       gmId: game.user.id,
     });
 
+    // Pause/stop or a replacement transition may settle this session while
+    // the replication document update is in flight. A normally completed
+    // zero-duration session may still finish the outgoing document commit.
+    const currentSession = State.getCrossfadeSession(playlist);
+    const completedWithoutReplacement =
+      !currentSession &&
+      isLatestCrossfadeSession(transitionSession) &&
+      transitionSession.settlementMode === "complete" &&
+      ["settling", "completed"].includes(transitionSession.status);
+    if (!isCurrentCrossfadeSession(transitionSession) && !completedWithoutReplacement) {
+      return false;
+    }
+
     // 5. Immediately update the outgoing sound's document state for UI purposes.
     //    The audio continues playing/fading, but the UI shows the new track as current.
     //    Omit render: false so Foundry re-renders the playlist UI on ALL clients.
     await soundToFade.update({ playing: false, pausedTime: null });
+    outgoingDocumentCommitted = true;
 
     crossfadeSuccessful = true;
 
@@ -331,8 +358,28 @@ export async function performCrossfade(playlist, soundToFade, { recovery = false
   } finally {
     if (!crossfadeSuccessful) {
       await transitionSession?.settle({ mode: "cancel", reason: "crossfade did not commit" });
+      if (
+        incomingDocumentCommitted &&
+        !incomingWasPlaying &&
+        !outgoingDocumentCommitted &&
+        isLatestCrossfadeSession(transitionSession) &&
+        transitionSession.settlementMode !== "complete" &&
+        soundToPlay.playing === true &&
+        soundToFade.playing === true
+      ) {
+        try {
+          await soundToPlay.update(
+            { playing: false, pausedTime: null },
+            { render: false, _sosCrossfadeRollback: true }
+          );
+          debug(`[CF] Rolled back incoming document "${soundToPlay.name}" after unsuccessful commit.`);
+        } catch (rollbackError) {
+          error(`[Crossfade] Failed to roll back incoming document "${soundToPlay.name}":`, rollbackError);
+        }
+      }
     }
   }
+  return crossfadeSuccessful;
 }
 
 /**
