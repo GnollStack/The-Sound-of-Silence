@@ -87,12 +87,12 @@
 
 <div class="sos-transport-row">
     <div class="sos-transport-controls">
-        {{#if isOwner}}
+        {{#if isOwner}}{{#unless sos.isSilenceGap}}
         <button type="button" class="sos-transport-btn icon fa-solid fa-arrows-rotate
                 {{#unless repeat}}inactive{{/unless}}"
                 data-action="soundRepeat" data-tooltip
                 aria-label="{{ localize "PLAYLIST.SoundLoop" }}"></button>
-        {{/if}}
+        {{/unless}}{{/if}}
 
         {{#if sos.isGM}}
         <button type="button" class="sos-transport-btn sos-toggle {{#if sos.silenceEnabled}}active{{/if}} {{#if sos.soundscapeActive}}disabled{{/if}}"
@@ -149,7 +149,7 @@
         {{#if pause.paused}}
         <button type="button" class="sos-transport-btn pause icon {{ play.icon }}"
                 data-action="soundPlay"
-                {{#unless isOwner}}disabled{{/unless}} data-tooltip
+                {{ disabled play.disabled }} data-tooltip
                 aria-label="{{ localize play.label }}"></button>
         {{else}}
         <button type="button" class="sos-transport-btn pause icon {{ pause.icon }}"

@@ -107,8 +107,10 @@ export function syncPersonalTrackVolumeControlsForPlaylist(playlist, reason = "p
 export function syncEmbeddedSoundVolumeControls(playlist, changes, reason = "embedded volume update") {
   if (!Array.isArray(changes?.sounds)) return;
 
+  let hasVolumeChange = false;
   for (const soundChange of changes.sounds) {
     if (!Object.prototype.hasOwnProperty.call(soundChange ?? {}, "volume")) continue;
+    hasVolumeChange = true;
     const soundDoc = playlist?.sounds?.get(soundChange._id);
     if (soundDoc) {
       syncSoundVolumeControls(soundDoc, reason);
@@ -116,7 +118,7 @@ export function syncEmbeddedSoundVolumeControls(playlist, changes, reason = "emb
     }
   }
 
-  applyPersonalAudioMixToActiveSounds(playlist);
+  if (hasVolumeChange) applyPersonalAudioMixToActiveSounds(playlist);
 }
 
 export function syncPlaylistVolumeControls(playlist, reason = "playlist volume update") {

@@ -209,6 +209,16 @@ export function registerPlaylistUiHooks() {
         const { sound, $element: $soundLi, config: cfg } = data;
 
         const inNowPlaying = !!$soundLi.closest(".currently-playing").length;
+        if (Flags.getSoundFlag(sound, "isSilenceGap")) {
+            // The temporary gap is represented in Currently Playing, but it
+            // must never appear as a selectable/resumable playlist track.
+            if (!inNowPlaying) $soundLi.attr("hidden", true);
+            $soundLi
+                .find('[data-action="soundPlay"], [data-action="soundPause"], [data-action="soundRepeat"]')
+                .prop("disabled", true)
+                .attr("disabled", "disabled");
+            continue;
+        }
         const owner = sound.isOwner;
         const $controls = $soundLi.find("div.sound-controls.flexrow").first();
         if (!$controls.length) continue;

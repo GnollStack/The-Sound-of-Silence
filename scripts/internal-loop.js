@@ -48,8 +48,11 @@ function restoreStandardTransitionScheduling(ps) {
  * Creates and starts a new LoopingSound instance for a given PlaylistSound.
  * This function is idempotent; it will cancel any existing looper for the sound before creating a new one.
  * @param {PlaylistSound} ps The PlaylistSound document to create a loop for.
+ * @param {object} [options]
+ * @param {object|null} [options.initialLoopStart=null] Descriptor for an initial
+ *   Sound.play call which started at the first loop segment.
  */
-export function scheduleLoopWithin(ps) {
+export function scheduleLoopWithin(ps, { initialLoopStart = null } = {}) {
   // A looper can only be scheduled for a sound that is currently playing.
   if (!ps?.playing) {
     debug(`[Manager] Skipping loop schedule for "${ps.name}" because it is not playing.`);
@@ -80,7 +83,7 @@ export function scheduleLoopWithin(ps) {
 
   debug(`[Manager] Scheduling a new LoopingSound for "${ps.name}".`);
   // This next line is important. We pass the already-validated `cfg` object.
-  const looper = new LoopingSound(ps, cfg);
+  const looper = new LoopingSound(ps, cfg, { initialLoopStart });
   State.setActiveLooper(ps, looper);  //  Use State manager
 
   // Start the looper with a small delay to avoid race conditions with Foundry's audio system.

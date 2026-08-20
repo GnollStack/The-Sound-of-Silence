@@ -25,6 +25,11 @@ import {
 } from "../utils.js";
 import { debugPlaybackTrace } from "../playback-recovery.js";
 import { cancelSilentGap } from "./playlist-actions.js";
+import {
+  getAdjacentPlayableSound,
+  getPlayableSoundsInOrder,
+  hasSilenceGapDocuments,
+} from "./playable-order.js";
 
 const AudioTimeout = foundry.audio.AudioTimeout;
 
@@ -80,12 +85,9 @@ function getManualCrossfadeTarget(playlist, currentSound, soundId, direction) {
   const currentId = soundId || currentSound?.id || null;
   if (!currentId) return null;
 
-  const target = direction === -1
-    ? playlist._getPreviousSound(currentId)
-    : playlist._getNextSound(currentId);
+  const target = getAdjacentPlayableSound(playlist, currentId, direction);
 
   if (!target || target.id === currentSound?.id) return null;
-  if (Flags.getSoundFlag(target, "isSilenceGap")) return null;
   return target;
 }
 
@@ -223,9 +225,6 @@ export function registerPlaylistCommandWrappers() {
       if (sourceSound) {
         soundsToStopSet.add(sourceSound);
       }
-      const soundsToStop = Array.from(soundsToStopSet);
-      const soundIdsToStop = soundsToStop.map((s) => s.id);
-
       await cleanupPlaylistState(this, {
         cleanSilence: true,
         cleanCrossfade: true,
@@ -244,6 +243,15 @@ export function registerPlaylistCommandWrappers() {
           debug(`[Stop] Failed to remove stale silent gap "${gap?.name}":`, err?.message ?? err);
         }
       }
+
+      // A failed delete must never leave an active, reload-recoverable gap.
+      // Include every surviving temporary document in the same authoritative
+      // stopped update and local media cleanup as real tracks.
+      for (const sound of Array.from(this.sounds ?? [])) {
+        if (Flags.getSoundFlag(sound, "isSilenceGap")) soundsToStopSet.add(sound);
+      }
+      const soundsToStop = Array.from(soundsToStopSet);
+      const soundIdsToStop = soundsToStop.map((s) => s.id);
 
       const updates = soundIdsToStop.map((id) => ({
         _id: id,
@@ -306,8 +314,29 @@ export function registerPlaylistCommandWrappers() {
         args,
       });
 
-      if (!Flags.getSoundFlag(soundToPlay, "isSilenceGap")) {
+      const isSilenceGap = Flags.getSoundFlag(soundToPlay, "isSilenceGap");
+      if (!isSilenceGap) {
         State.clearStoppingFlag(playlist);
+      }
+
+      const ownedGap = State.getSilenceState(playlist)?.gap;
+      if (isSilenceGap && ownedGap?.id !== soundToPlay?.id) {
+        // Temporary documents are never user-playable tracks. This blocks a
+        // paused/stale gap from being resumed without a wall-clock owner.
+        try {
+          await soundToPlay.update?.({ playing: false, pausedTime: null }, { noHook: true });
+        } catch (err) {
+          debug(`[Silence] Failed to stop an unowned gap selected for playback:`, err?.message ?? err);
+        }
+        if (soundToPlay?.sound?.playing) safeStop(soundToPlay.sound, "reject unowned silence gap");
+        return playlist;
+      }
+
+      // A direct real-track selection owns playback immediately. Cancel the
+      // old gap before any mode-specific early return so a later timer cannot
+      // advance a second time after crossfade or soundscape toggles.
+      if (State.hasSilenceState(playlist) && !isSilenceGap) {
+        await cancelSilentGap(playlist);
       }
 
       if (State.isPlaylistCrossfading(playlist)) {
@@ -316,13 +345,6 @@ export function registerPlaylistCommandWrappers() {
 
       if (Flags.getPlaybackMode(playlist).soundscape) {
         return await wrapped.call(playlist, soundToPlay, ...args);
-      }
-
-      if (
-        State.hasSilenceState(playlist) &&
-        !soundToPlay.getFlag(MODULE_ID, "isSilenceGap")
-      ) {
-        await cancelSilentGap(playlist);
       }
 
       const useCrossfade = Flags.getPlaybackMode(playlist).crossfade;
@@ -352,9 +374,42 @@ export function registerPlaylistAdvanceWrappers() {
       const playlist = this;
       debug(`[playNext MIXED] Advancing playlist "${playlist.name}".`);
 
+      const silenceState = State.getSilenceState(playlist);
+      const silenceTransitionActive = silenceState &&
+        silenceState.terminalOutcome !== "natural" &&
+        !silenceState.advancementComplete;
+      if (silenceTransitionActive) {
+        const [soundId = null, options = {}] = args;
+        const direction = Number(options?.direction) === -1 ? -1 : 1;
+        const sourceSoundId = silenceState.sourceSound?.id ?? silenceState.sourceSoundId ?? soundId;
+        const target = getAdjacentPlayableSound(playlist, sourceSoundId, direction);
+        await cancelSilentGap(playlist);
+        if (target) return await playlist.playSound(target);
+        return await playlist.stopAll();
+      }
+
       if (Flags.getPlaybackMode(playlist).soundscape) {
         debug(`[Soundscape] playNext no-op for "${playlist.name}".`);
         return;
+      }
+
+      // A stale gap can survive a rejected document deletion without local
+      // state. Never pass raw playbackOrder navigation to Foundry while such
+      // a marker exists, because native Previous/Next can select it.
+      if (hasSilenceGapDocuments(playlist) && isSequentialOrShuffle(playlist)) {
+        const [soundId = null, options = {}] = args;
+        const direction = Number(options?.direction) === -1 ? -1 : 1;
+        const activeGap = Array.from(playlist.sounds ?? []).find((sound) =>
+          sound.playing && Flags.getSoundFlag(sound, "isSilenceGap")
+        );
+        const activeRealSound = Array.from(playlist.sounds ?? []).find((sound) =>
+          sound.playing && !Flags.getSoundFlag(sound, "isSilenceGap")
+        );
+        const sourceSoundId = activeGap?.getFlag?.(MODULE_ID, "gapSourceSoundId") ??
+          soundId ?? activeRealSound?.id;
+        const target = getAdjacentPlayableSound(playlist, sourceSoundId, direction);
+        if (target) return await playlist.playSound(target);
+        return await playlist.stopAll();
       }
 
       const useCrossfade = Flags.getPlaybackMode(this).crossfade;
@@ -413,6 +468,7 @@ export function registerPlaylistAdvanceWrappers() {
         args,
       });
       State.clearStoppingFlag(this);
+      if (State.hasSilenceState(this)) await cancelSilentGap(this);
       if (Flags.getPlaybackMode(this).soundscape) {
         const soundUpdates = this.sounds.map((sound) => {
           const isSilenceGap = Flags.getSoundFlag(sound, "isSilenceGap");
@@ -448,10 +504,48 @@ export function registerPlaylistAdvanceWrappers() {
         return result;
       }
 
-      const result = await wrapped.call(this, ...args);
+      let result;
+      if (hasSilenceGapDocuments(this)) {
+        const playableSounds = getPlayableSoundsInOrder(this);
+        const paused = playableSounds.find((sound) => Number(sound.pausedTime) > 0);
+        const first = paused ?? playableSounds[0] ?? null;
+        const sequential = isSequentialOrShuffle(this);
+        const simultaneous = this.mode === CONST.PLAYLIST_MODES.SIMULTANEOUS;
+        if (this.mode === CONST.PLAYLIST_MODES.DISABLED) {
+          // Native Soundboard Play All leaves individually playing tracks
+          // alone. Stop only temporary markers; do not turn this into Stop All.
+          const gapUpdates = Array.from(this.sounds ?? [])
+            .filter((sound) => Flags.getSoundFlag(sound, "isSilenceGap"))
+            .map((sound) => ({ _id: sound.id, playing: false, pausedTime: null }));
+          result = await this.update({ playing: false, sounds: gapUpdates });
+        } else if (sequential || simultaneous) {
+          const shouldPlayPlaylist = Boolean(first);
+          const soundUpdates = Array.from(this.sounds ?? []).map((sound) => {
+            const isGap = Flags.getSoundFlag(sound, "isSilenceGap");
+            const playing = isGap
+              ? false
+              : (simultaneous || (sequential && sound.id === first?.id));
+            return {
+              _id: sound.id,
+              playing,
+              ...(isGap ? { pausedTime: null } : {}),
+            };
+          });
+          result = await this.update({
+            playing: shouldPlayPlaylist,
+            sounds: soundUpdates,
+          });
+        } else {
+          result = await wrapped.call(this, ...args);
+        }
+      } else {
+        result = await wrapped.call(this, ...args);
+      }
 
       AudioTimeout.wait(0).then(() => {
-        let first = this.sounds.find((s) => s.playing);
+        let first = this.sounds.find((s) =>
+          s.playing && !Flags.getSoundFlag(s, "isSilenceGap")
+        );
         if (Array.isArray(first)) first = first.pop();
         if (first) {
           const loopScheduled = scheduleLoopWithin(first);
@@ -467,6 +561,7 @@ export function registerPlaylistAdvanceWrappers() {
     MODULE_ID,
     "Playlist.prototype.cycleMode",
     async function () {
+      if (State.hasSilenceState(this)) await cancelSilentGap(this);
       const inSoundscape =
         this.mode === CONST.PLAYLIST_MODES.DISABLED &&
         !!this.getFlag(MODULE_ID, "soundscapeMode");

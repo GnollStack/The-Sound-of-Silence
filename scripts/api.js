@@ -203,9 +203,14 @@ class SoundOfSilenceAPI {
             throw new TypeError("Expected Playlist document");
         }
 
-        const current = fromSound || playlist.sounds.find(s => s.playing);
+        const current = fromSound || playlist.sounds.find((sound) =>
+            sound.playing && !Flags.getSoundFlag(sound, "isSilenceGap")
+        );
         if (!current) {
             throw new Error("No sound currently playing");
+        }
+        if (Flags.getSoundFlag(current, "isSilenceGap")) {
+            throw new Error("Temporary silence gaps cannot be crossfade sources");
         }
 
         return performCrossfade(playlist, current, { reason: "api" });

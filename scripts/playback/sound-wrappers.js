@@ -4,6 +4,8 @@
  */
 import {
   cancelActiveFade,
+  releaseFadeInReservation,
+  reserveFadeIn,
   scheduleEndOfTrackFade,
 } from "../audio-fader.js";
 import { cancelCrossfade, scheduleCrossfade } from "../cross-fade.js";
@@ -23,6 +25,7 @@ import {
 import { settleCrossfadeSession } from "./transition-session.js";
 import { State } from "../state-manager.js";
 import { AdvancedShuffle } from "../advanced-shuffle.js";
+import { patchSilenceGapMediaClock } from "../silence.js";
 import {
   debug,
   ensureAudioContext,
@@ -31,12 +34,60 @@ import {
   safeStop,
 } from "../utils.js";
 
-function isFreshPlaybackStart(playlistSound) {
-  return !Number(playlistSound?.pausedTime);
+const SKIP_INTRO_DECLICK_MS = 10;
+
+function getPlaybackStartState(playlistSound, sound) {
+  const rawMediaPausedTime = sound?.pausedTime;
+  const mediaPausedTime = Number(rawMediaPausedTime);
+  if (
+    rawMediaPausedTime !== null &&
+    rawMediaPausedTime !== undefined &&
+    Number.isFinite(mediaPausedTime) &&
+    mediaPausedTime >= 0
+  ) {
+    return { isResume: true, offset: mediaPausedTime, useNativeMediaOffset: true };
+  }
+
+  const rawDocumentPausedTime = playlistSound?.pausedTime;
+  const documentPausedTime = Number(rawDocumentPausedTime);
+  if (Number.isFinite(documentPausedTime) && documentPausedTime > 0) {
+    return { isResume: true, offset: documentPausedTime, useNativeMediaOffset: false };
+  }
+
+  const pausedLooper = State.getActiveLooper(playlistSound);
+  if (pausedLooper?.pausedSnapshot) {
+    const snapshotOffset = Number(pausedLooper.pausedSnapshot.activeOffset);
+    const offset = rawDocumentPausedTime !== null &&
+      rawDocumentPausedTime !== undefined &&
+      Number.isFinite(documentPausedTime) &&
+      documentPausedTime >= 0
+      ? documentPausedTime
+      : (Number.isFinite(snapshotOffset) && snapshotOffset >= 0 ? snapshotOffset : 0);
+    return { isResume: true, offset, useNativeMediaOffset: false };
+  }
+
+  return { isResume: false, offset: null, useNativeMediaOffset: false };
 }
 
-function _handleShuffleOnPlay(ps) {
-  if (ps.parent?.mode === CONST.PLAYLIST_MODES.SHUFFLE && !ps.pausedTime) {
+function getInitialLoopPlaybackOffset(playlistSound, options = {}, { isResume = false } = {}) {
+  if (isResume) return null;
+  if (options?.offset !== undefined && options?.offset !== null) return null;
+
+  const loopConfig = Flags.getLoopConfig(playlistSound);
+  if (!Flags.isLoopConfigActive(loopConfig) || loopConfig.startFromBeginning !== false) {
+    return null;
+  }
+
+  const offset = Number(loopConfig.segments?.[0]?.startSec);
+  return Number.isFinite(offset) && offset >= 0 ? offset : null;
+}
+
+function _handleShuffleOnPlay(ps, sound, { isResume = false } = {}) {
+  if (Flags.getSoundFlag(ps, "isSilenceGap")) {
+    patchSilenceGapMediaClock(ps, sound);
+    return;
+  }
+  if (ps.parent?.mode === CONST.PLAYLIST_MODES.SHUFFLE && !isResume) {
     debug(
       `[Shuffle] Marking track as played via Sound.play wrapper: "${ps.name}"`
     );
@@ -44,12 +95,30 @@ function _handleShuffleOnPlay(ps) {
   }
 }
 
-function _applyPreMute(sound, ps, fadeInMs, targetVolume) {
-  if (fadeInMs > 0 && isFreshPlaybackStart(ps)) {
-    sound.volume = 0;
-  } else {
-    sound.volume = targetVolume;
-  }
+function _consumeFadeInDuration(ps) {
+  const fadeOverride = ps?._sos_fadeInOverride;
+  if (typeof fadeOverride !== "undefined") delete ps._sos_fadeInOverride;
+
+  const configured = typeof fadeOverride === "number"
+    ? fadeOverride
+    : Flags.getPlaylistFlag(ps?.parent, "fadeIn");
+  const duration = Number(configured);
+  return Number.isFinite(duration) ? Math.max(0, duration) : 0;
+}
+
+function _getStartupFadeDuration(ps, configuredFadeInMs, {
+  fromCrossfade = false,
+  initialLoopStart = null,
+  isResume = false,
+} = {}) {
+  if (
+    fromCrossfade ||
+    isResume ||
+    Flags.getSoundFlag(ps, "isSilenceGap")
+  ) return 0;
+
+  if (configuredFadeInMs > 0) return configuredFadeInMs;
+  return Number(initialLoopStart?.offset) > 0 ? SKIP_INTRO_DECLICK_MS : 0;
 }
 
 function _isSequentialOrShuffle(playlist) {
@@ -111,21 +180,69 @@ function _preparePauseSync(ps) {
   return true;
 }
 
-function _schedulePostPlayActions(ps, sound, { fromCrossfade = false } = {}) {
+function _schedulePostPlayActions(ps, sound, {
+  fadeInMs = 0,
+  fromCrossfade = false,
+  initialLoopStart = null,
+  isResume = false,
+  resumeOffset = null,
+  startupFadeToken = null,
+  targetVolume = null,
+} = {}) {
   const playlist = ps.parent;
-  if (!fromCrossfade && ps?.playing !== true) {
+  const tokenWasOvertaken = startupFadeToken &&
+    !State.isCurrentFadeToken(sound, startupFadeToken);
+  const lifecycleWasOvertaken =
+    State.isPlaylistStopping(playlist) ||
+    State.isPlaylistCrossfading(playlist);
+  if (!fromCrossfade && (
+    lifecycleWasOvertaken ||
+    ps?.playing !== true ||
+    ps?.sound !== sound ||
+    sound?.playing !== true
+  )) {
+    releaseFadeInReservation(sound, startupFadeToken);
     const pendingFade = State.getEndOfTrackFade(ps);
     if (pendingFade) {
       pendingFade.cancel?.();
       State.clearEndOfTrackFade(ps);
     }
     if (sound?.playing) safeStop(sound, "stale document post-play");
-    debug(`[PostPlay] Skipping post-play actions for "${ps.name}" because the document is no longer playing.`);
+    debug(`[PostPlay] Skipping post-play actions for "${ps.name}" because its playback generation is no longer current.`);
     return;
   }
 
-  const isResume = Number.isFinite(ps.pausedTime);
-  const resumeOffset = isResume ? Number(ps.pausedTime) : null;
+  if (!fromCrossfade && tokenWasOvertaken) {
+    // A newer fade may legitimately have claimed the same live Sound while
+    // native play was pending. Do not stop it or schedule the stale startup
+    // curve; retain ordinary clock/loop work and let the newer owner control
+    // gain until its own token clears.
+    releaseFadeInReservation(sound, startupFadeToken);
+    startupFadeToken = null;
+    fadeInMs = 0;
+    debug(`[PostPlay] Startup fade for "${ps.name}" was superseded by a newer fade owner.`);
+  }
+
+  // The temporary silence document is a wall-clock marker, not a real
+  // playlist track. Its lifecycle is owned entirely by silence.js.
+  if (Flags.getSoundFlag(ps, "isSilenceGap")) {
+    releaseFadeInReservation(sound, startupFadeToken);
+    return;
+  }
+
+  if (fadeInMs > 0 && !isResume && !fromCrossfade) {
+    applyFadeIn(playlist, ps, {
+      durationMs: fadeInMs,
+      sound,
+      startupToken: startupFadeToken,
+      targetVolume,
+    }).catch((err) => {
+      debug(`[FadeIn] Error during fade-in for "${ps.name}":`, err?.message ?? err);
+    });
+  } else {
+    releaseFadeInReservation(sound, startupFadeToken);
+  }
+
   const loopConfig = Flags.getLoopConfig(ps);
   const playbackMode = Flags.getPlaybackMode(playlist);
   let loopScheduled = false;
@@ -143,16 +260,7 @@ function _schedulePostPlayActions(ps, sound, { fromCrossfade = false } = {}) {
     resumeLoopWithin(ps);
   } else {
     cancelLoopWithin(ps, { quiet: true, restorePlaybackHandlers: false });
-    loopScheduled = scheduleLoopWithin(ps);
-  }
-
-  const fadeInOverride = typeof ps?._sos_fadeInOverride === "number" ? ps._sos_fadeInOverride : null;
-  const fadeInMs = fadeInOverride ?? Flags.getPlaylistFlag(playlist, "fadeIn");
-  if (fadeInMs > 0 && !ps?.getFlag(MODULE_ID, "isSilenceGap") && !fromCrossfade) {
-    const targetVolume = Flags.resolveTargetVolume(ps);
-    applyFadeIn(playlist, ps, { targetVolume }).catch((err) => {
-      debug(`[FadeIn] Error during fade-in for "${ps.name}":`, err.message);
-    });
+    loopScheduled = scheduleLoopWithin(ps, { initialLoopStart });
   }
 
   if (playbackMode.crossfade) {
@@ -173,7 +281,7 @@ function _schedulePostPlayActions(ps, sound, { fromCrossfade = false } = {}) {
     scheduleEndOfTrackFade(ps);
   }
 
-  if ((fadeInMs <= 0 || !isFreshPlaybackStart(ps)) && !State.isSoundFading(sound) && !fromCrossfade) {
+  if ((fadeInMs <= 0 || isResume) && !State.isSoundFading(sound) && !fromCrossfade) {
     const target = Flags.resolveTargetVolume(ps);
     if (Math.abs(sound.volume - target) > 0.001) {
       debug(`[Sound.play] Post-schedule volume correction: ${sound.volume.toFixed(3)} -> ${target.toFixed(3)} for "${ps.name}"`);
@@ -187,7 +295,7 @@ export function registerSoundPlaybackWrappers() {
     MODULE_ID,
     "foundry.audio.Sound.prototype.stop",
     function (wrapped, ...args) {
-      if (this?.gain) {
+      if (this?.gain || State.isSoundFading(this)) {
         try {
           cancelActiveFade(this);
         } catch (err) {
@@ -213,25 +321,84 @@ export function registerSoundPlaybackWrappers() {
         return wrapped.call(this, options);
       }
 
-      _handleShuffleOnPlay(ps);
+      const playbackStart = getPlaybackStartState(ps, this);
+      _handleShuffleOnPlay(ps, this, playbackStart);
+      const fromCrossfade = !!options?._fromCrossfade;
+      const configuredFadeInMs = _consumeFadeInDuration(ps);
 
-      if (!options?._fromCrossfade) {
-        const targetVolume = Flags.resolveTargetVolume(ps);
-        const fadeInMs = Flags.getPlaylistFlag(ps.parent, "fadeIn");
-        const isFreshPlay = isFreshPlaybackStart(ps);
-        const resumeOffset = !isFreshPlay && Number.isFinite(Number(ps.pausedTime))
-          ? Number(ps.pausedTime)
-          : null;
-        const preMuteVolume = (fadeInMs > 0 && isFreshPlay) ? 0 : targetVolume;
-        _applyPreMute(this, ps, fadeInMs, targetVolume);
-
-        const playOffset = options?.offset ?? (isFreshPlay ? 0 : (resumeOffset ?? undefined));
-        options = { ...options, volume: preMuteVolume, offset: playOffset };
+      const initialLoopOffset = getInitialLoopPlaybackOffset(ps, options, playbackStart);
+      const initialLoopStart = initialLoopOffset === null ? null : {
+        sound: this,
+        offset: initialLoopOffset,
+        segmentIndex: 0,
+      };
+      if (initialLoopStart) {
+        debug(
+          `[Sound.play WRAPPER] Starting "${ps.name}" at its first internal-loop segment (${initialLoopOffset.toFixed(3)}s).`
+        );
+        options = { ...options, offset: initialLoopOffset };
       }
 
-      const result = await wrapped.call(this, options);
+      let fadeInMs = 0;
+      let startupFadeToken = null;
+      let targetVolume = null;
+      if (!fromCrossfade) {
+        targetVolume = Flags.resolveTargetVolume(ps);
+        fadeInMs = _getStartupFadeDuration(ps, configuredFadeInMs, {
+          fromCrossfade,
+          initialLoopStart,
+          isResume: playbackStart.isResume,
+        });
+        if (fadeInMs > 0) {
+          startupFadeToken = reserveFadeIn(this, {
+            duration: fadeInMs,
+            targetVol: targetVolume,
+          });
+          if (!startupFadeToken) {
+            debug(`[FadeIn] Startup ownership unavailable for "${ps.name}"; leaving the active fade owner unchanged.`);
+            fadeInMs = 0;
+          }
+        }
 
-      _schedulePostPlayActions(ps, this, { fromCrossfade: !!options?._fromCrossfade });
+        if (!startupFadeToken && !State.isSoundFading(this)) {
+          this.volume = targetVolume;
+        }
+
+        const playOffset = options?.offset ?? (
+          playbackStart.isResume
+            ? (playbackStart.useNativeMediaOffset ? undefined : playbackStart.offset)
+            : 0
+        );
+        options = {
+          ...options,
+          ...(startupFadeToken ? { volume: 0 } : {}),
+          ...(!startupFadeToken && !State.isSoundFading(this) ? { volume: targetVolume } : {}),
+          offset: playOffset,
+        };
+      }
+
+      let result;
+      try {
+        result = await wrapped.call(this, options);
+      } catch (err) {
+        releaseFadeInReservation(this, startupFadeToken);
+        throw err;
+      }
+
+      try {
+        _schedulePostPlayActions(ps, this, {
+          fadeInMs,
+          fromCrossfade,
+          initialLoopStart,
+          isResume: playbackStart.isResume,
+          resumeOffset: playbackStart.offset,
+          startupFadeToken,
+          targetVolume,
+        });
+      } catch (err) {
+        releaseFadeInReservation(this, startupFadeToken);
+        throw err;
+      }
 
       return result;
     },
@@ -381,6 +548,10 @@ export function registerSoundPlaybackWrappers() {
         }
         return;
       }
+      const startupFadeToken = State.getFadeToken(this.sound);
+      if (this.playing === false && startupFadeToken?.type === "fade-in-start") {
+        cancelActiveFade(this.sound);
+      }
       if (_shouldDeferSyncForCrossfade(this)) {
         debug(`[Sync Guard] Blocked sync() for "${this.name}" - SoS crossfade owns playback`);
         return;
@@ -389,8 +560,9 @@ export function registerSoundPlaybackWrappers() {
         debug(`[Sync Guard] Blocked sync() for "${this.name}" - SoS fade curve active`);
         return;
       }
+      const wasPlayingBeforeSync = this.sound?.playing === true;
       const result = wrapped();
-      if (this.sound?.playing && !State.isSoundFading(this.sound)) {
+      if (wasPlayingBeforeSync && this.sound?.playing && !State.isSoundFading(this.sound)) {
         this.sound.volume = Flags.resolveTargetVolume(this);
       }
       return result;

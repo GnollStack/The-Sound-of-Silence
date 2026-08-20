@@ -55,6 +55,16 @@ globalThis.foundry = {
   utils: {
     deepClone: clone,
     duplicate: clone,
+    hasProperty(object, path) {
+      return String(path ?? "")
+        .split(".")
+        .filter(Boolean)
+        .every((key) => {
+          if (object == null || !Object.prototype.hasOwnProperty.call(object, key)) return false;
+          object = object[key];
+          return true;
+        });
+    },
     mergeObject: merge,
   },
 };
@@ -94,13 +104,18 @@ globalThis.ui = { playlists: { render() {} } };
 
 const { Flags, sanitizeSoundscapeGroups } = await import("../scripts/flag-service.js");
 const { safeStop } = await import("../scripts/utils.js");
+const { reserveFadeIn } = await import("../scripts/audio-fader.js");
+const { applyFadeIn } = await import("../scripts/fade-in.js");
 const {
   activateCrossfadeSession,
   createCrossfadeSession,
   settleCrossfadeSession,
 } = await import("../scripts/playback/transition-session.js");
 const { performCrossfade } = await import("../scripts/cross-fade.js");
-const { planCrossfadePreload } = await import("../scripts/playback/preload-coordinator.js");
+const {
+  planCrossfadePreload,
+  resolveNextCrossfadeSound,
+} = await import("../scripts/playback/preload-coordinator.js");
 const { State } = await import("../scripts/state-manager.js");
 const { SoundscapeEngine } = await import("../scripts/procedural-ambience.js");
 const { SoundscapePreviewer, SoundscapePreviewSession } = await import("../scripts/soundscape-previewer.js");
@@ -113,7 +128,13 @@ const {
 } = await import("../scripts/silence.js");
 const { AdvancedShuffle } = await import("../scripts/advanced-shuffle.js");
 const { registerShuffleHooks } = await import("../scripts/playlist/shuffle-hooks.js");
-const { registerPlaylistCommandWrappers } = await import("../scripts/playlist/playlist-command-wrappers.js");
+const {
+  registerPlaylistAdvanceWrappers,
+  registerPlaylistCommandWrappers,
+} = await import("../scripts/playlist/playlist-command-wrappers.js");
+const { registerPlaybackDocumentHooks } = await import("../scripts/playback/document-hooks.js");
+const { registerSoundPlaybackWrappers } = await import("../scripts/playback/sound-wrappers.js");
+const { maybeLoopPlaylist } = await import("../scripts/playlist-loop.js");
 
 class TestSoundCollection extends Array {
   static get [Symbol.species]() {
@@ -155,6 +176,20 @@ function makeTestSound({ id, parent, playing = false, flags = {}, sound = null }
     },
   };
   return document;
+}
+
+function registerPlaybackDocumentHooksForTest() {
+  const names = ["updatePlaylist", "updatePlaylistSound"];
+  const existing = new Map(names.map((name) => [name, new Set(hookListeners.get(name) ?? [])]));
+  registerPlaybackDocumentHooks();
+  const added = names.flatMap((name) =>
+    (hookListeners.get(name) ?? [])
+      .filter((callback) => !existing.get(name).has(callback))
+      .map((callback) => ({ name, callback }))
+  );
+  return () => {
+    for (const { name, callback } of added) Hooks.off(name, callback);
+  };
 }
 
 test("loop validation caps segment count, preserves zero, and normalizes integers", () => {
@@ -664,6 +699,222 @@ test("silence startup is single-flight before embedded document creation resolve
   }
 });
 
+test("failed gap playback retains cleanup ownership when delete and deactivate both fail", async () => {
+  const previous = {
+    user: game.user,
+    users: game.users,
+    playlists: game.playlists,
+    setTimeout: globalThis.setTimeout,
+  };
+  const gm = { id: "startup-cleanup-gm", isGM: true, active: true };
+  game.user = gm;
+  game.users = [gm];
+
+  const scheduled = [];
+  globalThis.setTimeout = (callback, delay) => {
+    scheduled.push({ callback, delay });
+    return scheduled.length;
+  };
+
+  let deleteCalls = 0;
+  let deactivateCalls = 0;
+  const events = [];
+  const playlist = {
+    id: "failed-gap-playback-double-cleanup",
+    name: "Failed Gap Playback Double Cleanup",
+    isOwner: true,
+    mode: CONST.PLAYLIST_MODES.SEQUENTIAL,
+    playing: true,
+    playbackOrder: ["source"],
+    sounds: new TestSoundCollection(),
+    getFlag(_scope, key) {
+      return {
+        silenceMode: "static",
+        silenceDuration: 60000,
+      }[key];
+    },
+    async createEmbeddedDocuments() {
+      const gap = makeTestSound({
+        id: "failed-startup-gap",
+        parent: this,
+        playing: true,
+        sound: {
+          playing: true,
+          stop() { this.playing = false; },
+        },
+        flags: {
+          isSilenceGap: true,
+          gapDuration: 60000,
+          gapStarted: Date.now(),
+          gapSourceSoundId: "source",
+        },
+      });
+      gap.delete = async () => {
+        deleteCalls += 1;
+        throw new Error("injected startup delete failure");
+      };
+      gap.update = async () => {
+        deactivateCalls += 1;
+        throw new Error("injected startup deactivate failure");
+      };
+      this.sounds.push(gap);
+      this.playbackOrder = ["source", gap.id];
+      return [gap];
+    },
+    async playSound() {
+      throw new Error("injected startup playback failure");
+    },
+  };
+  const source = makeTestSound({ id: "source", parent: playlist });
+  playlist.sounds.push(source);
+  game.playlists = [playlist];
+  const onSilenceEnd = (event) => {
+    if (event?.playlist === playlist) events.push(event);
+  };
+  Hooks.on("the-sound-of-silence.silenceEnd", onSilenceEnd);
+
+  let transition;
+  try {
+    transition = await startSilenceGap(playlist, source);
+    const gap = playlist.sounds.get("failed-startup-gap");
+    const state = State.getSilenceState(playlist);
+
+    assert.equal(transition.started, false);
+    assert.equal(transition.reason, "cancelled");
+    assert.ok(deleteCalls >= 2);
+    assert.ok(deactivateCalls >= 2);
+    assert.equal(gap.playing, true);
+    assert.equal(gap.sound.playing, false);
+    assert.equal(state?.gap, gap);
+    assert.equal(state?.cancelled, true);
+    assert.equal(state?.terminalOutcome, "cancelled");
+    assert.equal(state?.cleanupRetryScheduled, true);
+    assert.ok(scheduled.length >= 2);
+
+    let completionSettled = false;
+    let completionValue;
+    transition.completion.then((value) => {
+      completionSettled = true;
+      completionValue = value;
+    });
+    await Promise.resolve();
+    await Promise.resolve();
+    assert.equal(completionSettled, false);
+    assert.equal(completionValue, undefined);
+    assert.deepEqual(events, []);
+
+    assert.equal(await recoverPersistedSilenceGaps("failed startup before cleanup retry"), false);
+    const reconciledState = State.getSilenceState(playlist);
+    assert.equal(reconciledState, state);
+    assert.notEqual(reconciledState?.recovered, true);
+    assert.equal(reconciledState?.cancelled, true);
+    assert.equal(gap.playing, true);
+    assert.equal(completionSettled, false);
+    assert.deepEqual(events, []);
+  } finally {
+    Hooks.off("the-sound-of-silence.silenceEnd", onSilenceEnd);
+    State.clearSilenceState(playlist);
+    globalThis.setTimeout = previous.setTimeout;
+    game.user = previous.user;
+    game.users = previous.users;
+    game.playlists = previous.playlists;
+  }
+});
+
+test("failed gap playback clears state after delete fails but deactivation succeeds", async () => {
+  const previous = {
+    user: game.user,
+    users: game.users,
+    playlists: game.playlists,
+    setTimeout: globalThis.setTimeout,
+  };
+  const gm = { id: "startup-deactivate-gm", isGM: true, active: true };
+  game.user = gm;
+  game.users = [gm];
+  const scheduled = [];
+  globalThis.setTimeout = (callback, delay) => {
+    scheduled.push({ callback, delay });
+    return scheduled.length;
+  };
+
+  let deleteCalls = 0;
+  let deactivateCalls = 0;
+  const events = [];
+  const playlist = {
+    id: "failed-gap-playback-safe-deactivate",
+    name: "Failed Gap Playback Safe Deactivate",
+    isOwner: true,
+    mode: CONST.PLAYLIST_MODES.SEQUENTIAL,
+    playing: true,
+    playbackOrder: ["source"],
+    sounds: new TestSoundCollection(),
+    getFlag(_scope, key) {
+      return {
+        silenceMode: "static",
+        silenceDuration: 60000,
+      }[key];
+    },
+    async createEmbeddedDocuments() {
+      const gap = makeTestSound({
+        id: "safely-deactivated-startup-gap",
+        parent: this,
+        playing: true,
+        flags: {
+          isSilenceGap: true,
+          gapDuration: 60000,
+          gapStarted: Date.now(),
+          gapSourceSoundId: "source",
+        },
+      });
+      gap.delete = async () => {
+        deleteCalls += 1;
+        throw new Error("injected startup delete failure");
+      };
+      gap.update = async (changes) => {
+        deactivateCalls += 1;
+        Object.assign(gap, changes);
+        return gap;
+      };
+      this.sounds.push(gap);
+      this.playbackOrder = ["source", gap.id];
+      return [gap];
+    },
+    async playSound() {
+      throw new Error("injected startup playback failure");
+    },
+  };
+  const source = makeTestSound({ id: "source", parent: playlist });
+  playlist.sounds.push(source);
+  game.playlists = [playlist];
+  const onSilenceEnd = (event) => {
+    if (event?.playlist === playlist) events.push(event);
+  };
+  Hooks.on("the-sound-of-silence.silenceEnd", onSilenceEnd);
+
+  try {
+    const transition = await startSilenceGap(playlist, source);
+    const gap = playlist.sounds.get("safely-deactivated-startup-gap");
+
+    assert.equal(transition.started, false);
+    assert.equal(transition.reason, "creation-failed");
+    assert.equal(await transition.completion, false);
+    assert.equal(deleteCalls, 1);
+    assert.equal(deactivateCalls, 1);
+    assert.equal(gap.playing, false);
+    assert.equal(gap.pausedTime, null);
+    assert.equal(State.getSilenceState(playlist), undefined);
+    assert.deepEqual(events, []);
+    assert.equal(scheduled.length, 1);
+  } finally {
+    Hooks.off("the-sound-of-silence.silenceEnd", onSilenceEnd);
+    State.clearSilenceState(playlist);
+    globalThis.setTimeout = previous.setTimeout;
+    game.user = previous.user;
+    game.users = previous.users;
+    game.playlists = previous.playlists;
+  }
+});
+
 test("userConnected authority handoff reconstructs only an active persisted silence gap", async () => {
   const previous = {
     user: game.user,
@@ -907,6 +1158,34 @@ test("playlist command wrappers preserve Promise results and clear Stop All latc
     );
     assert.equal(State.isPlaylistStopping(playlist), false);
 
+    let staleGapNativeCalls = 0;
+    const staleGapMedia = {
+      playing: true,
+      stop() { this.playing = false; },
+    };
+    const staleGap = makeTestSound({
+      id: "unowned-gap",
+      parent: playlist,
+      playing: true,
+      sound: staleGapMedia,
+      flags: { isSilenceGap: true },
+    });
+    staleGap.update = async (changes) => {
+      Object.assign(staleGap, changes);
+      return staleGap;
+    };
+    assert.equal(
+      await playSound.call(playlist, async () => {
+        staleGapNativeCalls += 1;
+        return nativeResult;
+      }, staleGap),
+      playlist
+    );
+    assert.equal(staleGapNativeCalls, 0);
+    assert.equal(staleGap.playing, false);
+    assert.equal(staleGap.pausedTime, null);
+    assert.equal(staleGapMedia.playing, false);
+
     playlist.playing = true;
     const escalatedPromise = Promise.resolve("stopped");
     playlist.stopAll = () => escalatedPromise;
@@ -930,6 +1209,1927 @@ test("playlist command wrappers preserve Promise results and clear Stop All latc
     game.user = previous.user;
     game.users = previous.users;
     game.settings.get = previous.settingsGet;
+  }
+});
+
+test("Sound.play wrapper patches the silence-gap clock without scheduling normal track work", async () => {
+  const registrations = new Map();
+  const previousLibWrapper = globalThis.libWrapper;
+  globalThis.libWrapper = {
+    register(_module, target, callback) {
+      registrations.set(target, callback);
+    },
+  };
+
+  const flags = {
+    isSilenceGap: true,
+    gapDuration: 2000,
+    gapStarted: Date.now() - 500,
+  };
+  const playlist = {
+    id: "sound-wrapper-gap-playlist",
+    name: "Sound Wrapper Gap Playlist",
+    mode: CONST.PLAYLIST_MODES.SEQUENTIAL,
+    playing: true,
+    getFlag() { return undefined; },
+  };
+  const media = { playing: false, volume: 1 };
+  const gap = Object.assign(new PlaylistSound(), {
+    id: "sound-wrapper-gap",
+    name: "Sound Wrapper Gap",
+    parent: playlist,
+    playing: true,
+    pausedTime: null,
+    repeat: false,
+    sound: media,
+    getFlag(_scope, key) { return flags[key]; },
+  });
+  media._manager = gap;
+
+  try {
+    registerSoundPlaybackWrappers();
+    const play = registrations.get("foundry.audio.Sound.prototype.play");
+    const nativeResult = { native: true };
+    let nativeCalls = 0;
+
+    assert.equal(
+      await play.call(media, async () => {
+        nativeCalls += 1;
+        media.playing = true;
+        return nativeResult;
+      }, { _fromCrossfade: true }),
+      nativeResult
+    );
+    assert.equal(nativeCalls, 1);
+    assert.equal(media.duration, 2);
+    assert.ok(media.currentTime >= 0.4 && media.currentTime <= 2);
+  } finally {
+    delete media._manager;
+    globalThis.libWrapper = previousLibWrapper;
+  }
+});
+
+test("PlaylistSound.sync post-corrects only media that was already playing", () => {
+  const registrations = new Map();
+  const previousLibWrapper = globalThis.libWrapper;
+  globalThis.libWrapper = {
+    register(_module, target, callback) {
+      registrations.set(target, callback);
+    },
+  };
+
+  const playlist = {
+    id: "sync-startup-volume-playlist",
+    name: "Sync Startup Volume Playlist",
+    mode: CONST.PLAYLIST_MODES.SEQUENTIAL,
+    sounds: new TestSoundCollection(),
+    getFlag() { return undefined; },
+  };
+  let gainValue = 0.2;
+  const volumeWrites = [];
+  const media = { playing: false };
+  Object.defineProperty(media, "volume", {
+    configurable: true,
+    get() { return gainValue; },
+    set(value) {
+      gainValue = value;
+      volumeWrites.push(value);
+    },
+  });
+  const playlistSound = Object.assign(new PlaylistSound(), {
+    id: "sync-startup-volume-track",
+    name: "Sync Startup Volume Track",
+    parent: playlist,
+    playing: true,
+    pausedTime: null,
+    repeat: false,
+    volume: 0.65,
+    sound: media,
+    getFlag() { return undefined; },
+  });
+  playlist.sounds.push(playlistSound);
+
+  try {
+    registerSoundPlaybackWrappers();
+    const sync = registrations.get("PlaylistSound.prototype.sync");
+    const nativeResult = { native: true };
+
+    assert.equal(sync.call(playlistSound, () => {
+      media.playing = true;
+      gainValue = 0;
+      return nativeResult;
+    }), nativeResult);
+    assert.deepEqual(volumeWrites, [], "new startup media must remain owned by Sound.play");
+
+    media.playing = true;
+    gainValue = 0.2;
+    assert.equal(sync.call(playlistSound, () => nativeResult), nativeResult);
+    assert.deepEqual(volumeWrites, [0.65], "already-playing media still receives sync correction");
+  } finally {
+    globalThis.libWrapper = previousLibWrapper;
+  }
+});
+
+test("playing-only embedded playlist updates do not reapply the live personal mix", () => {
+  const unregister = registerPlaybackDocumentHooksForTest();
+  const previous = {
+    audioHelper: foundry.audio.AudioHelper,
+    document: globalThis.document,
+    user: game.user,
+    users: game.users,
+  };
+  const user = { id: "embedded-volume-user", name: "Embedded Volume User", isGM: false, active: true };
+  const users = [user];
+  users.get = (id) => users.find((entry) => entry.id === id);
+  game.user = user;
+  game.users = users;
+  foundry.audio.AudioHelper = {
+    inputToVolume: (value) => value,
+    volumeToInput: (value) => value,
+  };
+  globalThis.document = { querySelectorAll: () => [] };
+
+  let gainValue = 0.65;
+  const volumeWrites = [];
+  const media = { playing: true };
+  Object.defineProperty(media, "volume", {
+    configurable: true,
+    get() { return gainValue; },
+    set(value) {
+      gainValue = value;
+      volumeWrites.push(value);
+    },
+  });
+  const playlist = {
+    id: "embedded-volume-playlist",
+    name: "Embedded Volume Playlist",
+    isOwner: false,
+    playing: true,
+    sounds: new TestSoundCollection(),
+    getFlag() { return undefined; },
+  };
+  const playlistSound = Object.assign(new PlaylistSound(), {
+    id: "embedded-volume-track",
+    name: "Embedded Volume Track",
+    parent: playlist,
+    playing: true,
+    pausedTime: null,
+    volume: 0.65,
+    sound: media,
+    getFlag() { return undefined; },
+  });
+  playlist.sounds.push(playlistSound);
+
+  try {
+    Hooks.callAll(
+      "updatePlaylist",
+      playlist,
+      { sounds: [{ _id: playlistSound.id, playing: true }] },
+      {},
+      user.id
+    );
+    assert.deepEqual(volumeWrites, []);
+
+    playlistSound.volume = 0.4;
+    Hooks.callAll(
+      "updatePlaylist",
+      playlist,
+      { sounds: [{ _id: playlistSound.id, volume: 0.4 }] },
+      {},
+      user.id
+    );
+    assert.deepEqual(volumeWrites, [0.4], "real embedded volume changes still reapply the mix");
+  } finally {
+    unregister();
+    foundry.audio.AudioHelper = previous.audioHelper;
+    game.user = previous.user;
+    game.users = previous.users;
+    if (typeof previous.document === "undefined") delete globalThis.document;
+    else globalThis.document = previous.document;
+  }
+});
+
+test("native play rejection releases startup fade ownership and consumes its override", async () => {
+  const registrations = new Map();
+  const previousLibWrapper = globalThis.libWrapper;
+  globalThis.libWrapper = {
+    register(_module, target, callback) {
+      registrations.set(target, callback);
+    },
+  };
+
+  const gain = {
+    value: 0.5,
+    cancelAndHoldAtTime() {},
+    cancelScheduledValues() {},
+    setValueAtTime(value) { this.value = value; },
+  };
+  const media = {
+    playing: false,
+    context: { currentTime: 0, state: "running", sampleRate: 48000 },
+    gain,
+    gainNode: { gain },
+    volume: 0.5,
+  };
+  const playlist = {
+    id: "rejected-startup-playlist",
+    name: "Rejected Startup Playlist",
+    mode: CONST.PLAYLIST_MODES.SEQUENTIAL,
+    sounds: new TestSoundCollection(),
+    getFlag(_scope, key) { return key === "fadeIn" ? 0 : undefined; },
+  };
+  const playlistSound = Object.assign(new PlaylistSound(), {
+    id: "rejected-startup-track",
+    name: "Rejected Startup Track",
+    parent: playlist,
+    playing: true,
+    pausedTime: null,
+    repeat: false,
+    volume: 0.5,
+    sound: media,
+    _sos_fadeInOverride: 250,
+    getFlag() { return undefined; },
+  });
+  playlist.sounds.push(playlistSound);
+  media._manager = playlistSound;
+
+  try {
+    registerSoundPlaybackWrappers();
+    const play = registrations.get("foundry.audio.Sound.prototype.play");
+    const failure = new Error("injected native startup rejection");
+
+    await assert.rejects(
+      play.call(media, async (options) => {
+        assert.equal(options.volume, 0);
+        assert.equal(State.getFadeToken(media)?.type, "fade-in-start");
+        assert.equal(State.getFadeToken(media)?.duration, 250);
+        throw failure;
+      }),
+      failure
+    );
+    assert.equal(State.isSoundFading(media), false);
+    assert.equal("_sos_fadeInOverride" in playlistSound, false);
+  } finally {
+    State.clearFadingSound(media);
+    delete media._manager;
+    globalThis.libWrapper = previousLibWrapper;
+  }
+});
+
+test("a newer fade owner can supersede startup without stopping valid media", async () => {
+  const registrations = new Map();
+  const previousLibWrapper = globalThis.libWrapper;
+  globalThis.libWrapper = {
+    register(_module, target, callback) {
+      registrations.set(target, callback);
+    },
+  };
+
+  const gain = {
+    value: 0.5,
+    cancelAndHoldAtTime() {},
+    cancelScheduledValues() {},
+    setValueAtTime(value) { this.value = value; },
+  };
+  const media = {
+    playing: false,
+    context: { currentTime: 0, state: "running", sampleRate: 48000 },
+    gain,
+    gainNode: { gain },
+    volume: 0.5,
+    stopCalls: 0,
+    stop() {
+      this.playing = false;
+      this.stopCalls += 1;
+    },
+  };
+  const playlist = {
+    id: "superseded-startup-playlist",
+    name: "Superseded Startup Playlist",
+    mode: CONST.PLAYLIST_MODES.SEQUENTIAL,
+    playing: true,
+    sounds: new TestSoundCollection(),
+    getFlag(_scope, key) { return key === "fadeIn" ? 250 : undefined; },
+  };
+  const playlistSound = Object.assign(new PlaylistSound(), {
+    id: "superseded-startup-track",
+    name: "Superseded Startup Track",
+    parent: playlist,
+    playing: true,
+    pausedTime: null,
+    repeat: true,
+    volume: 0.5,
+    sound: media,
+    getFlag() { return undefined; },
+  });
+  playlist.sounds.push(playlistSound);
+  media._manager = playlistSound;
+
+  try {
+    registerSoundPlaybackWrappers();
+    const play = registrations.get("foundry.audio.Sound.prototype.play");
+    let externalToken;
+
+    await play.call(media, async () => {
+      assert.equal(State.getFadeToken(media)?.type, "fade-in-start");
+      media.playing = true;
+      externalToken = State.startFade(media, { type: "external" });
+      return media;
+    });
+
+    assert.equal(State.getFadeToken(media), externalToken);
+    assert.equal(media.stopCalls, 0);
+    assert.equal(media.playing, true);
+  } finally {
+    State.clearFadingSound(media);
+    delete media._manager;
+    globalThis.libWrapper = previousLibWrapper;
+  }
+});
+
+test("fresh skip-intro playback starts at the first loop segment and reuses Foundry's original Sound", async () => {
+  const registrations = new Map();
+  const previousLibWrapper = globalThis.libWrapper;
+  const PreviousSound = foundry.audio.Sound;
+  const originalAudioWait = foundry.audio.AudioTimeout.wait;
+  const originalLoopStart = LoopingSound.prototype.start;
+  let constructedSounds = 0;
+  let startupPromise = null;
+  globalThis.libWrapper = {
+    register(_module, target, callback) {
+      registrations.set(target, callback);
+    },
+  };
+
+  const makeScheduleHandle = () => ({
+    cancelled: false,
+    cancel() { this.cancelled = true; },
+    catch() { return this; },
+  });
+  class ReplacementSound {
+    constructor(path, { context } = {}) {
+      constructedSounds += 1;
+      this.path = path;
+      this.context = context;
+      this.loaded = false;
+      this.failed = false;
+      this.playing = false;
+      this.currentTime = 0;
+      this.duration = 30;
+      this.volume = 0;
+      this.stopCalls = 0;
+    }
+
+    async load() {
+      this.loaded = true;
+      return this;
+    }
+
+    async play(options = {}) {
+      this.playing = true;
+      this.currentTime = Number(options.offset) || 0;
+      this.volume = Number(options.volume) || 0;
+      return this;
+    }
+
+    stop() {
+      this.playing = false;
+      this.stopCalls += 1;
+    }
+
+    schedule() {
+      return makeScheduleHandle();
+    }
+
+    addEventListener() {}
+    removeEventListener() {}
+  }
+  foundry.audio.Sound = ReplacementSound;
+
+  const loopWithin = {
+    enabled: true,
+    active: true,
+    startFromBeginning: false,
+    segments: [{
+      label: "Skip Intro",
+      start: "00:05.000",
+      end: "00:15.000",
+      crossfadeMs: 500,
+      loopCount: 0,
+      skipToNext: false,
+    }],
+  };
+  const playlist = {
+    id: "skip-intro-wrapper-playlist",
+    name: "Skip Intro Wrapper Playlist",
+    mode: CONST.PLAYLIST_MODES.SEQUENTIAL,
+    fade: 0,
+    playing: true,
+    isOwner: false,
+    sounds: new TestSoundCollection(),
+    getFlag(_scope, key) { return key === "fadeIn" ? 1000 : undefined; },
+  };
+  const gain = {
+    value: 0.6,
+    curveCalls: [],
+    cancelAndHoldAtTime() {},
+    cancelScheduledValues() {},
+    setValueAtTime(value) { this.value = value; },
+    setValueCurveAtTime(curve, startTime, duration) {
+      this.curveCalls.push({ curve, startTime, duration });
+      this.value = curve.at(-1);
+    },
+  };
+  const media = {
+    loaded: true,
+    failed: false,
+    playing: false,
+    currentTime: 0,
+    duration: 30,
+    volume: 0.6,
+    context: { currentTime: 0, state: "running", sampleRate: 48000 },
+    gain,
+    stopCalls: 0,
+    scheduleCalls: [],
+    stop() {
+      this.playing = false;
+      this.stopCalls += 1;
+    },
+    schedule(callback, at) {
+      this.scheduleCalls.push({ callback, at });
+      return makeScheduleHandle();
+    },
+    addEventListener() {},
+    removeEventListener() {},
+  };
+  const playlistSound = Object.assign(new PlaylistSound(), {
+    id: "skip-intro-wrapper-track",
+    uuid: "Playlist.skip-intro-wrapper-playlist.PlaylistSound.skip-intro-wrapper-track",
+    name: "Skip Intro Wrapper Track",
+    path: "skip-intro.ogg",
+    parent: playlist,
+    playing: true,
+    pausedTime: null,
+    repeat: false,
+    volume: 0.6,
+    sound: media,
+    getFlag(_scope, key) {
+      return key === "loopWithin" ? loopWithin : undefined;
+    },
+    _onEnd() {},
+  });
+  playlist.sounds.push(playlistSound);
+  media._manager = playlistSound;
+
+  LoopingSound.prototype.start = function (...args) {
+    startupPromise = Promise.resolve(originalLoopStart.apply(this, args));
+    return startupPromise;
+  };
+
+  try {
+    // Let loop startup/stability checks resolve normally, while retaining the
+    // longer fade token so ownership can be asserted deterministically.
+    foundry.audio.AudioTimeout.wait = (duration = 0) =>
+      Number(duration) >= 1000 ? new Promise(() => {}) : originalAudioWait(duration);
+    registerSoundPlaybackWrappers();
+    const play = registrations.get("foundry.audio.Sound.prototype.play");
+    const nativeResult = { native: true };
+    const nativeOptions = [];
+
+    assert.equal(
+      await play.call(media, async (options) => {
+        nativeOptions.push({ ...options });
+        media.playing = true;
+        media.currentTime = Number(options.offset) || 0;
+        media.volume = options.volume;
+        media.gain.value = options.volume;
+        return nativeResult;
+      }),
+      nativeResult
+    );
+
+    for (let attempt = 0; attempt < 20 && !startupPromise; attempt += 1) {
+      await Promise.resolve();
+    }
+    assert.ok(startupPromise, "the wrapper should schedule LoopingSound startup");
+    assert.equal(await startupPromise, true);
+
+    const looper = State.getActiveLooper(playlistSound);
+    assert.ok(looper, "the internal looper should retain runtime ownership");
+    assert.equal(nativeOptions.length, 1);
+    assert.equal(nativeOptions[0].offset, 5);
+    assert.equal(nativeOptions[0].volume, 0);
+    assert.equal(media.currentTime, 5);
+    assert.equal(looper.soundA, media);
+    assert.equal(looper.activeSound, media);
+    assert.equal(playlistSound.sound, media);
+    assert.equal(constructedSounds, 0);
+    assert.equal(media.stopCalls, 0);
+    assert.equal(State.isSoundFading(media), true);
+    assert.equal(gain.curveCalls.length, 1);
+    assert.equal(gain.curveCalls[0].curve[0], 0);
+    assert.ok(Math.abs(gain.curveCalls[0].curve.at(-1) - 0.6) < 0.0001);
+    assert.equal(gain.curveCalls[0].duration, 1);
+  } finally {
+    State.getActiveLooper(playlistSound)?.destroy(true);
+    State.clearActiveLooper(playlistSound);
+    State.clearFadingSound(media);
+    delete media._manager;
+    LoopingSound.prototype.start = originalLoopStart;
+    foundry.audio.AudioTimeout.wait = originalAudioWait;
+    foundry.audio.Sound = PreviousSound;
+    globalThis.libWrapper = previousLibWrapper;
+  }
+});
+
+test("zero-fade skip-intro primes fresh gain and applies a 10ms de-click ramp", async () => {
+  const registrations = new Map();
+  const previousLibWrapper = globalThis.libWrapper;
+  const originalAudioWait = foundry.audio.AudioTimeout.wait;
+  globalThis.libWrapper = {
+    register(_module, target, callback) {
+      registrations.set(target, callback);
+    },
+  };
+
+  const gainEvents = [];
+  const gain = {
+    value: 0.65,
+    cancelAndHoldAtTime(time) {
+      gainEvents.push({ type: "hold", time });
+    },
+    cancelScheduledValues(time) {
+      gainEvents.push({ type: "cancel", time });
+    },
+    setValueAtTime(value, time) {
+      this.value = value;
+      gainEvents.push({ type: "set", value, time });
+    },
+    setValueCurveAtTime(curve, startTime, duration) {
+      this.value = curve.at(-1);
+      gainEvents.push({ type: "curve", curve, startTime, duration });
+    },
+  };
+  let gainNodesCreated = 0;
+  const context = {
+    currentTime: 0,
+    state: "running",
+    sampleRate: 48000,
+    createGain() {
+      gainNodesCreated += 1;
+      return { gain, connect() {} };
+    },
+  };
+  const volumeWrites = [];
+  const media = {
+    loaded: true,
+    failed: false,
+    playing: false,
+    currentTime: 0,
+    duration: 30,
+    context,
+    gainNode: null,
+    stopCalls: 0,
+    scheduleCalls: [],
+    get gain() { return this.gainNode?.gain; },
+    get volume() { return this.gain?.value; },
+    set volume(value) {
+      if (!this.gainNode || !Number.isFinite(value)) return;
+      this.gain.cancelScheduledValues(this.context.currentTime);
+      this.gain.value = value;
+      this.gain.setValueAtTime(value, this.context.currentTime);
+      volumeWrites.push(value);
+    },
+    stop() {
+      this.playing = false;
+      this.stopCalls += 1;
+    },
+    schedule(callback, at) {
+      const handle = {
+        callback,
+        at,
+        cancelled: false,
+        cancel() { this.cancelled = true; },
+        catch() { return this; },
+      };
+      this.scheduleCalls.push(handle);
+      return handle;
+    },
+    addEventListener() {},
+    removeEventListener() {},
+  };
+  const loopWithin = {
+    enabled: true,
+    active: true,
+    startFromBeginning: false,
+    segments: [{
+      label: "De-click Segment",
+      start: "00:05.000",
+      end: "00:15.000",
+      crossfadeMs: 500,
+      loopCount: 0,
+      skipToNext: false,
+    }],
+  };
+  const playlist = {
+    id: "declick-playlist",
+    name: "De-click Playlist",
+    mode: CONST.PLAYLIST_MODES.SEQUENTIAL,
+    fade: 0,
+    playing: true,
+    isOwner: false,
+    sounds: new TestSoundCollection(),
+    getFlag(_scope, key) { return key === "fadeIn" ? 0 : undefined; },
+  };
+  const playlistSound = Object.assign(new PlaylistSound(), {
+    id: "declick-track",
+    uuid: "Playlist.declick-playlist.PlaylistSound.declick-track",
+    name: "De-click Track",
+    path: "declick.ogg",
+    parent: playlist,
+    playing: true,
+    pausedTime: null,
+    repeat: false,
+    volume: 0.65,
+    sound: media,
+    getFlag(_scope, key) {
+      return key === "loopWithin" ? loopWithin : undefined;
+    },
+    _onEnd() {},
+  });
+  playlist.sounds.push(playlistSound);
+  media._manager = playlistSound;
+
+  try {
+    foundry.audio.AudioTimeout.wait = () => new Promise(() => {});
+    registerSoundPlaybackWrappers();
+    const play = registrations.get("foundry.audio.Sound.prototype.play");
+    let nativeOptions;
+    let startupToken;
+
+    await play.call(media, async (options) => {
+      nativeOptions = { ...options };
+      startupToken = State.getFadeToken(media);
+      assert.equal(startupToken?.type, "fade-in-start");
+      assert.equal(gainNodesCreated, 1);
+      assert.equal(media.gain.value, 0, "gain must be silent before native playback begins");
+      media.playing = true;
+      media.currentTime = Number(options.offset) || 0;
+      media.volume = options.volume;
+      return media;
+    });
+
+    const curveEvent = gainEvents.find((event) => event.type === "curve");
+    assert.deepEqual(nativeOptions, { offset: 5, volume: 0 });
+    assert.deepEqual(volumeWrites, [0]);
+    assert.ok(curveEvent, "the skip-intro start should schedule a de-click curve");
+    assert.equal(curveEvent.curve[0], 0);
+    assert.ok(Math.abs(curveEvent.curve.at(-1) - 0.65) < 0.0001);
+    assert.equal(curveEvent.duration, 0.01);
+    assert.equal(State.getFadeToken(media)?.type, "fade-in");
+    assert.equal(media.stopCalls, 0);
+  } finally {
+    State.getActiveLooper(playlistSound)?.destroy(true);
+    State.clearActiveLooper(playlistSound);
+    State.clearFadingSound(media);
+    delete media._manager;
+    foundry.audio.AudioTimeout.wait = originalAudioWait;
+    globalThis.libWrapper = previousLibWrapper;
+  }
+});
+
+test("streamed startup stays muted until seek readiness and ignores a lost owner", async () => {
+  const listeners = new Map();
+  const element = {
+    paused: false,
+    readyState: 1,
+    seeking: true,
+    addEventListener(name, callback) {
+      const callbacks = listeners.get(name) ?? new Set();
+      callbacks.add(callback);
+      listeners.set(name, callbacks);
+    },
+    removeEventListener(name, callback) {
+      listeners.get(name)?.delete(callback);
+    },
+    emit(name) {
+      for (const callback of [...(listeners.get(name) ?? [])]) callback({ type: name });
+    },
+  };
+  const curveCalls = [];
+  const gain = {
+    value: 0.65,
+    cancelAndHoldAtTime() {},
+    cancelScheduledValues() {},
+    setValueAtTime(value) { this.value = value; },
+    setValueCurveAtTime(curve, startTime, duration) {
+      curveCalls.push({ curve, startTime, duration });
+      this.value = curve.at(-1);
+    },
+  };
+  const media = {
+    element,
+    playing: true,
+    context: { currentTime: 0, state: "running", sampleRate: 48000 },
+    gain,
+    gainNode: { gain },
+    get volume() { return gain.value; },
+    set volume(value) { gain.value = value; },
+  };
+  const playlist = {
+    id: "stream-ready-playlist",
+    name: "Stream Ready Playlist",
+    getFlag() { return 0; },
+  };
+  const playlistSound = Object.assign(new PlaylistSound(), {
+    id: "stream-ready-track",
+    name: "Stream Ready Track",
+    parent: playlist,
+    playing: true,
+    volume: 0.65,
+    sound: media,
+    getFlag() { return undefined; },
+  });
+
+  try {
+    const startupToken = reserveFadeIn(media, { duration: 10, targetVol: 0.65 });
+    const firstFade = applyFadeIn(playlist, playlistSound, {
+      durationMs: 10,
+      sound: media,
+      startupToken,
+      targetVolume: 0.65,
+    });
+    await Promise.resolve();
+
+    assert.equal(gain.value, 0);
+    assert.equal(curveCalls.length, 0);
+    assert.equal(State.getFadeToken(media), startupToken);
+
+    element.seeking = false;
+    element.readyState = 3;
+    element.emit("seeked");
+    await firstFade;
+
+    assert.equal(curveCalls.length, 1);
+    assert.equal(curveCalls[0].curve[0], 0);
+    assert.equal(curveCalls[0].duration, 0.01);
+    assert.ok([...listeners.values()].every((callbacks) => callbacks.size === 0));
+
+    State.clearFadingSound(media);
+    element.seeking = true;
+    element.readyState = 1;
+    gain.value = 0.65;
+    const lostToken = reserveFadeIn(media, { duration: 10, targetVol: 0.65 });
+    const staleFade = applyFadeIn(playlist, playlistSound, {
+      durationMs: 10,
+      sound: media,
+      startupToken: lostToken,
+      targetVolume: 0.65,
+    });
+    await Promise.resolve();
+    State.clearFadingSound(media, lostToken);
+    element.seeking = false;
+    element.readyState = 3;
+    element.emit("playing");
+    await staleFade;
+
+    assert.equal(curveCalls.length, 1, "a stopped or replaced startup must not schedule a later ramp");
+    assert.equal(State.isSoundFading(media), false);
+    assert.ok([...listeners.values()].every((callbacks) => callbacks.size === 0));
+  } finally {
+    State.clearFadingSound(media);
+  }
+});
+
+test("mid-segment skip-intro startup adopts explicit and already-advanced playback positions", async () => {
+  const registrations = new Map();
+  const previousLibWrapper = globalThis.libWrapper;
+  const PreviousSound = foundry.audio.Sound;
+  const originalAudioWait = foundry.audio.AudioTimeout.wait;
+  const originalLoopStart = LoopingSound.prototype.start;
+  let constructedSounds = 0;
+  let pendingStartup = null;
+  let startupWaitCalls = 0;
+  globalThis.libWrapper = {
+    register(_module, target, callback) {
+      registrations.set(target, callback);
+    },
+  };
+
+  const makeScheduleHandle = () => ({
+    cancelled: false,
+    cancel() { this.cancelled = true; },
+    catch() { return this; },
+  });
+  foundry.audio.Sound = class UnexpectedReplacementSound {
+    constructor(path) {
+      constructedSounds += 1;
+      this.path = path;
+      this.loaded = false;
+      this.failed = false;
+      this.playing = false;
+      this.currentTime = 0;
+      this.duration = 30;
+      this.volume = 0.6;
+      this.context = { currentTime: 0 };
+    }
+
+    async load() {
+      this.loaded = true;
+      return this;
+    }
+
+    async play(options = {}) {
+      this.playing = true;
+      this.currentTime = Number(options.offset) || 0;
+      return this;
+    }
+
+    stop() { this.playing = false; }
+    schedule() { return makeScheduleHandle(); }
+    addEventListener() {}
+    removeEventListener() {}
+  };
+
+  LoopingSound.prototype.start = function (...args) {
+    pendingStartup = Promise.resolve(originalLoopStart.apply(this, args));
+    return pendingStartup;
+  };
+
+  const scenarios = [
+    {
+      label: "explicit-mid-segment",
+      options: { offset: 9.5 },
+      expectedNativeOffset: 9.5,
+      adoptedCurrentTime: 9.5,
+    },
+    {
+      label: "delayed-adoption-inside-segment",
+      options: {},
+      expectedNativeOffset: 5,
+      adoptedCurrentTime: 6.25,
+    },
+  ];
+
+  try {
+    // The historical implementation repeatedly waited for a position within
+    // 0.5s of the segment start. Bound those waits so that regression fails
+    // as an assertion instead of indefinitely draining the microtask queue.
+    foundry.audio.AudioTimeout.wait = (duration = 0) => {
+      if (Number(duration) !== 50 || !pendingStartup) return originalAudioWait(duration);
+      startupWaitCalls += 1;
+      if (startupWaitCalls > 8) {
+        return Promise.reject(new Error("bounded mid-segment startup wait"));
+      }
+      return originalAudioWait(duration);
+    };
+
+    registerSoundPlaybackWrappers();
+    const play = registrations.get("foundry.audio.Sound.prototype.play");
+
+    for (const scenario of scenarios) {
+      pendingStartup = null;
+      startupWaitCalls = 0;
+      constructedSounds = 0;
+      const loopWithin = {
+        enabled: true,
+        active: true,
+        startFromBeginning: false,
+        segments: [{
+          label: "Adopted Segment",
+          start: "00:05.000",
+          end: "00:15.000",
+          crossfadeMs: 500,
+          loopCount: 0,
+          skipToNext: false,
+        }],
+      };
+      const playlist = {
+        id: `mid-segment-playlist-${scenario.label}`,
+        name: `Mid-segment Playlist (${scenario.label})`,
+        mode: CONST.PLAYLIST_MODES.SEQUENTIAL,
+        fade: 0,
+        playing: true,
+        isOwner: false,
+        sounds: new TestSoundCollection(),
+        getFlag() { return undefined; },
+      };
+      const media = {
+        loaded: true,
+        failed: false,
+        playing: false,
+        currentTime: 0,
+        duration: 30,
+        volume: 0.6,
+        context: { currentTime: 0, state: "running", sampleRate: 48000 },
+        stopCalls: 0,
+        scheduleCalls: [],
+        stop() {
+          this.playing = false;
+          this.stopCalls += 1;
+        },
+        schedule(callback, at) {
+          this.scheduleCalls.push({ callback, at });
+          return makeScheduleHandle();
+        },
+        addEventListener() {},
+        removeEventListener() {},
+      };
+      const playlistSound = Object.assign(new PlaylistSound(), {
+        id: `mid-segment-track-${scenario.label}`,
+        uuid: `PlaylistSound.mid-segment-${scenario.label}`,
+        name: `Mid-segment Track (${scenario.label})`,
+        path: "mid-segment.ogg",
+        parent: playlist,
+        playing: true,
+        pausedTime: null,
+        repeat: false,
+        volume: 0.6,
+        sound: media,
+        getFlag(_scope, key) {
+          return key === "loopWithin" ? loopWithin : undefined;
+        },
+        _onEnd() {},
+      });
+      playlist.sounds.push(playlistSound);
+      media._manager = playlistSound;
+      let nativeOptions;
+
+      try {
+        await play.call(media, async (options) => {
+          nativeOptions = { ...options };
+          media.playing = true;
+          // Model playback that has advanced before the delayed looper adopts
+          // Foundry's original media object.
+          media.currentTime = scenario.adoptedCurrentTime;
+          media.volume = options.volume;
+          return media;
+        }, scenario.options);
+
+        for (let attempt = 0; attempt < 20 && !pendingStartup; attempt += 1) {
+          await Promise.resolve();
+        }
+        assert.ok(pendingStartup, `${scenario.label} should start its LoopingSound`);
+        assert.equal(await pendingStartup, true, `${scenario.label} startup result`);
+
+        const looper = State.getActiveLooper(playlistSound);
+        assert.ok(looper, `${scenario.label} should retain looper ownership`);
+        assert.equal(nativeOptions.offset, scenario.expectedNativeOffset, scenario.label);
+        assert.equal(media.currentTime, scenario.adoptedCurrentTime, scenario.label);
+        assert.equal(looper.isDestroyed, false, scenario.label);
+        assert.equal(looper.activeLoopSegment?.startSec, 5, scenario.label);
+        assert.equal(looper.activeLoopSegment?.endSec, 15, scenario.label);
+        assert.equal(looper.soundA, media, scenario.label);
+        assert.equal(looper.activeSound, media, scenario.label);
+        assert.equal(playlistSound.sound, media, scenario.label);
+        assert.equal(constructedSounds, 0, scenario.label);
+        assert.equal(media.stopCalls, 0, scenario.label);
+        assert.ok(startupWaitCalls <= 8, `${scenario.label} startup should settle without polling forever`);
+      } finally {
+        State.getActiveLooper(playlistSound)?.destroy(true);
+        State.clearActiveLooper(playlistSound);
+        delete media._manager;
+      }
+    }
+  } finally {
+    LoopingSound.prototype.start = originalLoopStart;
+    foundry.audio.AudioTimeout.wait = originalAudioWait;
+    foundry.audio.Sound = PreviousSound;
+    globalThis.libWrapper = previousLibWrapper;
+  }
+});
+
+test("internal-loop Sound.play offset precedence preserves beginning, resume, and explicit offsets", async () => {
+  const registrations = new Map();
+  const previousLibWrapper = globalThis.libWrapper;
+  const originalWait = foundry.audio.AudioTimeout.wait;
+  globalThis.libWrapper = {
+    register(_module, target, callback) {
+      registrations.set(target, callback);
+    },
+  };
+
+  const cases = [
+    {
+      label: "start from beginning",
+      startFromBeginning: true,
+      pausedTime: null,
+      options: {},
+      expectedOffset: 0,
+      expectsScheduledLooper: true,
+    },
+    {
+      label: "resume",
+      startFromBeginning: false,
+      pausedTime: 7.25,
+      options: {},
+      expectedOffset: 7.25,
+      expectsScheduledLooper: false,
+    },
+    {
+      label: "explicit fresh offset",
+      startFromBeginning: false,
+      pausedTime: null,
+      options: { offset: 9.5 },
+      expectedOffset: 9.5,
+      expectsScheduledLooper: true,
+    },
+    {
+      label: "explicit offset overrides resume",
+      startFromBeginning: false,
+      pausedTime: 7.25,
+      options: { offset: 11.5 },
+      expectedOffset: 11.5,
+      expectsScheduledLooper: false,
+    },
+    {
+      label: "zero paused time is fresh",
+      startFromBeginning: false,
+      pausedTime: 0,
+      options: {},
+      expectedOffset: 5,
+      expectsScheduledLooper: true,
+    },
+    {
+      label: "crossfade skip intro",
+      startFromBeginning: false,
+      pausedTime: null,
+      options: { _fromCrossfade: true },
+      expectedOffset: 5,
+      expectsScheduledLooper: true,
+    },
+  ];
+
+  try {
+    // Keep newly scheduled loopers from starting; this test isolates the
+    // wrapper's native-play contract and destroys each pending looper below.
+    foundry.audio.AudioTimeout.wait = () => new Promise(() => {});
+    registerSoundPlaybackWrappers();
+    const play = registrations.get("foundry.audio.Sound.prototype.play");
+
+    for (const scenario of cases) {
+      const loopWithin = {
+        enabled: true,
+        active: true,
+        startFromBeginning: scenario.startFromBeginning,
+        segments: [{
+          label: "Offset Contract",
+          start: "00:05.000",
+          end: "00:15.000",
+          crossfadeMs: 500,
+          loopCount: 0,
+          skipToNext: false,
+        }],
+      };
+      const playlist = {
+        id: `offset-contract-playlist-${scenario.label}`,
+        name: `Offset Contract Playlist (${scenario.label})`,
+        mode: CONST.PLAYLIST_MODES.SEQUENTIAL,
+        fade: 0,
+        playing: true,
+        isOwner: false,
+        sounds: new TestSoundCollection(),
+        getFlag() { return undefined; },
+      };
+      const media = {
+        loaded: true,
+        failed: false,
+        playing: false,
+        currentTime: 0,
+        duration: 30,
+        volume: 0.6,
+        stop() { this.playing = false; },
+      };
+      const playlistSound = Object.assign(new PlaylistSound(), {
+        id: `offset-contract-track-${scenario.label}`,
+        uuid: `PlaylistSound.offset-contract-${scenario.label}`,
+        name: `Offset Contract Track (${scenario.label})`,
+        path: "offset-contract.ogg",
+        parent: playlist,
+        playing: true,
+        pausedTime: scenario.pausedTime,
+        repeat: false,
+        volume: 0.6,
+        sound: media,
+        getFlag(_scope, key) {
+          return key === "loopWithin" ? loopWithin : undefined;
+        },
+        _onEnd() {},
+      });
+      playlist.sounds.push(playlistSound);
+      media._manager = playlistSound;
+      let receivedOptions;
+
+      try {
+        await play.call(media, async (options) => {
+          receivedOptions = { ...options };
+          media.playing = true;
+          media.currentTime = Number(options.offset) || 0;
+          return media;
+        }, scenario.options);
+
+        assert.equal(receivedOptions.offset, scenario.expectedOffset, scenario.label);
+        assert.equal(
+          Boolean(State.getActiveLooper(playlistSound)),
+          scenario.expectsScheduledLooper,
+          `${scenario.label} post-play ownership`
+        );
+      } finally {
+        State.getActiveLooper(playlistSound)?.destroy(true);
+        State.clearActiveLooper(playlistSound);
+        delete media._manager;
+      }
+    }
+  } finally {
+    foundry.audio.AudioTimeout.wait = originalWait;
+    globalThis.libWrapper = previousLibWrapper;
+  }
+});
+
+test("direct media resume preserves its paused looper without injecting a skip-intro offset", async () => {
+  const registrations = new Map();
+  const previousLibWrapper = globalThis.libWrapper;
+  globalThis.libWrapper = {
+    register(_module, target, callback) {
+      registrations.set(target, callback);
+    },
+  };
+
+  const loopWithin = {
+    enabled: true,
+    active: true,
+    startFromBeginning: false,
+    segments: [{
+      label: "Direct Pause Segment",
+      start: "00:05.000",
+      end: "00:15.000",
+      crossfadeMs: 500,
+      loopCount: 0,
+      skipToNext: false,
+    }],
+  };
+  const playlist = {
+    id: "direct-media-resume-playlist",
+    name: "Direct Media Resume Playlist",
+    mode: CONST.PLAYLIST_MODES.SEQUENTIAL,
+    fade: 0,
+    playing: true,
+    isOwner: false,
+    sounds: new TestSoundCollection(),
+    getFlag() { return undefined; },
+  };
+  const scheduleHandles = [];
+  const media = {
+    loaded: true,
+    failed: false,
+    playing: true,
+    pausedTime: null,
+    currentTime: 8.25,
+    duration: 30,
+    volume: 0.6,
+    stopCalls: 0,
+    schedule(callback, at) {
+      const handle = {
+        callback,
+        at,
+        cancelled: false,
+        cancel() { this.cancelled = true; },
+        catch() { return this; },
+      };
+      scheduleHandles.push(handle);
+      return handle;
+    },
+    stop() {
+      this.playing = false;
+      this.stopCalls += 1;
+    },
+  };
+  const playlistSound = Object.assign(new PlaylistSound(), {
+    id: "direct-media-resume-track",
+    uuid: "PlaylistSound.direct-media-resume-track",
+    name: "Direct Media Resume Track",
+    path: "direct-media-resume.ogg",
+    parent: playlist,
+    playing: true,
+    pausedTime: null,
+    repeat: false,
+    volume: 0.6,
+    sound: media,
+    getFlag(_scope, key) {
+      return key === "loopWithin" ? loopWithin : undefined;
+    },
+    _onEnd() {},
+  });
+  playlist.sounds.push(playlistSound);
+  media._manager = playlistSound;
+
+  const config = Flags.getLoopConfig(playlistSound);
+  const looper = new LoopingSound(playlistSound, config);
+  looper.soundA = media;
+  looper.activeLoopSegment = config.segments[0];
+  looper.loopsCompleted = 2;
+  State.setActiveLooper(playlistSound, looper);
+
+  try {
+    registerSoundPlaybackWrappers();
+    const pause = registrations.get("foundry.audio.Sound.prototype.pause");
+    const play = registrations.get("foundry.audio.Sound.prototype.play");
+
+    assert.equal(
+      pause.call(media, function () {
+        this.playing = false;
+        this.pausedTime = 8.25;
+        return this;
+      }),
+      media
+    );
+    assert.equal(playlistSound.pausedTime, null);
+    assert.ok(looper.pausedSnapshot, "direct Sound.pause should snapshot the existing looper");
+    const pausedGeneration = looper._handoffGeneration;
+    const pausedSnapshot = looper.pausedSnapshot;
+    let nativeOptions;
+
+    assert.equal(
+      await play.call(media, async function (options) {
+        nativeOptions = { ...options };
+        this.playing = true;
+        this.currentTime = this.pausedTime;
+        this.pausedTime = null;
+        return this;
+      }),
+      media
+    );
+
+    assert.equal(nativeOptions.offset, undefined);
+    assert.notEqual(nativeOptions.offset, config.segments[0].startSec);
+    assert.equal(State.getActiveLooper(playlistSound), looper);
+    assert.equal(looper.isDestroyed, false);
+    assert.equal(looper._handoffGeneration, pausedGeneration);
+    assert.notEqual(pausedSnapshot, null);
+    assert.equal(looper.pausedSnapshot, null, "resumeLoopWithin should consume the paused snapshot");
+    assert.equal(looper.activeLoopSegment, config.segments[0]);
+    assert.equal(looper.soundA, media);
+    assert.equal(playlistSound.sound, media);
+    assert.equal(media.currentTime, 8.25);
+    assert.equal(media.stopCalls, 0);
+    assert.equal(scheduleHandles.length, 1, "the resumed loop should re-arm on the original media");
+  } finally {
+    State.getActiveLooper(playlistSound)?.destroy(true);
+    State.clearActiveLooper(playlistSound);
+    delete media._manager;
+    globalThis.libWrapper = previousLibWrapper;
+  }
+});
+
+test("zero document pause resumes an existing paused looper instead of replacing it", async () => {
+  const registrations = new Map();
+  const previousLibWrapper = globalThis.libWrapper;
+  globalThis.libWrapper = {
+    register(_module, target, callback) {
+      registrations.set(target, callback);
+    },
+  };
+
+  const loopWithin = {
+    enabled: true,
+    active: true,
+    startFromBeginning: false,
+    segments: [{
+      label: "Zero Pause Segment",
+      start: "00:05.000",
+      end: "00:15.000",
+      crossfadeMs: 500,
+      loopCount: 0,
+      skipToNext: false,
+    }],
+  };
+  const playlist = {
+    id: "zero-pause-resume-playlist",
+    name: "Zero Pause Resume Playlist",
+    mode: CONST.PLAYLIST_MODES.SEQUENTIAL,
+    fade: 0,
+    playing: true,
+    isOwner: false,
+    sounds: new TestSoundCollection(),
+    getFlag() { return undefined; },
+  };
+  const scheduleHandles = [];
+  const media = {
+    loaded: true,
+    failed: false,
+    playing: true,
+    currentTime: 8.25,
+    duration: 30,
+    volume: 0.6,
+    stopCalls: 0,
+    schedule(callback, at) {
+      const handle = {
+        callback,
+        at,
+        cancelled: false,
+        cancel() { this.cancelled = true; },
+        catch() { return this; },
+      };
+      scheduleHandles.push(handle);
+      return handle;
+    },
+    stop() {
+      this.playing = false;
+      this.stopCalls += 1;
+    },
+  };
+  const playlistSound = Object.assign(new PlaylistSound(), {
+    id: "zero-pause-resume-track",
+    uuid: "PlaylistSound.zero-pause-resume-track",
+    name: "Zero Pause Resume Track",
+    path: "zero-pause-resume.ogg",
+    parent: playlist,
+    playing: true,
+    pausedTime: 0,
+    repeat: false,
+    volume: 0.6,
+    sound: media,
+    getFlag(_scope, key) {
+      return key === "loopWithin" ? loopWithin : undefined;
+    },
+    _onEnd() {},
+  });
+  playlist.sounds.push(playlistSound);
+  media._manager = playlistSound;
+
+  const config = Flags.getLoopConfig(playlistSound);
+  const looper = new LoopingSound(playlistSound, config);
+  looper.soundA = media;
+  looper.activeLoopSegment = config.segments[0];
+  looper.loopsCompleted = 1;
+  State.setActiveLooper(playlistSound, looper);
+  looper.pause();
+  media.playing = false;
+  delete media.pausedTime;
+
+  try {
+    assert.ok(looper.pausedSnapshot, "the existing looper must carry resume ownership");
+    assert.equal(playlistSound.pausedTime, 0);
+    assert.equal(media.pausedTime, undefined);
+    const pausedGeneration = looper._handoffGeneration;
+    registerSoundPlaybackWrappers();
+    const play = registrations.get("foundry.audio.Sound.prototype.play");
+    let nativeOptions;
+
+    assert.equal(
+      await play.call(media, async function (options) {
+        nativeOptions = { ...options };
+        this.playing = true;
+        this.currentTime = Number(options.offset) || 0;
+        return this;
+      }),
+      media
+    );
+
+    assert.equal(nativeOptions.offset, 0);
+    assert.notEqual(nativeOptions.offset, config.segments[0].startSec);
+    assert.equal(State.getActiveLooper(playlistSound), looper);
+    assert.equal(looper.isDestroyed, false);
+    assert.equal(looper._handoffGeneration, pausedGeneration);
+    assert.equal(looper.pausedSnapshot, null, "the paused looper should take the resume path");
+    assert.equal(looper.activeLoopSegment, config.segments[0]);
+    assert.equal(looper.soundA, media);
+    assert.equal(playlistSound.sound, media);
+    assert.equal(media.stopCalls, 0);
+    assert.equal(scheduleHandles.length, 1);
+  } finally {
+    State.getActiveLooper(playlistSound)?.destroy(true);
+    State.clearActiveLooper(playlistSound);
+    delete media._manager;
+    globalThis.libWrapper = previousLibWrapper;
+  }
+});
+
+test("native gap pause hook cancels the timer and finalizes one cancellation", async () => {
+  const unregister = registerPlaybackDocumentHooksForTest();
+  const previous = { user: game.user, users: game.users };
+  const gm = { id: "pause-gap-gm", name: "Pause Gap GM", isGM: true, active: true };
+  const users = [gm];
+  users.get = (id) => users.find((user) => user.id === id);
+  game.user = gm;
+  game.users = users;
+
+  let timerCancelled = false;
+  let resolved;
+  const events = [];
+  const playlist = {
+    id: "native-pause-gap-playlist",
+    name: "Native Pause Gap Playlist",
+    isOwner: true,
+    playing: true,
+    sounds: new TestSoundCollection(),
+  };
+  const media = {
+    playing: true,
+    stop() { this.playing = false; },
+  };
+  const gap = makeTestSound({
+    id: "native-pause-gap",
+    parent: playlist,
+    playing: false,
+    sound: media,
+    flags: { isSilenceGap: true, gapDuration: 1000 },
+  });
+  playlist.sounds.push(gap);
+  const state = {
+    gap,
+    cancelled: false,
+    completionAttempt: null,
+    deletingForCompletion: false,
+    timer: { cancel() { timerCancelled = true; } },
+    resolve(value) { resolved = value; },
+  };
+  State.setSilenceState(playlist, state);
+  const onSilenceEnd = (event) => {
+    if (event?.playlist === playlist) events.push(event);
+  };
+  Hooks.on("the-sound-of-silence.silenceEnd", onSilenceEnd);
+
+  try {
+    Hooks.callAll("updatePlaylistSound", gap, { playing: false, pausedTime: 0.5 }, {}, gm.id);
+    await new Promise((resolve) => setTimeout(resolve, 5));
+
+    assert.equal(timerCancelled, true);
+    assert.equal(resolved, true);
+    assert.equal(state.cancelled, true);
+    assert.equal(State.getSilenceState(playlist), undefined);
+    assert.equal(playlist.sounds.has(gap.id), false);
+    assert.equal(media.playing, false);
+    assert.deepEqual(events.map(({ completed, cancelled }) => ({ completed, cancelled })), [
+      { completed: false, cancelled: true },
+    ]);
+  } finally {
+    Hooks.off("the-sound-of-silence.silenceEnd", onSilenceEnd);
+    State.clearSilenceState(playlist);
+    unregister();
+    game.user = previous.user;
+    game.users = previous.users;
+  }
+});
+
+test("natural-completion guards keep gap stop updates from becoming cancellations", async () => {
+  const unregister = registerPlaybackDocumentHooksForTest();
+  const previous = { user: game.user, users: game.users, playlists: game.playlists };
+  const gm = { id: "natural-guard-gm", name: "Natural Guard GM", isGM: true, active: true };
+  const users = [gm];
+  users.get = (id) => users.find((user) => user.id === id);
+  game.user = gm;
+  game.users = users;
+
+  try {
+    for (const guard of ["completionAttempt", "deletingForCompletion"]) {
+      let timerCancelCalls = 0;
+      let resolveCalls = 0;
+      const events = [];
+      const playlist = {
+        id: `natural-${guard}-playlist`,
+        name: `Natural ${guard} Playlist`,
+        isOwner: true,
+        playing: true,
+        sounds: new TestSoundCollection(),
+      };
+      const gap = makeTestSound({
+        id: `natural-${guard}-gap`,
+        parent: playlist,
+        playing: false,
+        flags: { isSilenceGap: true, gapDuration: 1000 },
+      });
+      playlist.sounds.push(gap);
+      game.playlists = [playlist];
+      const state = {
+        gap,
+        cancelled: false,
+        completionAttempt: guard === "completionAttempt" ? Promise.resolve(true) : null,
+        deletingForCompletion: guard === "deletingForCompletion",
+        timer: { cancel() { timerCancelCalls += 1; } },
+        resolve() { resolveCalls += 1; },
+      };
+      State.setSilenceState(playlist, state);
+      const onSilenceEnd = (event) => {
+        if (event?.playlist === playlist) events.push(event);
+      };
+      Hooks.on("the-sound-of-silence.silenceEnd", onSilenceEnd);
+
+      try {
+        Hooks.callAll("updatePlaylist", playlist, {
+          sounds: [{ _id: gap.id, playing: false, pausedTime: null }],
+        }, {}, gm.id);
+        await new Promise((resolve) => setTimeout(resolve, 5));
+
+        assert.equal(State.getSilenceState(playlist), state, `${guard} must retain natural ownership`);
+        assert.equal(state.cancelled, false, `${guard} must not classify the stop as cancellation`);
+        assert.equal(timerCancelCalls, 0);
+        assert.equal(resolveCalls, 0);
+        assert.equal(playlist.sounds.has(gap.id), true);
+        assert.deepEqual(events, []);
+      } finally {
+        Hooks.off("the-sound-of-silence.silenceEnd", onSilenceEnd);
+        State.clearSilenceState(playlist, state);
+      }
+    }
+  } finally {
+    unregister();
+    game.user = previous.user;
+    game.users = previous.users;
+    game.playlists = previous.playlists;
+  }
+});
+
+test("Play All excludes an orphan silence document from sequential selection", async () => {
+  const registrations = new Map();
+  const previousLibWrapper = globalThis.libWrapper;
+  globalThis.libWrapper = {
+    register(_module, target, callback) {
+      registrations.set(target, callback);
+    },
+  };
+
+  const playlist = {
+    id: "orphan-gap-play-all",
+    name: "Orphan Gap Play All",
+    mode: CONST.PLAYLIST_MODES.SEQUENTIAL,
+    playing: true,
+    isOwner: false,
+    playbackOrder: ["orphan-gap", "first-real", "second-real"],
+    sounds: new TestSoundCollection(),
+    getFlag() { return undefined; },
+    async update(changes) {
+      for (const update of changes.sounds ?? []) {
+        Object.assign(this.sounds.get(update._id), update);
+      }
+      this.playing = Boolean(changes.playing);
+      return this;
+    },
+  };
+  const gap = makeTestSound({
+    id: "orphan-gap",
+    parent: playlist,
+    playing: true,
+    flags: { isSilenceGap: true },
+  });
+  const first = makeTestSound({ id: "first-real", parent: playlist });
+  const second = makeTestSound({ id: "second-real", parent: playlist });
+  playlist.sounds.push(gap, first, second);
+
+  try {
+    registerPlaylistAdvanceWrappers();
+    const playAll = registrations.get("Playlist.prototype.playAll");
+    let nativeCalls = 0;
+    assert.equal(
+      await playAll.call(playlist, async () => {
+        nativeCalls += 1;
+        return playlist;
+      }),
+      playlist
+    );
+    assert.equal(nativeCalls, 0);
+    assert.equal(first.playing, true);
+    assert.equal(second.playing, false);
+    assert.equal(gap.playing, false);
+    assert.equal(gap.pausedTime, null);
+  } finally {
+    globalThis.libWrapper = previousLibWrapper;
+  }
+});
+
+test("Soundboard Play All stops an orphan gap without stopping active real tracks", async () => {
+  const registrations = new Map();
+  const previousLibWrapper = globalThis.libWrapper;
+  globalThis.libWrapper = {
+    register(_module, target, callback) {
+      registrations.set(target, callback);
+    },
+  };
+
+  let updateCalls = 0;
+  const playlist = {
+    id: "orphan-gap-soundboard-play-all",
+    name: "Orphan Gap Soundboard Play All",
+    mode: CONST.PLAYLIST_MODES.DISABLED,
+    playing: true,
+    isOwner: false,
+    playbackOrder: ["orphan-gap", "active-one", "inactive", "active-two"],
+    sounds: new TestSoundCollection(),
+    getFlag() { return undefined; },
+    async update(changes) {
+      updateCalls += 1;
+      for (const update of changes.sounds ?? []) {
+        Object.assign(this.sounds.get(update._id), update);
+      }
+      if (Object.prototype.hasOwnProperty.call(changes, "playing")) {
+        this.playing = Boolean(changes.playing);
+      }
+      return this;
+    },
+  };
+  const gap = makeTestSound({
+    id: "orphan-gap",
+    parent: playlist,
+    playing: true,
+    flags: { isSilenceGap: true },
+  });
+  const activeOne = makeTestSound({ id: "active-one", parent: playlist, playing: true });
+  const inactive = makeTestSound({ id: "inactive", parent: playlist, playing: false });
+  const activeTwo = makeTestSound({ id: "active-two", parent: playlist, playing: true });
+  playlist.sounds.push(gap, activeOne, inactive, activeTwo);
+
+  try {
+    registerPlaylistAdvanceWrappers();
+    const playAll = registrations.get("Playlist.prototype.playAll");
+    let nativeCalls = 0;
+    assert.equal(
+      await playAll.call(playlist, async () => {
+        nativeCalls += 1;
+        return playlist;
+      }),
+      playlist
+    );
+
+    assert.equal(nativeCalls, 0);
+    assert.equal(updateCalls, 1);
+    assert.equal(activeOne.playing, true);
+    assert.equal(activeTwo.playing, true);
+    assert.equal(inactive.playing, false);
+    assert.equal(gap.playing, false);
+    assert.equal(gap.pausedTime, null);
+  } finally {
+    globalThis.libWrapper = previousLibWrapper;
+  }
+});
+
+test("Stop All forces a delete-failed silence document inactive", async () => {
+  const registrations = new Map();
+  const previousLibWrapper = globalThis.libWrapper;
+  const previous = { user: game.user, users: game.users };
+  globalThis.libWrapper = {
+    register(_module, target, callback) {
+      registrations.set(target, callback);
+    },
+  };
+  game.user = { id: "stop-player", isGM: false, active: true };
+  game.users = [game.user];
+
+  let deleteCalls = 0;
+  const media = {
+    playing: true,
+    stop() { this.playing = false; },
+  };
+  const playlist = {
+    id: "delete-failed-gap-stop-all",
+    name: "Delete Failed Gap Stop All",
+    mode: CONST.PLAYLIST_MODES.SEQUENTIAL,
+    fade: 0,
+    playing: true,
+    isOwner: true,
+    sounds: new TestSoundCollection(),
+    getFlag() { return undefined; },
+    async updateEmbeddedDocuments(_type, updates) {
+      for (const update of updates) Object.assign(this.sounds.get(update._id), update);
+      return updates;
+    },
+    async update(changes) {
+      if (Object.prototype.hasOwnProperty.call(changes, "playing")) {
+        this.playing = Boolean(changes.playing);
+      }
+      return this;
+    },
+  };
+  const gap = makeTestSound({
+    id: "delete-failed-gap",
+    parent: playlist,
+    playing: true,
+    sound: media,
+    flags: { isSilenceGap: true },
+  });
+  gap.delete = async () => {
+    deleteCalls += 1;
+    throw new Error("injected delete failure");
+  };
+  playlist.sounds.push(gap);
+
+  try {
+    registerPlaylistCommandWrappers();
+    const stopAll = registrations.get("Playlist.prototype.stopAll");
+    assert.equal(await stopAll.call(playlist), playlist);
+    assert.equal(deleteCalls, 1);
+    assert.equal(playlist.sounds.has(gap.id), true);
+    assert.equal(gap.playing, false);
+    assert.equal(gap.pausedTime, null);
+    assert.equal(media.playing, false);
+    assert.equal(playlist.playing, false);
+  } finally {
+    State.clearStoppingFlag(playlist);
+    globalThis.libWrapper = previousLibWrapper;
+    game.user = previous.user;
+    game.users = previous.users;
+  }
+});
+
+test("silence cleanup stops a surviving gap before releasing state ownership", async () => {
+  const previous = { user: game.user, users: game.users };
+  const gm = { id: "cleanup-gap-gm", isGM: true, active: true };
+  game.user = gm;
+  game.users = [gm];
+
+  let resolved;
+  let timerCancelled = false;
+  const playlist = {
+    id: "surviving-gap-cleanup",
+    name: "Surviving Gap Cleanup",
+    sounds: new TestSoundCollection(),
+  };
+  const gap = makeTestSound({
+    id: "surviving-gap",
+    parent: playlist,
+    playing: true,
+    flags: { isSilenceGap: true, gapDuration: 1000 },
+  });
+  gap.delete = async () => {
+    throw new Error("injected delete failure");
+  };
+  gap.update = async (changes) => {
+    Object.assign(gap, changes);
+    return gap;
+  };
+  playlist.sounds.push(gap);
+  const silenceState = {
+    gap,
+    cancelled: false,
+    timer: { cancel() { timerCancelled = true; } },
+    resolve(value) { resolved = value; },
+  };
+  State.setSilenceState(playlist, silenceState);
+
+  try {
+    await State.cleanup(playlist, {
+      cleanSilence: true,
+      cleanCrossfade: false,
+      cleanLoopers: false,
+      cleanSoundscape: false,
+    });
+    assert.equal(timerCancelled, true);
+    assert.equal(resolved, true);
+    assert.equal(gap.playing, false);
+    assert.equal(gap.pausedTime, null);
+    assert.equal(playlist.sounds.has(gap.id), true);
+    assert.equal(State.getSilenceState(playlist), undefined);
+  } finally {
+    State.clearSilenceState(playlist);
+    game.user = previous.user;
+    game.users = previous.users;
+  }
+});
+
+test("reconciliation cannot recover a cancelled gap after delete and forced-stop both fail", async () => {
+  const previous = {
+    user: game.user,
+    users: game.users,
+    playlists: game.playlists,
+    setTimeout: globalThis.setTimeout,
+  };
+  const gm = { id: "double-failure-gm", isGM: true, active: true };
+  game.user = gm;
+  game.users = [gm];
+
+  const scheduled = [];
+  globalThis.setTimeout = (callback, delay) => {
+    scheduled.push({ callback, delay });
+    return scheduled.length;
+  };
+
+  let deleteCalls = 0;
+  let stopUpdateCalls = 0;
+  let timerCancelCalls = 0;
+  const resolutionValues = [];
+  const playlist = {
+    id: "cancelled-double-failure-playlist",
+    name: "Cancelled Double Failure Playlist",
+    isOwner: true,
+    mode: CONST.PLAYLIST_MODES.SEQUENTIAL,
+    playing: true,
+    playbackOrder: ["source", "cancelled-gap"],
+    sounds: new TestSoundCollection(),
+    getFlag() { return undefined; },
+  };
+  const source = makeTestSound({ id: "source", parent: playlist });
+  const gap = makeTestSound({
+    id: "cancelled-gap",
+    parent: playlist,
+    playing: true,
+    flags: {
+      isSilenceGap: true,
+      gapDuration: 60000,
+      gapStarted: Date.now(),
+      gapSourceSoundId: source.id,
+    },
+  });
+  gap.delete = async () => {
+    deleteCalls += 1;
+    throw new Error("injected persistent delete failure");
+  };
+  gap.update = async () => {
+    stopUpdateCalls += 1;
+    throw new Error("injected persistent stop failure");
+  };
+  playlist.sounds.push(source, gap);
+  game.playlists = [playlist];
+  const cancelledState = {
+    sourceSound: source,
+    sourceSoundId: source.id,
+    gap,
+    gapMs: 60000,
+    startedAt: Date.now(),
+    expectedEndAt: Date.now() + 60000,
+    cancelled: false,
+    completed: false,
+    advancementComplete: false,
+    completionAttempt: null,
+    deletingForCompletion: false,
+    timer: { cancel() { timerCancelCalls += 1; } },
+    resolve(value) { resolutionValues.push(value); },
+  };
+  State.setSilenceState(playlist, cancelledState);
+
+  try {
+    await State.cleanup(playlist, {
+      cleanSilence: true,
+      cleanCrossfade: false,
+      cleanLoopers: false,
+      cleanSoundscape: false,
+    });
+
+    assert.equal(deleteCalls, 1);
+    assert.equal(stopUpdateCalls, 1);
+    assert.equal(timerCancelCalls, 1);
+    assert.equal(cancelledState.cancelled, true);
+    assert.equal(cancelledState.cleanupRetryScheduled, true);
+    assert.equal(State.getSilenceState(playlist), cancelledState);
+    assert.equal(gap.playing, true);
+    assert.deepEqual(resolutionValues, []);
+    assert.equal(scheduled.length, 1);
+
+    assert.equal(await recoverPersistedSilenceGaps("before cancelled cleanup retry"), false);
+    const stateAfterRecovery = State.getSilenceState(playlist);
+    assert.notEqual(stateAfterRecovery?.recovered, true);
+    assert.ok(
+      stateAfterRecovery === undefined || stateAfterRecovery === cancelledState,
+      "reconciliation must not replace cancelled cleanup ownership with a recovered timer"
+    );
+    assert.deepEqual(resolutionValues, []);
+  } finally {
+    State.getSilenceState(playlist)?.timer?.cancel?.();
+    State.clearSilenceState(playlist);
+    globalThis.setTimeout = previous.setTimeout;
+    game.user = previous.user;
+    game.users = previous.users;
+    game.playlists = previous.playlists;
+  }
+});
+
+test("playlist looping and crossfade preload skip temporary silence documents", async () => {
+  const previous = { user: game.user, users: game.users };
+  const gm = { id: "filtered-order-gm", isGM: true, active: true };
+  game.user = gm;
+  game.users = [gm];
+
+  const selected = [];
+  const playlist = {
+    id: "filtered-loop-playlist",
+    name: "Filtered Loop Playlist",
+    mode: CONST.PLAYLIST_MODES.SEQUENTIAL,
+    playing: true,
+    isOwner: true,
+    playbackOrder: ["gap", "first", "source", "target"],
+    sounds: new TestSoundCollection(),
+    getFlag(_scope, key) { return key === "loopPlaylist"; },
+    async playSound(sound) {
+      selected.push(sound.id);
+      return this;
+    },
+  };
+  const first = makeTestSound({ id: "first", parent: playlist });
+  const source = makeTestSound({ id: "source", parent: playlist });
+  const target = makeTestSound({ id: "target", parent: playlist });
+  const gap = makeTestSound({
+    id: "gap",
+    parent: playlist,
+    playing: true,
+    flags: { isSilenceGap: true },
+  });
+  playlist.sounds.push(first, source, target, gap);
+
+  try {
+    assert.equal(resolveNextCrossfadeSound(playlist, source), target);
+    assert.equal(await maybeLoopPlaylist(playlist), playlist);
+    assert.deepEqual(selected, ["first"]);
+  } finally {
+    game.user = previous.user;
+    game.users = previous.users;
   }
 });
 

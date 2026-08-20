@@ -16,6 +16,7 @@ import {
 import { cancelActiveFade, equalPowerCrossfade, fadeOutAndStop } from "./audio-fader.js";
 import { Flags } from "./flag-service.js";
 import { PlaybackClock } from "./playback-clock.js";
+import { getPlayableSoundsInOrder } from "./playlist/playable-order.js";
 import {
   activateCrossfadeSession,
   createCrossfadeSession,
@@ -153,6 +154,15 @@ export async function prepareIncomingCrossfadeMedia(ps) {
 export async function performCrossfade(playlist, soundToFade, { recovery = false, incomingSound = null, reason = "auto" } = {}) {
   const soundOut = soundToFade?.sound;
   if (!playlist || !soundToFade) return false;
+  if (Flags.getSoundFlag(soundToFade, "isSilenceGap")) {
+    debug(`[CF] Skipping ${reason} crossfade because the outgoing document is a temporary silence gap.`);
+    cancelCrossfade(playlist);
+    return false;
+  }
+  if (incomingSound && Flags.getSoundFlag(incomingSound, "isSilenceGap")) {
+    debug(`[CF] Skipping ${reason} crossfade because the incoming document is a temporary silence gap.`);
+    return false;
+  }
 
   // Automatic transitions are authored by one deterministic GM. Explicit
   // user actions remain available to any GM who owns the playlist.
@@ -184,10 +194,10 @@ export async function performCrossfade(playlist, soundToFade, { recovery = false
   debug(`[CF] ${recovery ? "Recovery" : reason} crossfade triggered for "${soundToFade.name}". Fading out over ${fadeMs}ms.`);
 
   // 1. Find the next track to play.
-  const order = playlist.playbackOrder;
-  const currentIndex = order.indexOf(soundToFade.id);
-  const nextId = order[currentIndex + 1];
-  let soundToPlay = incomingSound instanceof PlaylistSound ? incomingSound : (nextId ? playlist.sounds.get(nextId) : null);
+  const order = getPlayableSoundsInOrder(playlist);
+  const currentIndex = order.findIndex((sound) => sound.id === soundToFade.id);
+  const nextSound = currentIndex >= 0 ? order[currentIndex + 1] : null;
+  let soundToPlay = incomingSound instanceof PlaylistSound ? incomingSound : nextSound;
 
   if (soundToPlay?.id === soundToFade.id) {
     debug(`[CF] Skipping crossfade because incoming and outgoing sound are the same.`);
@@ -197,7 +207,7 @@ export async function performCrossfade(playlist, soundToFade, { recovery = false
   if (!soundToPlay && !incomingSound) {
     if (Flags.getPlaylistFlag(playlist, "loopPlaylist") && order.length > 0) {
       debug('[CF] Reached end of playlist; looping back to the start.');
-      soundToPlay = playlist.sounds.get(order[0]);
+      soundToPlay = order[0];
     }
   }
 
@@ -418,6 +428,7 @@ export function cancelCrossfade(playlist) {
  */
 export async function scheduleCrossfade(playlist, ps, { force = false } = {}) {
   if (!playlist?.isOwner || !PlaylistActionAuthority.isAuthorizedGM() || !ps) return;
+  if (Flags.getSoundFlag(ps, "isSilenceGap")) return;
   if (![PM.SEQUENTIAL, PM.SHUFFLE].includes(playlist.mode)) return;
   if (!Flags.getPlaybackMode(playlist).crossfade) return;
 

@@ -330,6 +330,60 @@ export function cancelActiveFade(sound) {
 }
 
 /**
+ * Reserve fade ownership before native Sound.play() can synchronously expose
+ * the sound to playlist sync hooks. Foundry reuses gainNode across playbacks,
+ * so creating and priming it here keeps a fresh source silent from its first
+ * audio quantum; the native play call is also given volume: 0 by its wrapper.
+ *
+ * @param {Sound} sound The Foundry Sound that is about to start.
+ * @param {object} [options]
+ * @param {number} [options.targetVol] Intended volume after the fade.
+ * @param {number} [options.duration] Intended fade duration in milliseconds.
+ * @returns {object|null} The provisional fade ownership token.
+ */
+export function reserveFadeIn(sound, { targetVol = 1, duration = 0 } = {}) {
+  if (!sound) return null;
+
+  const token = State.markSoundAsFading(sound, {
+    type: "fade-in-start",
+    duration: Math.max(0, Number(duration) || 0),
+    targetVol: clampVolume(targetVol, 1),
+  });
+  if (!token) return null;
+
+  try {
+    ensureAudioContext();
+    const context = sound.context;
+    if (!sound.gainNode && typeof context?.createGain === "function") {
+      sound.gainNode = context.createGain();
+    }
+
+    const gain = sound.gain ?? sound.gainNode?.gain;
+    if (gain && context) {
+      cancelGainAutomation(gain, context, 0, "reserveFadeIn");
+    }
+  } catch (err) {
+    // Keep ownership even if an unusual Sound implementation cannot be
+    // pre-primed. Native play(volume: 0) remains the safe fallback, and the
+    // real fade will either take ownership or release this token.
+    debug(`[AF] Could not pre-prime startup gain:`, err?.message ?? err);
+  }
+
+  return token;
+}
+
+/**
+ * Release a provisional fade token without disturbing a newer fade owner.
+ * @param {Sound} sound
+ * @param {object|null} token
+ * @returns {boolean}
+ */
+export function releaseFadeInReservation(sound, token) {
+  if (!sound || !token) return false;
+  return State.clearFadingSound(sound, token);
+}
+
+/**
  * Fades a sound using the globally configured curve type.
  * Executed on the audio thread for precise, glitch-free fading.
  *
@@ -337,14 +391,27 @@ export function cancelActiveFade(sound) {
  * @param {object} options
  * @param {number} options.targetVol The final volume (0 to 1).
  * @param {number} options.duration The duration of the fade in milliseconds.
+ * @param {number} [options.startVol] Explicit starting volume for the curve.
+ * @param {object} [options.replaceToken] Provisional token this fade must own
+ *   and atomically replace.
  * @returns {object|null} The fade ownership token, if a curve was scheduled.
  */
-export function advancedFade(sound, { targetVol, duration }) {
+export function advancedFade(sound, {
+  targetVol,
+  duration,
+  startVol: requestedStartVol,
+  replaceToken = null,
+} = {}) {
+  if (replaceToken && !State.isCurrentFadeToken(sound, replaceToken)) return null;
   ensureAudioContext();
-  if (!sound?.gain) return;
+  if (!sound?.gain) return null;
   targetVol = clampVolume(targetVol, 1);
   if (!Number.isFinite(duration) || duration <= 0) {
-    cancelActiveFade(sound);
+    const gain = sound.gain;
+    const context = sound.context;
+    cancelGainAutomation(gain, context, targetVol, "advancedFade immediate");
+    if (replaceToken) State.clearFadingSound(sound, replaceToken);
+    else State.clearFadingSound(sound);
     sound.volume = targetVol;
     return null;
   }
@@ -354,7 +421,8 @@ export function advancedFade(sound, { targetVol, duration }) {
   const now = context.currentTime;
 
   // Read current value and handle potential NaN from interrupted curves.
-  let startVol = gain.value;
+  let startVol = Number(requestedStartVol);
+  if (!Number.isFinite(startVol)) startVol = gain.value;
   if (!Number.isFinite(startVol)) {
     // Fallback: use the Sound's volume property or target as starting point
     startVol = clampVolume(sound.volume, targetVol);
@@ -362,9 +430,14 @@ export function advancedFade(sound, { targetVol, duration }) {
   }
   startVol = clampVolume(startVol, targetVol);
 
-  // Cancel any existing scheduled values and clear their token before replacing them.
+  // Cancel any existing scheduled values. A provisional startup token is
+  // replaced without an unowned window, so sync/volume hooks stay blocked.
   cancelGainAutomation(gain, context, startVol, "advancedFade");
-  State.clearFadingSound(sound);
+  if (replaceToken) {
+    if (!State.isCurrentFadeToken(sound, replaceToken)) return null;
+  } else {
+    State.clearFadingSound(sound);
+  }
 
   const durationSec = duration / 1000;
 
@@ -375,17 +448,32 @@ export function advancedFade(sound, { targetVol, duration }) {
   const direction = targetVol >= startVol ? "in" : "out";
   const curveType = getFadeCurveType(direction);
   const curve = generateFadeCurve(startVol, targetVol, resolution, curveType);
-  const token = State.startFade(sound, {
+  const fadeMetadata = {
     type: `fade-${direction}`,
     duration,
     targetVol,
     curveType,
-  });
+  };
+  const token = replaceToken
+    ? State.replaceFade(sound, replaceToken, fadeMetadata)
+    : State.startFade(sound, fadeMetadata);
+  if (!token) return null;
 
   debug(`[AF] Fade-${direction} (${curveType}): ${startVol.toFixed(3)} → ${targetVol.toFixed(3)} over ${duration}ms (${resolution} samples)`);
 
   // Schedule on the audio thread (slight offset to avoid collision with setValueAtTime)
-  scheduleGainCurve(gain, context, curve, now + 0.001, durationSec, `fade-${direction}`);
+  try {
+    scheduleGainCurve(gain, context, curve, now + 0.001, durationSec, `fade-${direction}`);
+  } catch (err) {
+    State.clearFadingSound(sound, token);
+    try {
+      cancelGainAutomation(gain, context, targetVol, "advancedFade fallback");
+      sound.volume = targetVol;
+    } catch (_) {
+      // Preserve the original scheduling error for the caller.
+    }
+    throw err;
+  }
   clearFadeTokenAfter(sound, token, duration);
   return token;
 }

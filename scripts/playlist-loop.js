@@ -3,6 +3,11 @@
  * @description Provides the logic to automatically restart a playlist when it reaches its natural end,
  * if the "Loop Entire Playlist" flag is enabled.
  */
+import { Flags } from "./flag-service.js";
+import {
+    getPlayableSoundsInOrder,
+    hasSilenceGapDocuments,
+} from "./playlist/playable-order.js";
 import { MODULE_ID, PlaylistActionAuthority } from "./utils.js";
 import { cancelCrossfade } from "./cross-fade.js";
 import { debug } from "./utils.js";
@@ -15,7 +20,7 @@ const PM = CONST.PLAYLIST_MODES;
  * It is triggered when a playlist naturally concludes (i.e., its last track finishes).
  *
  * @param {Playlist} playlist The playlist document to potentially loop.
- * @returns {boolean|Promise<unknown>} The playAll result when a restart is triggered, otherwise false.
+ * @returns {boolean|Promise<unknown>} The restart result when triggered, otherwise false.
  */
 export function maybeLoopPlaylist(playlist) {
     if (!playlist) return false;
@@ -27,20 +32,41 @@ export function maybeLoopPlaylist(playlist) {
     const ALLOWED = [PM.SEQUENTIAL, PM.SHUFFLE, PM.SIMULTANEOUS];
     if (!ALLOWED.includes(playlist.mode)) return false;
 
-    // In SIMULTANEOUS mode, only loop if NOTHING is still playing.
-    if (playlist.mode === PM.SIMULTANEOUS && playlist.sounds.some(s => s.playing)) return false;
+    const playableSounds = getPlayableSoundsInOrder(playlist);
+
+    // In SIMULTANEOUS mode, only loop if no real playlist sound is still playing.
+    if (playlist.mode === PM.SIMULTANEOUS && playableSounds.some(s => s.playing)) return false;
 
     // Check if the loop flag is enabled for this playlist.
     if (!playlist.getFlag(MODULE_ID, "loopPlaylist")) return false;
 
-    // Do not attempt to loop an empty playlist.
-    if (!playlist.sounds?.size) return false;
+    // Do not let a temporary gap make an otherwise empty playlist loopable.
+    if (!playableSounds.length) return false;
 
     debug(`[LP] 🔁 Restarting playlist "${playlist.name}"`);
 
     // Clear any stale cross-fade timer from the previous playback cycle.
     cancelCrossfade(playlist);
 
-    // `playAll()` handles all modes correctly and regenerates the playback order for Shuffle mode.
+    // A persisted silence gap must remain until the real restart commits, but
+    // Foundry's playAll() can select that temporary document from playbackOrder.
+    // Start the first real track explicitly whenever a gap is present.
+    if ([PM.SEQUENTIAL, PM.SHUFFLE].includes(playlist.mode)) {
+        const firstSound = playableSounds[0];
+        if (hasSilenceGapDocuments(playlist)) return playlist.playSound(firstSound);
+    }
+
+    if (playlist.mode === PM.SIMULTANEOUS && hasSilenceGapDocuments(playlist)) {
+        return playlist.update({
+            playing: true,
+            sounds: Array.from(playlist.sounds ?? []).map((sound) => ({
+                _id: sound.id,
+                playing: !Flags.getSoundFlag(sound, "isSilenceGap"),
+                pausedTime: null,
+            })),
+        });
+    }
+
+    // With no temporary documents, retain Foundry's native mode behavior.
     return playlist.playAll();
 }

@@ -3,6 +3,7 @@
  * @description Playlist and sound document update hooks for tracing, clocks, and visible volume sync.
  */
 import { MODULE_ID, debug } from "../utils.js";
+import { Flags } from "../flag-service.js";
 import { PlaybackClock } from "../playback-clock.js";
 import { State } from "../state-manager.js";
 import {
@@ -18,6 +19,26 @@ import {
   syncPlaylistVolumeControls,
   syncSoundVolumeControls,
 } from "../personal-audio-mix.js";
+
+function cancelExternallyStoppedSilenceGap(playlist, soundId) {
+  const silenceState = State.getSilenceState(playlist);
+  if (
+    !silenceState ||
+    silenceState.cancelled ||
+    silenceState.gap?.id !== soundId ||
+    silenceState.completionAttempt ||
+    silenceState.deletingForCompletion
+  ) return;
+
+  State.cleanup(playlist, {
+    cleanSilence: true,
+    cleanCrossfade: false,
+    cleanLoopers: false,
+    cleanSoundscape: false,
+  }).catch((err) =>
+    debug(`[Silence] Failed to cancel externally stopped gap "${silenceState.gap?.name}":`, err?.message ?? err)
+  );
+}
 
 export function registerPlaybackDocumentHooks() {
   Hooks.on("updatePlaylist", (playlist, changes, options, userId) => {
@@ -36,6 +57,15 @@ export function registerPlaybackDocumentHooks() {
       foundry.utils.hasProperty(changes ?? {}, `flags.${MODULE_ID}.soundscapeMode`) ||
       foundry.utils.hasProperty(changes ?? {}, `flags.${MODULE_ID}.${PlaybackClock.FLAG_KEY}`);
     if (!relevant) return;
+
+    if (Array.isArray(changes?.sounds)) {
+      for (const soundChange of changes.sounds) {
+        if (soundChange?.playing !== false) continue;
+        const soundDoc = playlist.sounds.get(soundChange._id);
+        if (!soundDoc || !Flags.getSoundFlag(soundDoc, "isSilenceGap")) continue;
+        cancelExternallyStoppedSilenceGap(playlist, soundDoc.id);
+      }
+    }
 
     if (changes.playing === true || changes.sounds?.some?.((sound) => sound?.playing === true)) {
       State.clearStoppingFlag(playlist);
@@ -79,6 +109,16 @@ export function registerPlaybackDocumentHooks() {
 
   Hooks.on("updatePlaylistSound", (soundDoc, changes, options, userId) => {
     if (!Object.prototype.hasOwnProperty.call(changes ?? {}, "playing")) return;
+    if (
+      changes.playing === false &&
+      Flags.getSoundFlag(soundDoc, "isSilenceGap")
+    ) {
+      // Native pause writes directly to the embedded sound and bypasses the
+      // playlist command wrappers. Treat it as cancellation immediately so
+      // the old wall-clock timer cannot later advance or resume a 100ms file
+      // at a synthetic multi-second offset.
+      cancelExternallyStoppedSilenceGap(soundDoc.parent, soundDoc.id);
+    }
     if (changes.playing === true) State.clearStoppingFlag(soundDoc.parent);
     debugPlaybackTrace("updatePlaylistSound", soundDoc.parent, {
       sound: soundDoc.name,

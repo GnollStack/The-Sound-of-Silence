@@ -11,8 +11,10 @@ import {
 } from "./legacy-loop-migration.js";
 import { Silence } from "./silence.js";
 import { State } from "./state-manager.js";
+import { requireNamedPlaylistSounds } from "./diagnostics-fixture-selection.js";
 import { activatePlaylistSidebar } from "./diagnostics-sidebar.js";
 import { getCrossfadePreloadDiagnostics } from "./playback/preload-coordinator.js";
+import { getPlayableSoundsInOrder } from "./playlist/playable-order.js";
 import { MODULE_ID, PlaylistActionAuthority } from "./utils.js";
 
 export const FIXTURE_FLAG = "mcpAutomationFixture";
@@ -938,6 +940,7 @@ async function runClientSyncScenario(api, scenario, runId, { timeoutMs }) {
 async function runScenario(api, scenario, runId) {
   const tests = [];
   let playlist = null;
+  const scenarioCleanups = [];
 
   try {
     if (scenario === "basicPlayback") {
@@ -1073,16 +1076,19 @@ async function runScenario(api, scenario, runId) {
             fixtureSound("Preload Source", {
               runId,
               scenario,
-              path: createToneDataUri({ durationSec: 8, frequency: 330 }),
+              path: createToneDataUri({ durationSec: 4, frequency: 330 }),
             }),
             fixtureSound("Preload Target", {
               runId,
               scenario,
-              path: createToneDataUri({ durationSec: 1, frequency: 440 }),
+              path: createToneDataUri({ durationSec: 4, frequency: 440 }),
             }),
           ],
         });
-        const [source, target] = Array.from(playlist.sounds);
+        const [source, target] = getPlayableSoundsInOrder(playlist);
+        if (!source || !target) {
+          throw new Error("Crossfade preload fixture did not create two playable sounds.");
+        }
         await playlist.playSound(source);
         await waitForPlayingSound(playlist, {
           soundId: source.id,
@@ -1110,29 +1116,220 @@ async function runScenario(api, scenario, runId) {
         if (CONFIG.Playlist) CONFIG.Playlist.autoPreloadSeconds = originalNativeLead;
       }
     } else if (scenario === "silence") {
+      const naturalGapMs = 200;
+      const manualGapMs = 500;
       playlist = await createFixturePlaylist(runId, scenario, {
         mode: playlistMode("SEQUENTIAL", 1),
+        fade: 0,
         flags: {
           silenceEnabled: true,
           silenceMode: "static",
-          silenceDuration: 250,
+          silenceDuration: naturalGapMs,
         },
         sounds: [
-          fixtureSound("Silence Source", { runId, scenario, durationSec: 0.8, frequency: 330 }),
-          fixtureSound("Silence Next", { runId, scenario, durationSec: 0.8, frequency: 440 }),
+          fixtureSound("Silence Previous", {
+            runId,
+            scenario,
+            path: createToneDataUri({ durationSec: 3, frequency: 220 }),
+          }),
+          fixtureSound("Silence Source", {
+            runId,
+            scenario,
+            path: createToneDataUri({ durationSec: 3, frequency: 330 }),
+          }),
+          fixtureSound("Silence Next", {
+            runId,
+            scenario,
+            path: createToneDataUri({ durationSec: 3, frequency: 440 }),
+          }),
         ],
       });
-      const [source] = Array.from(playlist.sounds);
+      const realOrder = getPlayableSoundsInOrder(playlist);
+      if (realOrder.length !== 3) {
+        throw new Error(`Silence fixture expected three real playback-order sounds; found ${realOrder.length}.`);
+      }
+      const [previous, source, target] = realOrder;
+      const silenceEvents = [];
+      const onSilenceEnd = (event) => {
+        if (event?.playlist?.id === playlist.id) silenceEvents.push(event);
+      };
+      Hooks.on("the-sound-of-silence.silenceEnd", onSilenceEnd);
+      scenarioCleanups.push(() => Hooks.off("the-sound-of-silence.silenceEnd", onSilenceEnd));
+
+      // A normal middle-of-playlist gap must advance to the next real track,
+      // even though the active temporary gap can appear first in playbackOrder.
       await playlist.playSound(source);
       await waitForPlayingSound(playlist, { soundId: source.id });
-      const silencePromise = Silence.playSilence(playlist, source);
-      await wait(100);
+      const naturalEventIndex = silenceEvents.length;
+      const naturalTransition = await Silence.startGap(playlist, source);
       record(tests, "silent gap state appears", () => State.hasSilenceState(playlist));
       record(tests, "silent gap document created", () => getSilenceGaps(playlist).length === 1);
-      await silencePromise;
-      await wait(350);
+      record(tests, "silent gap participates in raw Foundry playback order", () => {
+        const gap = getSilenceGaps(playlist)[0];
+        return !!gap && Array.from(playlist.playbackOrder ?? []).includes(gap.id);
+      });
+      const naturalCompletion = await waitForPromiseSettlement(
+        naturalTransition.completion,
+        { timeoutMs: 1500 }
+      );
+      const naturalAdvanced = await waitForCondition(
+        () => target.playing && !source.playing && !State.hasSilenceState(playlist),
+        { timeoutMs: 1000, intervalMs: 25 }
+      );
+      record(tests, "silent gap completes naturally", () =>
+        naturalTransition.started === true &&
+        naturalCompletion.settled === true &&
+        naturalCompletion.value === false &&
+        !naturalCompletion.error
+      );
+      record(tests, "natural silence emits one completed event", () => {
+        const events = silenceEvents.slice(naturalEventIndex);
+        return events.length === 1 && events[0].completed === true && events[0].cancelled !== true;
+      });
+      record(tests, "silent gap advances to the next real track", () =>
+        naturalAdvanced && getPlayingSound(playlist)?.id === target.id
+      );
       record(tests, "silent gap state clears", () => !State.hasSilenceState(playlist));
       record(tests, "silent gap document removed", () => getSilenceGaps(playlist).length === 0);
+
+      // At the real-order boundary, Loop Entire Playlist must restart the
+      // first real track instead of selecting the still-persisted gap marker.
+      await playlist.stopAll();
+      await api.updatePlaylistConfig(playlist, { loopPlaylist: true });
+      await playlist.playSound(target);
+      await waitForPlayingSound(playlist, { soundId: target.id });
+      const loopEventIndex = silenceEvents.length;
+      const loopTransition = await Silence.startGap(playlist, target);
+      const loopCompletion = await waitForPromiseSettlement(
+        loopTransition.completion,
+        { timeoutMs: 1500 }
+      );
+      const loopRestarted = await waitForCondition(
+        () => previous.playing && !target.playing && !State.hasSilenceState(playlist),
+        { timeoutMs: 1000, intervalMs: 25 }
+      );
+      record(tests, "loop-boundary silence completes naturally", () =>
+        loopTransition.started === true &&
+        loopCompletion.settled === true &&
+        loopCompletion.value === false &&
+        !loopCompletion.error
+      );
+      record(tests, "loop-boundary silence emits one completed event", () => {
+        const events = silenceEvents.slice(loopEventIndex);
+        return events.length === 1 && events[0].completed === true && events[0].cancelled !== true;
+      });
+      record(tests, "loop-boundary silence restarts the first real track", () =>
+        loopRestarted &&
+        getPlayingSound(playlist)?.id === previous.id &&
+        getSilenceGaps(playlist).length === 0
+      );
+
+      // The same boundary without Loop Entire Playlist must stop cleanly and
+      // still classify the gap as a natural completion rather than a cancel.
+      await playlist.stopAll();
+      await api.updatePlaylistConfig(playlist, { loopPlaylist: false });
+      await playlist.playSound(target);
+      await waitForPlayingSound(playlist, { soundId: target.id });
+      const terminalEventIndex = silenceEvents.length;
+      const terminalTransition = await Silence.startGap(playlist, target);
+      const terminalCompletion = await waitForPromiseSettlement(
+        terminalTransition.completion,
+        { timeoutMs: 1500 }
+      );
+      const terminalStopped = await waitForCondition(
+        () => !playlist.playing && !getPlayingSound(playlist) && !State.hasSilenceState(playlist),
+        { timeoutMs: 1000, intervalMs: 25 }
+      );
+      record(tests, "terminal silence completes naturally", () =>
+        terminalTransition.started === true &&
+        terminalCompletion.settled === true &&
+        terminalCompletion.value === false &&
+        !terminalCompletion.error
+      );
+      record(tests, "terminal silence emits one completed event", () => {
+        const events = silenceEvents.slice(terminalEventIndex);
+        return events.length === 1 && events[0].completed === true && events[0].cancelled !== true;
+      });
+      record(tests, "terminal non-loop silence stops the playlist", () =>
+        terminalStopped && getSilenceGaps(playlist).length === 0
+      );
+
+      // Manual Next owns the transition from this point onward. It must cancel
+      // the gap and its timer, advance relative to the source track, and remain
+      // stable after the old timer's original deadline has passed.
+      await api.updatePlaylistConfig(playlist, { silenceDuration: manualGapMs });
+      await playlist.playSound(source);
+      await waitForPlayingSound(playlist, { soundId: source.id });
+      const manualNextEventIndex = silenceEvents.length;
+      const manualTransition = await Silence.startGap(playlist, source);
+      const manualGap = getSilenceGaps(playlist)[0] ?? null;
+      record(tests, "manual Next starts from an active silent gap", () =>
+        manualTransition.started === true && !!manualGap && State.hasSilenceState(playlist)
+      );
+      await playlist.playNext(manualGap?.id ?? null, { direction: 1 });
+      const manualAdvanced = await waitForCondition(
+        () => target.playing && !State.hasSilenceState(playlist) && getSilenceGaps(playlist).length === 0,
+        { timeoutMs: 1000, intervalMs: 25 }
+      );
+      const manualCompletion = await waitForPromiseSettlement(
+        manualTransition.completion,
+        { timeoutMs: 1000 }
+      );
+      record(tests, "manual Next cancels the silent gap and advances", () =>
+        manualAdvanced &&
+        manualCompletion.settled === true &&
+        manualCompletion.value === true &&
+        !manualCompletion.error &&
+        getPlayingSound(playlist)?.id === target.id
+      );
+      record(tests, "manual Next emits one cancelled event", () => {
+        const events = silenceEvents.slice(manualNextEventIndex);
+        return events.length === 1 && events[0].completed === false && events[0].cancelled === true;
+      });
+
+      await wait(manualGapMs + 200);
+      record(tests, "cancelled Next gap timer cannot advance again", () =>
+        playlist.playing &&
+        getPlayingSound(playlist)?.id === target.id &&
+        !State.hasSilenceState(playlist) &&
+        getSilenceGaps(playlist).length === 0
+      );
+
+      // Previous follows the same source-anchored cancellation path and must
+      // not navigate relative to the temporary document's raw-order position.
+      await playlist.playSound(source);
+      await waitForPlayingSound(playlist, { soundId: source.id });
+      const manualPreviousEventIndex = silenceEvents.length;
+      const previousTransition = await Silence.startGap(playlist, source);
+      const previousGap = getSilenceGaps(playlist)[0] ?? null;
+      await playlist.playNext(previousGap?.id ?? null, { direction: -1 });
+      const manualRewound = await waitForCondition(
+        () => previous.playing && !State.hasSilenceState(playlist) && getSilenceGaps(playlist).length === 0,
+        { timeoutMs: 1000, intervalMs: 25 }
+      );
+      const previousCompletion = await waitForPromiseSettlement(
+        previousTransition.completion,
+        { timeoutMs: 1000 }
+      );
+      record(tests, "manual Previous cancels the silent gap and rewinds", () =>
+        manualRewound &&
+        previousCompletion.settled === true &&
+        previousCompletion.value === true &&
+        !previousCompletion.error &&
+        getPlayingSound(playlist)?.id === previous.id
+      );
+      record(tests, "manual Previous emits one cancelled event", () => {
+        const events = silenceEvents.slice(manualPreviousEventIndex);
+        return events.length === 1 && events[0].completed === false && events[0].cancelled === true;
+      });
+
+      await wait(manualGapMs + 200);
+      record(tests, "cancelled Previous gap timer cannot advance again", () =>
+        playlist.playing &&
+        getPlayingSound(playlist)?.id === previous.id &&
+        !State.hasSilenceState(playlist) &&
+        getSilenceGaps(playlist).length === 0
+      );
     } else if (scenario === "transitionFallbacks") {
       playlist = await createFixturePlaylist(runId, scenario, {
         mode: playlistMode("SEQUENTIAL", 1),
@@ -1146,22 +1343,27 @@ async function runScenario(api, scenario, runId) {
           fixtureSound("Zero Transition Source", {
             runId,
             scenario,
-            path: createToneDataUri({ durationSec: 0.55, frequency: 330 }),
+            path: createToneDataUri({ durationSec: 1.2, frequency: 330 }),
           }),
           fixtureSound("Zero Transition Next", {
             runId,
             scenario,
-            path: createToneDataUri({ durationSec: 0.8, frequency: 440 }),
+            path: createToneDataUri({ durationSec: 1.2, frequency: 440 }),
           }),
         ],
       });
-      const [source, target] = Array.from(playlist.sounds);
+      const [source, target] = getPlayableSoundsInOrder(playlist);
+      if (!source || !target) {
+        throw new Error("Transition fallback fixture did not create two playable sounds.");
+      }
 
       await playlist.playSound(source);
       await waitForPlayingSound(playlist, { soundId: source.id, requireMedia: true });
+      await source._onEnd();
       const crossfadeAdvanced = await waitForCondition(
-        () => target.playing && !source.playing,
-        { timeoutMs: 2500, intervalMs: 40 }
+        () => getPlayingSound(playlist)?.id === target.id &&
+          playlist.sounds.get(source.id)?.playing !== true,
+        { timeoutMs: 1000, intervalMs: 40 }
       );
       record(tests, "zero-duration crossfade falls back to native advancement", () => crossfadeAdvanced);
       record(tests, "zero-duration crossfade does not leave runtime state", () =>
@@ -1178,9 +1380,11 @@ async function runScenario(api, scenario, runId) {
       });
       await playlist.playSound(source);
       await waitForPlayingSound(playlist, { soundId: source.id, requireMedia: true });
+      await source._onEnd();
       const silenceAdvanced = await waitForCondition(
-        () => target.playing && !source.playing,
-        { timeoutMs: 2500, intervalMs: 40 }
+        () => getPlayingSound(playlist)?.id === target.id &&
+          playlist.sounds.get(source.id)?.playing !== true,
+        { timeoutMs: 1000, intervalMs: 40 }
       );
       record(tests, "zero-duration silence falls back to native advancement", () => silenceAdvanced);
       record(tests, "zero-duration silence creates no gap state or document", () =>
@@ -1364,6 +1568,131 @@ async function runScenario(api, scenario, runId) {
       record(tests, "retired looper is absent from inspection", () =>
         !api.inspectPlaylist(playlist).features.loops
       );
+
+      // A skip-intro loop must apply the first-segment offset to Foundry's
+      // initial Sound.play call. Replacing the media object after playback has
+      // already begun creates an audible hard stop and can lose native state.
+      playlist = await createFixturePlaylist(runId, `${scenario}-skip-intro-startup`, {
+        mode: playlistMode("SEQUENTIAL", 1),
+        fade: 0,
+        sounds: [
+          fixtureSound("Looping Sound Skip Intro Startup", {
+            runId,
+            scenario: `${scenario}-skip-intro-startup`,
+            path: createToneDataUri({ durationSec: 4, frequency: 660 }),
+            flags: {
+              loopWithin: {
+                enabled: true,
+                active: true,
+                startFromBeginning: false,
+                segments: [
+                  { start: "00:00.500", end: "00:03.000", crossfadeMs: 100, loopCount: 0 },
+                ],
+              },
+            },
+          }),
+        ],
+      });
+      const [skipIntroSound] = Array.from(playlist.sounds);
+      const skipIntroConfig = Flags.getLoopConfig(skipIntroSound);
+      const expectedStartSec = Number(skipIntroConfig.segments?.[0]?.startSec);
+      const audioReady = isAudioReady();
+      let preloadResult = { settled: false, value: undefined, error: null };
+      let initialMedia = null;
+      let initialPlayPosition = null;
+      let initialStopEvents = 0;
+      let lifecycleObservable = false;
+      let startupLooperReady = false;
+      let startupLooper = null;
+
+      if (audioReady && skipIntroSound) {
+        preloadResult = await waitForPromiseSettlement(skipIntroSound.load(), { timeoutMs: 2000 });
+        initialMedia = skipIntroSound.sound ?? null;
+        lifecycleObservable = Boolean(
+          initialMedia?.addEventListener && initialMedia?.removeEventListener
+        );
+
+        if (preloadResult.settled && !preloadResult.error && initialMedia && lifecycleObservable) {
+          const onInitialPlay = () => {
+            if (initialPlayPosition !== null) return;
+            const position = Number(initialMedia.currentTime);
+            if (Number.isFinite(position)) initialPlayPosition = position;
+          };
+          const onInitialStop = () => {
+            initialStopEvents += 1;
+          };
+          initialMedia.addEventListener("play", onInitialPlay);
+          initialMedia.addEventListener("stop", onInitialStop);
+          scenarioCleanups.push(() => {
+            initialMedia.removeEventListener("play", onInitialPlay);
+            initialMedia.removeEventListener("stop", onInitialStop);
+          });
+
+          await playlist.playSound(skipIntroSound);
+          await waitForCondition(
+            () => Number.isFinite(initialPlayPosition),
+            { timeoutMs: 1200, intervalMs: 20 }
+          );
+          startupLooperReady = await waitForCondition(() => {
+            const candidate = State.getActiveLooper(skipIntroSound);
+            return Boolean(candidate && !candidate.isDestroyed && candidate.activeSound?.playing);
+          }, { timeoutMs: 1200, intervalMs: 20 });
+
+          // Allow the old restart-based implementation enough time to replace
+          // and stop the original media before inspecting object identity.
+          await wait(350);
+          startupLooper = State.getActiveLooper(skipIntroSound);
+        }
+      }
+
+      tests.push({
+        name: "skip-intro startup preloads one observable original Sound",
+        pass: Boolean(
+          audioReady &&
+          preloadResult.settled &&
+          !preloadResult.error &&
+          initialMedia &&
+          lifecycleObservable
+        ),
+        audioReady,
+        preloadSettled: preloadResult.settled,
+        preloadError: preloadResult.error,
+      });
+      tests.push({
+        name: "startFromBeginning=false initial playback begins at the first segment",
+        pass: Boolean(
+          Number.isFinite(expectedStartSec) &&
+          Number.isFinite(initialPlayPosition) &&
+          Math.abs(initialPlayPosition - expectedStartSec) <= 0.12
+        ),
+        expectedStartSec: Number.isFinite(expectedStartSec) ? expectedStartSec : null,
+        observedStartSec: Number.isFinite(initialPlayPosition) ? initialPlayPosition : null,
+      });
+      tests.push({
+        name: "startFromBeginning=false startup preserves the original Sound instance",
+        pass: Boolean(
+          startupLooperReady &&
+          initialMedia &&
+          skipIntroSound?.sound === initialMedia &&
+          startupLooper?.activeSound === initialMedia &&
+          startupLooper?.wasRestarted === false
+        ),
+        looperReady: startupLooperReady,
+        documentKeptOriginalMedia: Boolean(initialMedia && skipIntroSound?.sound === initialMedia),
+        looperKeptOriginalMedia: Boolean(initialMedia && startupLooper?.activeSound === initialMedia),
+        looperWasRestarted: startupLooper?.wasRestarted ?? null,
+      });
+      tests.push({
+        name: "startFromBeginning=false startup does not hard-stop original media",
+        pass: Boolean(
+          lifecycleObservable &&
+          initialStopEvents === 0 &&
+          initialMedia?.playing
+        ),
+        lifecycleObservable,
+        observedStopEvents: initialStopEvents,
+        originalMediaPlaying: Boolean(initialMedia?.playing),
+      });
     } else if (scenario === "legacyLoopCrossfade") {
       playlist = await createFixturePlaylist(runId, scenario, {
         mode: playlistMode("SEQUENTIAL", 1),
@@ -1377,8 +1706,7 @@ async function runScenario(api, scenario, runId) {
           fixtureSound("Legacy Loop Source", {
             runId,
             scenario,
-            durationSec: 1.2,
-            frequency: 440,
+            path: createToneDataUri({ durationSec: 1.2, frequency: 440 }),
             flags: {
               loopWithin: {
                 start: "00:00.100",
@@ -1391,12 +1719,14 @@ async function runScenario(api, scenario, runId) {
           fixtureSound("Legacy Loop Next", {
             runId,
             scenario,
-            durationSec: 1.2,
-            frequency: 550,
+            path: createToneDataUri({ durationSec: 1.2, frequency: 550 }),
           }),
         ],
       });
-      const [source, next] = Array.from(playlist.sounds);
+      const [source, next] = requireNamedPlaylistSounds(playlist, [
+        "Legacy Loop Source",
+        "Legacy Loop Next",
+      ]);
       await playlist.playSound(source);
       await waitForPlayingSound(playlist, { soundId: source.id });
 
@@ -1852,7 +2182,10 @@ async function runScenario(api, scenario, runId) {
           }),
         ],
       });
-      const [rain, thunder] = Array.from(playlist.sounds);
+      const [rain, thunder] = requireNamedPlaylistSounds(playlist, [
+        "Grouped Rain",
+        "Grouped Thunder",
+      ]);
       await playlist.update({
         playing: true,
         sounds: [
@@ -2018,7 +2351,12 @@ async function runScenario(api, scenario, runId) {
       const originalFadeInCurve = getGameSetting("fadeInCurveType", "logarithmic");
       const originalFadeOutCurve = getGameSetting("fadeOutCurveType", "logarithmic");
       const curves = ["logarithmic", "linear", "s-curve", "steep"];
-      const sounds = Array.from(playlist.sounds ?? []);
+      const sounds = requireNamedPlaylistSounds(playlist, [
+        "Fade Logarithmic",
+        "Fade Linear",
+        "Fade S-Curve",
+        "Fade Steep",
+      ]);
 
       record(tests, "audio context is unlocked for live fade tests", () => isAudioReady());
 
@@ -2085,6 +2423,12 @@ async function runScenario(api, scenario, runId) {
       pass: false,
       error: err instanceof Error ? err.message : String(err),
     });
+  }
+
+  for (const cleanup of scenarioCleanups.splice(0)) {
+    try {
+      cleanup();
+    } catch (_) { }
   }
 
   const failed = tests.filter((test) => !test.pass);
@@ -2830,6 +3174,28 @@ async function waitForCondition(predicate, { timeoutMs = 2500, intervalMs = 50 }
     await wait(intervalMs);
   }
   return false;
+}
+
+async function waitForPromiseSettlement(promise, { timeoutMs = 2500 } = {}) {
+  const result = {
+    settled: false,
+    value: undefined,
+    error: null,
+  };
+
+  Promise.resolve(promise).then(
+    (value) => {
+      result.settled = true;
+      result.value = value;
+    },
+    (err) => {
+      result.settled = true;
+      result.error = err instanceof Error ? err.message : String(err);
+    }
+  );
+
+  await waitForCondition(() => result.settled, { timeoutMs, intervalMs: 25 });
+  return result;
 }
 
 async function setSoundPlaying(playlist, sound, playing) {

@@ -472,6 +472,19 @@ function _buildCurrentlyPlayingLoopUi(loopConfig, looper, playbackPosition) {
 function _normalizeCurrentlyPlayingControls(soundCtx, ps) {
     if (!soundCtx || !ps) return;
 
+    if (Flags.getSoundFlag(ps, "isSilenceGap")) {
+        if (soundCtx.pause) {
+            soundCtx.pause = {
+                ...soundCtx.pause,
+                icon: "fa-solid fa-pause",
+                paused: ps.playing !== true,
+                disabled: true,
+            };
+        }
+        if (soundCtx.play) soundCtx.play = { ...soundCtx.play, disabled: true };
+        return;
+    }
+
     if (ps.playing && soundCtx.pause) {
         soundCtx.pause = {
             ...soundCtx.pause,
@@ -954,6 +967,7 @@ async function _wrapPreparePlayingContext(wrapped, context, options) {
         const crossfadeEnabled = playbackMode.crossfade;
         const soundscapeActive = playbackMode.soundscape;
         const isProcedural = !!Flags.getSoundFlag(ps, "isProcedural");
+        const isSilenceGap = !!Flags.getSoundFlag(ps, "isSilenceGap");
         const showTrackNavigation = [
             CONST.PLAYLIST_MODES.SEQUENTIAL,
             CONST.PLAYLIST_MODES.SHUFFLE,
@@ -1027,6 +1041,7 @@ async function _wrapPreparePlayingContext(wrapped, context, options) {
 
             // Procedural one-shot state
             isProcedural,
+            isSilenceGap,
             isBedTrack: soundscapeActive && ps.repeat && !isProcedural,
             showProceduralCard: soundscapeActive && isProcedural,
             showProgressCard: !isProcedural,

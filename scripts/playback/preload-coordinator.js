@@ -4,6 +4,7 @@
  * before Foundry's native playlist preload window.
  */
 import { Flags } from "../flag-service.js";
+import { getPlayableSoundsInOrder } from "../playlist/playable-order.js";
 import { debug, safeCancelTimer } from "../utils.js";
 
 const DEFAULT_NATIVE_LEAD_SEC = 20;
@@ -53,14 +54,14 @@ export function planCrossfadePreload({
 
 export function resolveNextCrossfadeSound(playlist, currentSound) {
   if (!playlist || !currentSound) return null;
-  const order = Array.from(playlist.playbackOrder ?? []);
-  const index = order.indexOf(currentSound.id);
-  let nextId = index >= 0 ? order[index + 1] : null;
-  if (!nextId && Flags.getPlaylistFlag(playlist, "loopPlaylist")) {
-    nextId = order[0] ?? null;
+  const order = getPlayableSoundsInOrder(playlist);
+  const index = order.findIndex((sound) => sound.id === currentSound.id);
+  let next = index >= 0 ? order[index + 1] : null;
+  if (!next && Flags.getPlaylistFlag(playlist, "loopPlaylist")) {
+    next = order[0] ?? null;
   }
-  if (!nextId || nextId === currentSound.id) return null;
-  return playlist.sounds?.get?.(nextId) ?? null;
+  if (!next || next.id === currentSound.id) return null;
+  return next;
 }
 
 function updateDiagnostics(entry, updates = {}) {

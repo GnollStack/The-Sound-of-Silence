@@ -7,13 +7,14 @@ import { Silence } from "./silence.js";
 import { Flags } from "./flag-service.js";
 import { MODULE_ID, toSec, debug, waitForMedia, formatTime, logFeature, LogSymbols, PlaylistActionAuthority, safeStop, safeCancelTimer, error } from "./utils.js";
 import { State } from "./state-manager.js";
+import { getPlayableSoundsInOrder } from "./playlist/playable-order.js";
 
 const AudioTimeout = foundry.audio.AudioTimeout;
 
 // Constants for hardwired numbers, get these in the right spots
-const POSITION_CHECK_TOLERANCE = 0.5;  // seconds
-const POSITION_CHECK_REQUIRED = 3;     // consecutive stable reads
 const POSITION_CHECK_INTERVAL = 50;    // ms between checks
+const POSITION_CHECK_MAX_ATTEMPTS = 40;
+const SEGMENT_POSITION_EPSILON = 0.01;
 const PRELOAD_WINDOW = 0.5;            // seconds before crossfade
 const HANDOFF_BUFFER = 50;             // ms buffer after crossfade
 
@@ -31,7 +32,7 @@ function getSegmentLabel(segment, index = 0) {
 
 
 export class LoopingSound {
-  constructor(playlistSound, config) {
+  constructor(playlistSound, config, { initialLoopStart = null } = {}) {
     this.ps = playlistSound;
     // The config is now guaranteed to be clean, validated, and migrated.
     this.config = config;
@@ -54,8 +55,9 @@ export class LoopingSound {
     this._preservePlaybackOnAbort = false;
     this._handoffGeneration = 0;
     this._activeLoopOperation = null;
+    this.initialLoopStart = initialLoopStart;
 
-    this.wasRestarted = false; // track if we used stop/play
+    this.wasRestarted = false; // track whether the initial offset needs a short scheduling settle
   }
 
   _setActiveLoopSegment(segment) {
@@ -150,6 +152,29 @@ export class LoopingSound {
     return this.isA_Active ? this.soundB : this.soundA;
   }
 
+  _findSegmentAtPosition(position) {
+    const currentTime = Number(position);
+    if (!Number.isFinite(currentTime)) return null;
+    return this.config.segments.find((segment) =>
+      currentTime >= Number(segment.startSec) - SEGMENT_POSITION_EPSILON &&
+      currentTime < Number(segment.endSec)
+    ) ?? null;
+  }
+
+  _armFromCurrentPosition() {
+    const segment = this._findSegmentAtPosition(this.activeSound?.currentTime);
+    if (segment) {
+      debug(
+        `[LoopingSound] Adopting live position ${Number(this.activeSound.currentTime).toFixed(2)}s inside "${getSegmentLabel(segment, this.config.segments.indexOf(segment))}".`
+      );
+      this._handleLoopTrigger(segment);
+      return true;
+    }
+
+    this._armNextTimer();
+    return false;
+  }
+
 
   async start() {
     debug(`[LoopingSound] Initializing for "${this.ps.name}" with ${this.config.segments.length} segments.`);
@@ -177,104 +202,62 @@ export class LoopingSound {
       return false;
     }
 
-    // Handle skipping intro to first segment
+    // When the intro is skipped, the Sound.play wrapper starts the original
+    // media at the first segment. Adopt that Sound instead of starting a
+    // second full-volume instance and hard-stopping the first one.
     if (!this.config.startFromBeginning && this.config.segments.length > 0) {
       const firstSeg = this.config.segments[0];
-      debug(`[LoopingSound] Skipping intro. Seeking to first segment at ${firstSeg.startSec}s.`);
+      const initialLoopStart = this.initialLoopStart;
+      this.initialLoopStart = null;
+      const descriptorMatches = Boolean(
+        initialLoopStart &&
+        initialLoopStart.sound === this.soundA &&
+        Number(initialLoopStart.segmentIndex) === 0 &&
+        Math.abs(Number(initialLoopStart.offset) - Number(firstSeg.startSec)) <= SEGMENT_POSITION_EPSILON
+      );
 
-      const playlist = this.ps.parent;
-      const fadeInMs = Flags.getPlaylistFlag(playlist, "fadeIn");
-      const resolvedVolume = Flags.resolveTargetVolume(this.ps);
-      const startVolume = (fadeInMs > 0) ? 0 : resolvedVolume;
+      if (!descriptorMatches) {
+        debug(
+          `[LoopingSound] No matching skip-intro startup descriptor; preserving the caller's live position.`
+        );
+        this._armFromCurrentPosition();
+        return !this.isDestroyed;
+      }
 
-      try {
-        const oldSound = this.soundA;
-        const newSound = new foundry.audio.Sound(this.ps.path, {
-          context: oldSound.context
-        });
-        await newSound.load();
+      debug(`[LoopingSound] Adopting initial sound at first segment ${firstSeg.startSec}s.`);
 
-        if (this.isDestroyed) {
-          newSound.stop();
-          this._unregisterIfCurrent();
-          return false;
-        }
+      const waitForSegmentPosition = () => new Promise((resolve) => {
+        let attempts = 0;
 
-        await newSound.play({
-          offset: firstSeg.startSec,
-          volume: startVolume,
-          _fromLoop: true,
-        });
+        const checkPosition = () => {
+          if (this.isDestroyed) return resolve(false);
+          if (!this.soundA?.playing) {
+            debug(`[LoopingSound] Sound paused during position check, aborting`);
+            return resolve(false);
+          }
 
-        if (this.isDestroyed) {
-          debug(`[LoopingSound] Destroyed during play(), aborting startup`);
-          safeStop(newSound, "startup abort after play");
-          this._unregisterIfCurrent();
-          return false;
-        }
+          const currentTime = Number(this.soundA.currentTime);
+          if (this._findSegmentAtPosition(currentTime) === firstSeg) {
+            logFeature(LogSymbols.LOOP, 'Loop', `Position ready @ ${currentTime.toFixed(2)}s`);
+            debug(`[LoopingSound] Position ready at ${currentTime.toFixed(2)}s`);
+            return resolve(true);
+          }
+          if (Number.isFinite(currentTime) && currentTime >= Number(firstSeg.endSec)) return resolve(false);
+          if (++attempts >= POSITION_CHECK_MAX_ATTEMPTS) return resolve(false);
 
-        newSound.addEventListener("end", this.ps._onEnd.bind(this.ps), { once: true });
-
-        this.soundA = newSound;
-        this.ps.sound = newSound;
-        this.wasRestarted = true;
-
-        try {
-          await oldSound.stop();
-        } catch (err) { /* Ignore if already stopped */ }
-
-        // Apply fade-in on the new sound, using the normalized target volume.
-        if (fadeInMs > 0 && startVolume === 0) {
-          debug(`[LoopingSound] Fading in to ${(resolvedVolume * 100).toFixed(0)}% over ${fadeInMs}ms`);
-          advancedFade(newSound, { targetVol: resolvedVolume, duration: fadeInMs });
-        }
-
-        const waitForStablePosition = () => {
-          return new Promise((resolve) => {
-            const targetPos = firstSeg.startSec;
-            let stableCount = 0;
-
-            const checkPosition = () => {
-              if (this.isDestroyed) return resolve(false);
-              if (!this.soundA.playing) {
-                debug(`[LoopingSound] Sound paused during position check, aborting`);
-                return resolve(false);
-              }
-
-              const currentTime = this.soundA.currentTime;
-              if (Math.abs(currentTime - targetPos) < POSITION_CHECK_TOLERANCE) {
-                stableCount++;
-                if (stableCount >= POSITION_CHECK_REQUIRED) {
-                  logFeature(LogSymbols.LOOP, 'Loop', `Position stable @ ${currentTime.toFixed(2)}s`);
-                  debug(`[LoopingSound] Position stable at ${currentTime.toFixed(2)}s`);
-                  return resolve(true);
-                }
-              } else {
-                if (stableCount > 0) debug(`[LoopingSound] Position unstable, resetting check`);
-                stableCount = 0;
-              }
-              AudioTimeout.wait(POSITION_CHECK_INTERVAL).then(checkPosition);
-            };
-            checkPosition();
-          });
+          AudioTimeout.wait(POSITION_CHECK_INTERVAL).then(checkPosition).catch(() => resolve(false));
         };
+        checkPosition();
+      });
 
-        const isStable = await waitForStablePosition();
-
-        if (!this.isDestroyed && isStable) {
-          debug(`[LoopingSound] Sound repositioned and stable, triggering loop.`);
-          this._handleLoopTrigger(firstSeg);
-        } else if (!this.isDestroyed) {
-          debug(`[LoopingSound] Position did not stabilize, aborting skip-intro.`);
-          this._armNextTimer();
-        }
-      } catch (err) {
-        if (this.isDestroyed) {
-          this._unregisterIfCurrent();
-          return false;
-        }
-        error("[LoopingSound] Failed to seek to first segment:", err);
-        this._armNextTimer();
+      const positionReady = await waitForSegmentPosition();
+      if (!this.isDestroyed && positionReady) {
+        debug(`[LoopingSound] Initial segment position is ready, triggering loop.`);
+        this.wasRestarted = true;
+        this._handleLoopTrigger(firstSeg);
+      } else if (!this.isDestroyed) {
+        debug(`[LoopingSound] Initial segment position was not observed; arming from the live position.`);
+        this._armFromCurrentPosition();
       }
 
       return !this.isDestroyed;
@@ -559,6 +542,11 @@ export class LoopingSound {
     );
 
 
+    // Consume this one-shot before any immediate branch so a late first
+    // segment cannot accidentally delay a later loop generation.
+    const needsInitialSettle = this.wasRestarted;
+    this.wasRestarted = false;
+
     // If we are already past the point where the fade should have started, trigger it immediately.
     if (untilFade <= 0) {
       debug(`[LoopingSound] Already past loop point, triggering immediately.`);
@@ -569,11 +557,7 @@ export class LoopingSound {
     // --- HYBRID SCHEDULING LOGIC ---
 
     // This block handles the special case for the first loop after a "skip intro" restart.
-    if (this.wasRestarted) {
-      // Clear the flag immediately. This ensures this special logic only runs ONCE.
-      // All subsequent loops for this sound will use the high-precision path directly.
-      this.wasRestarted = false;
-
+    if (needsInitialSettle) {
       const settleDelayMs = 1000; // Use a short, 1-second delay to let the audio engine stabilize.
       debug(`  Hybrid scheduling active. Waiting ${settleDelayMs}ms before using precise timer.`);
 
@@ -934,16 +918,13 @@ export class LoopingSound {
       // This is the logic that finds the next track or loops the playlist.
       // We define it here so we can call it after the silence, or immediately.
       const playNextOrLoop = async () => {
-        const order = playlist.playbackOrder;
-        const currentIndex = order.indexOf(this.ps.id);
-        const nextId = order[currentIndex + 1];
+        const order = getPlayableSoundsInOrder(playlist);
+        const currentIndex = order.findIndex((sound) => sound.id === this.ps.id);
+        const nextSound = currentIndex >= 0 ? order[currentIndex + 1] : null;
 
-        if (nextId) {
-          const nextSound = playlist.sounds.get(nextId);
-          if (nextSound) {
-            debug(`[LoopingSound] Advancing to next track: "${nextSound.name}"`);
-            await playlist.playSound(nextSound);
-          }
+        if (nextSound) {
+          debug(`[LoopingSound] Advancing to next track: "${nextSound.name}"`);
+          await playlist.playSound(nextSound);
         } else {
           // End of playlist - check for playlist looping
           const loopRestart = maybeLoopPlaylist(playlist);

@@ -7,16 +7,17 @@
  */
 import {
   debug,
-  waitForMedia,
   MODULE_ID,
   logFeature,
   LogSymbols,
+  isAudioUnlocked,
   PlaylistActionAuthority,
+  safeStop,
   warn,
 } from "./utils.js";
 import { Flags } from "./flag-service.js";
 import { State } from "./state-manager.js";
-import { maybeLoopPlaylist } from "./playlist-loop.js";
+import { getPlayableSoundsInOrder } from "./playlist/playable-order.js";
 
 // Make Foundry's AudioTimeout class available in this file.
 const AudioTimeout = foundry.audio.AudioTimeout;
@@ -124,7 +125,10 @@ async function createAndPlayGap(playlist, durationMs, sourceSound, state) {
   }
 
   if (!isCurrentSilenceState(playlist, state)) {
-    if (!state.abandoned) await discardGap(gap, "stale gap creation");
+    if (!state.abandoned) {
+      const discarded = await discardGap(gap, "stale gap creation");
+      if (!discarded) scheduleDiscardGapRetry(gap, "stale gap creation");
+    }
     return null;
   }
 
@@ -133,31 +137,40 @@ async function createAndPlayGap(playlist, durationMs, sourceSound, state) {
   } catch (err) {
     warn("[Silence] Failed to play silent gap:", err);
     if (!state.abandoned) {
-      try {
-        await gap.delete({ noHook: true });
-      } catch (_) { }
+      const discarded = await discardGap(gap, `failed gap playback in "${playlist.name}"`);
+      if (!discarded) scheduleDiscardGapRetry(gap, `failed gap playback in "${playlist.name}"`);
+
+      // If both deletion and deactivation failed, retain cancellation
+      // ownership until State.cleanup can make the persistent marker safe.
+      if (
+        State.getSilenceState(playlist) === state &&
+        playlist.sounds?.has?.(gap.id) &&
+        gap.playing === true
+      ) {
+        await State.cleanup(playlist, {
+          cleanSilence: true,
+          cleanCrossfade: false,
+          cleanLoopers: false,
+          cleanSoundscape: false,
+        });
+      }
     }
     return null;
   }
 
   if (!isCurrentSilenceState(playlist, state)) {
-    if (!state.abandoned) await discardGap(gap, "stale gap playback");
+    if (!state.abandoned) {
+      const discarded = await discardGap(gap, "stale gap playback");
+      if (!discarded) scheduleDiscardGapRetry(gap, "stale gap playback");
+    }
     return null;
   }
 
-  const sound = await waitForMedia(gap);
-
-  if (!isCurrentSilenceState(playlist, state)) {
-    if (!state.abandoned) await discardGap(gap, "stale gap media load");
-    return null;
-  }
-
-  if (!sound) {
-    debug(`[${MODULE_ID}] Failed to get sound object for silent gap.`);
-    return gap;
-  }
-
-  patchGapMediaClock(sound, durationMs, now);
+  // Do not make the configured wall-clock gap wait for a browser audio
+  // object. Audio can remain locked on the authoritative GM while document
+  // playback is still valid for other clients. The Sound.play wrapper patches
+  // the display clock later if media becomes available.
+  patchSilenceGapMediaClock(gap, gap.sound);
 
   ui.playlists?.render(true);
   logFeature(LogSymbols.SILENCE, 'Silence', `${playlist.name} (${durationMs}ms)`);
@@ -188,13 +201,43 @@ function patchGapMediaClock(sound, durationMs, startedAt) {
   }
 }
 
+export function patchSilenceGapMediaClock(gap, sound = gap?.sound) {
+  if (!gap || !sound || !Flags.getSoundFlag(gap, FLAG_KEY)) return false;
+  const durationMs = Math.max(0, Number(gap.getFlag?.(MODULE_ID, "gapDuration")) || 0);
+  const persistedStartedAt = Number(gap.getFlag?.(MODULE_ID, "gapStarted"));
+  const startedAt = Number.isFinite(persistedStartedAt) && persistedStartedAt > 0
+    ? persistedStartedAt
+    : Date.now();
+  patchGapMediaClock(sound, durationMs, startedAt);
+  return true;
+}
+
 async function discardGap(gap, reason) {
-  if (!gap?.id || !gap.parent?.sounds?.has?.(gap.id)) return;
+  if (!gap?.id || !gap.parent?.sounds?.has?.(gap.id)) return true;
   try {
     await gap.delete();
+    return true;
   } catch (err) {
     debug(`[${MODULE_ID}] Failed to discard ${reason}:`, err?.message ?? err);
+    if (gap.parent?.sounds?.has?.(gap.id)) {
+      try {
+        await gap.update?.({ playing: false, pausedTime: null }, { noHook: true });
+      } catch (stopErr) {
+        warn(`[Silence] Failed to deactivate ${reason}:`, stopErr);
+      }
+      if (gap.sound?.playing) await safeStop(gap.sound, `discard ${reason}`);
+    }
+    return !gap.parent?.sounds?.has?.(gap.id);
   }
+}
+
+function scheduleDiscardGapRetry(gap, reason, attempt = 1) {
+  if (!gap?.id || !gap.parent?.sounds?.has?.(gap.id) || attempt > 5) return;
+  const delayMs = Math.min(1000 * (2 ** (attempt - 1)), 30000);
+  globalThis.setTimeout?.(async () => {
+    const discarded = await discardGap(gap, `${reason} retry ${attempt}`);
+    if (!discarded) scheduleDiscardGapRetry(gap, reason, attempt + 1);
+  }, delayMs);
 }
 
 function createSilenceState({ gap = null, sourceSound = null, gapMs, startedAt, recovered = false }) {
@@ -208,6 +251,9 @@ function createSilenceState({ gap = null, sourceSound = null, gapMs, startedAt, 
     completed: false,
     abandoned: false,
     advancementComplete: false,
+    terminalOutcome: null,
+    terminalEventEmitted: false,
+    completionDecision: null,
     completionAttempt: null,
     completionRetryCount: 0,
     deletingForCompletion: false,
@@ -223,32 +269,67 @@ function createSilenceState({ gap = null, sourceSound = null, gapMs, startedAt, 
   };
 }
 
-function scheduleSilenceTimer(playlist, state, { delayMs = null, reason = null } = {}) {
+async function commitPlaylistSelection(playlist, targetSound = null) {
+  const targetId = targetSound?.id ?? null;
+  return playlist.update({
+    playing: Boolean(targetId),
+    sounds: Array.from(playlist.sounds ?? []).map((sound) => ({
+      _id: sound.id,
+      playing: sound.id === targetId,
+      pausedTime: null,
+    })),
+  });
+}
+
+function createBrowserSilenceTimer(delayMs) {
+  let timerId = null;
+  let cancelled = false;
+  let resolveComplete;
+  const complete = new Promise((resolve) => {
+    resolveComplete = resolve;
+    timerId = globalThis.setTimeout?.(resolve, delayMs);
+  });
+  return {
+    complete,
+    cancel() {
+      if (cancelled) return;
+      cancelled = true;
+      if (timerId !== null) globalThis.clearTimeout?.(timerId);
+      timerId = null;
+      resolveComplete?.();
+    },
+    get cancelled() {
+      return cancelled;
+    }
+  };
+}
+
+function canUseAudioClockTimer() {
+  const musicContext = game?.audio?.music;
+  return isAudioUnlocked() &&
+    Number.isFinite(Number(musicContext?.sampleRate)) &&
+    musicContext?.state !== "closed";
+}
+
+function scheduleSilenceTimer(
+  playlist,
+  state,
+  { delayMs = null, reason = null, forceBrowser = false } = {}
+) {
   if (!isCurrentSilenceState(playlist, state)) return false;
   const remainingMs = delayMs === null
     ? Math.max(0, state.expectedEndAt - Date.now())
     : Math.max(0, Number(delayMs) || 0);
   let timer;
-  try {
-    timer = new AudioTimeout(remainingMs);
-  } catch (err) {
-    warn("[Silence] Failed to create audio-clock gap timer; using browser timer:", err);
-    let timerId = null;
-    let cancelled = false;
-    const complete = new Promise((resolve) => {
-      timerId = globalThis.setTimeout?.(resolve, remainingMs);
-    });
-    timer = {
-      complete,
-      cancel() {
-        cancelled = true;
-        if (timerId !== null) globalThis.clearTimeout?.(timerId);
-        timerId = null;
-      },
-      get cancelled() {
-        return cancelled;
-      }
-    };
+  if (forceBrowser || !canUseAudioClockTimer()) {
+    timer = createBrowserSilenceTimer(remainingMs);
+  } else {
+    try {
+      timer = new AudioTimeout(remainingMs);
+    } catch (err) {
+      warn("[Silence] Failed to create audio-clock gap timer; using browser timer:", err);
+      timer = createBrowserSilenceTimer(remainingMs);
+    }
   }
 
   state.timer = timer;
@@ -263,8 +344,12 @@ function scheduleSilenceTimer(playlist, state, { delayMs = null, reason = null }
     })
     .catch((err) => {
       if (timer.cancelled || !isCurrentSilenceState(playlist, state)) return false;
-      warn("[Silence] Gap timer failed; completing through the recovery path:", err);
-      return completeSilenceGap(playlist, state, { reason: "timer-error" });
+      warn("[Silence] Audio-clock gap timer failed; continuing with a browser timer:", err);
+      return scheduleSilenceTimer(playlist, state, {
+        delayMs: Math.max(0, state.expectedEndAt - Date.now()),
+        reason: reason ?? "timer-fallback",
+        forceBrowser: true,
+      });
     });
   return true;
 }
@@ -334,15 +419,91 @@ async function restoreGapAfterFailedAdvancement(playlist, state) {
   if (!gap?.id || !playlist.sounds.has(gap.id)) return false;
 
   try {
-    // A failed playSound can have stopped the gap before rejecting. Replaying
-    // the persisted document keeps the transition recoverable for a retry or
-    // an authority handoff.
-    await playlist.playSound(gap);
+    // Restore exclusive gap ownership with the same atomic document update
+    // used for advancement. This remains safe if the playlist mode changed
+    // while the completion attempt was pending.
+    await commitPlaylistSelection(playlist, gap);
     return true;
   } catch (err) {
     warn(`[Silence] Failed to restore the gap in "${playlist.name}" after advancement failed:`, err);
     return false;
   }
+}
+
+function resolveSilenceCompletionDecision(playlist, state, sourceSound) {
+  if (state.completionDecision) return state.completionDecision;
+
+  if (!state.wasPlayingAtCompletion) {
+    state.completionDecision = { type: "cleanup", targetSoundId: null };
+    return state.completionDecision;
+  }
+
+  if (!sourceSound) {
+    state.completionDecision = { type: "stop", targetSoundId: null };
+    return state.completionDecision;
+  }
+
+  const playableSounds = getPlayableSoundsInOrder(playlist);
+  const sourceIndex = playableSounds.findIndex((sound) => sound.id === sourceSound.id);
+  const supportsSequence = [
+    CONST.PLAYLIST_MODES.SEQUENTIAL,
+    CONST.PLAYLIST_MODES.SHUFFLE,
+  ].includes(playlist.mode);
+  const next = supportsSequence && sourceIndex >= 0
+    ? playableSounds[sourceIndex + 1]
+    : null;
+  const canLoop = supportsSequence && sourceIndex >= 0 &&
+    Flags.getPlaylistFlag(playlist, "loopPlaylist");
+  const target = next ?? (canLoop ? playableSounds[0] : null);
+
+  state.completionDecision = target
+    ? { type: "advance", targetSoundId: target.id }
+    : { type: "stop", targetSoundId: null };
+  return state.completionDecision;
+}
+
+function finalizeNaturalSilenceCompletion(playlist, state, gapMs, reason) {
+  if (state.terminalOutcome && state.terminalOutcome !== "natural") return false;
+  state.terminalOutcome = "natural";
+  if (state.terminalEventEmitted) return true;
+  state.terminalEventEmitted = true;
+  state.completed = true;
+  try {
+    state.timer?.cancel?.();
+  } catch (_) { }
+  State.clearSilenceState(playlist, state);
+  debug(`[${MODULE_ID}] Silent gap of ${gapMs} ms completed for "${playlist.name}" (${reason})`);
+  Hooks.callAll('the-sound-of-silence.silenceEnd', {
+    playlist,
+    duration: gapMs,
+    completed: true
+  });
+  State.recordSilence(gapMs, false);
+  state.resolve?.(false);
+  return true;
+}
+
+function finalizeSilenceCancellation(playlist, state, gapMs, reason) {
+  if (state.terminalOutcome && state.terminalOutcome !== "cancelled") return false;
+  state.terminalOutcome = "cancelled";
+  if (state.terminalEventEmitted) return true;
+  state.terminalEventEmitted = true;
+  state.cancelled = true;
+  try {
+    state.timer?.cancel?.();
+  } catch (_) { }
+  if (state.gap) State.markGapAsCancelled(state.gap);
+  State.clearSilenceState(playlist, state);
+  debug(`[${MODULE_ID}] Silent gap of ${gapMs} ms cancelled for "${playlist.name}" (${reason})`);
+  Hooks.callAll('the-sound-of-silence.silenceEnd', {
+    playlist,
+    duration: gapMs,
+    completed: false,
+    cancelled: true
+  });
+  State.recordSilence(gapMs, true);
+  state.resolve?.(true);
+  return true;
 }
 
 async function runSilenceCompletion(playlist, state, reason) {
@@ -355,40 +516,43 @@ async function runSilenceCompletion(playlist, state, reason) {
   const gapMs = Number(state.gapMs ?? state.gap?.getFlag?.(MODULE_ID, "gapDuration")) || 0;
   const sourceSound = state.sourceSound ?? playlist.sounds.get(state.sourceSoundId);
   if (state.wasPlayingAtCompletion === undefined) {
-    state.wasPlayingAtCompletion = Boolean(playlist.playing);
+    // The gap itself must still own playback. An old timer may fire after an
+    // external update has already selected a replacement real track.
+    state.wasPlayingAtCompletion = Boolean(playlist.playing && state.gap?.playing);
   }
 
   try {
     // Advance while the persisted gap still exists. If authority changes or a
     // document update fails, the gap remains a durable handoff/retry marker.
-    if (!state.advancementComplete && state.wasPlayingAtCompletion && sourceSound) {
+    if (!state.advancementComplete) {
       if (!PlaylistActionAuthority.isAuthorizedGM()) {
         abandonLocalSilenceState(playlist, state, "authority changed before advancement");
         return false;
       }
-      const order = playlist.playbackOrder;
-      const sourceIndex = order.indexOf(sourceSound.id);
-      const next = sourceIndex >= 0 ? playlist.sounds.get(order[sourceIndex + 1]) : null;
-
-      if (next) {
-        await playlist.playSound(next);
-      } else {
-        const loopRestart = maybeLoopPlaylist(playlist);
-        if (loopRestart) await loopRestart;
-        else await playlist.stopAll();
+      const decision = resolveSilenceCompletionDecision(playlist, state, sourceSound);
+      if (decision.type === "cleanup") {
+        if (state.terminalOutcome && state.terminalOutcome !== "cancelled") return false;
+        state.terminalOutcome = "cancelled";
+        const deleted = await discardGap(state.gap, `cancelled inactive gap in "${playlist.name}"`);
+        if (!deleted) scheduleDiscardGapRetry(state.gap, `cancelled inactive gap in "${playlist.name}"`);
+        state.advancementComplete = true;
+        return finalizeSilenceCancellation(playlist, state, gapMs, reason);
+      } else if (decision.type === "advance") {
+        const target = playlist.sounds.get(decision.targetSoundId);
+        // Retries must never guess a replacement shuffle target if the saved
+        // target was deleted between attempts.
+        await commitPlaylistSelection(playlist, target ?? null);
+      } else if (decision.type === "stop") {
+        if (!sourceSound) {
+          debug(`[Silence] Recovered gap in "${playlist.name}" has no source sound; stopping safely.`);
+        }
+        await commitPlaylistSelection(playlist, null);
       }
-      state.advancementComplete = true;
-    } else if (!state.advancementComplete && state.wasPlayingAtCompletion && !sourceSound) {
-      if (!PlaylistActionAuthority.isAuthorizedGM()) {
-        abandonLocalSilenceState(playlist, state, "authority changed before safe stop");
-        return false;
-      }
-      // Legacy gaps did not persist their source sound. Stopping is safer than
-      // guessing a next track and potentially replaying or skipping content.
-      debug(`[Silence] Recovered gap in "${playlist.name}" has no source sound; stopping safely.`);
-      await playlist.stopAll();
-      state.advancementComplete = true;
-    } else if (!state.advancementComplete) {
+      // The durable playlist transition owns the terminal result from this
+      // point forward. User commands may act on the newly selected track, but
+      // they must not reclassify marker deletion as a cancelled gap.
+      if (state.terminalOutcome && state.terminalOutcome !== "natural") return false;
+      state.terminalOutcome = "natural";
       state.advancementComplete = true;
     }
   } catch (err) {
@@ -400,6 +564,9 @@ async function runSilenceCompletion(playlist, state, reason) {
 
   if (State.getSilenceState(playlist) !== state || state.cancelled) return false;
   if (!PlaylistActionAuthority.isAuthorizedGM()) {
+    if (state.advancementComplete) {
+      return finalizeNaturalSilenceCompletion(playlist, state, gapMs, `${reason}:authority-handoff`);
+    }
     abandonLocalSilenceState(playlist, state, "authority changed before gap cleanup");
     return false;
   }
@@ -410,23 +577,13 @@ async function runSilenceCompletion(playlist, state, reason) {
   const deleted = await teardownGap(playlist, state);
   state.deletingForCompletion = false;
   if (!deleted) {
-    if (!PlaylistActionAuthority.isAuthorizedGM() && State.getSilenceState(playlist) === state) {
-      abandonLocalSilenceState(playlist, state, "authority changed after gap deletion failed");
-    }
-    scheduleSilenceCompletionRetry(playlist, state);
-    return false;
+    // Advancement has already committed and the gap is now inactive. Do not
+    // let a document-cleanup failure block the next track's silence state or
+    // reclassify this natural completion as a cancellation.
+    scheduleDiscardGapRetry(state.gap, `completed gap in "${playlist.name}"`);
   }
 
-  state.completed = true;
-  debug(`[${MODULE_ID}] Silent gap of ${gapMs} ms completed for "${playlist.name}" (${reason})`);
-  Hooks.callAll('the-sound-of-silence.silenceEnd', {
-    playlist,
-    duration: gapMs,
-    completed: true
-  });
-  State.recordSilence(gapMs, false);
-  state.resolve?.(false);
-  return true;
+  return finalizeNaturalSilenceCompletion(playlist, state, gapMs, reason);
 }
 
 export async function completeSilenceGap(playlist, state = State.getSilenceState(playlist), { reason = "timer" } = {}) {
@@ -470,7 +627,32 @@ export async function startSilenceGap(playlist, sourceSound) {
     return { started: false, completion: Promise.resolve(false), reason: "zero-duration", gapMs };
   }
 
-  const existing = State.getSilenceState(playlist);
+  let existing = State.getSilenceState(playlist);
+  if (existing?.gap && existing.gap.playing === false) {
+    if (existing.advancementComplete) {
+      // The prior real-track selection is already durable. Logical
+      // completion must not wait for a slow gap deletion and suppress the
+      // next track's own end transition.
+      if (!existing.completionAttempt) {
+        const discarded = await discardGap(existing.gap, `completed predecessor gap in "${playlist.name}"`);
+        if (!discarded) {
+          scheduleDiscardGapRetry(existing.gap, `completed predecessor gap in "${playlist.name}"`);
+        }
+      } else {
+        scheduleDiscardGapRetry(existing.gap, `in-flight predecessor gap in "${playlist.name}"`);
+      }
+      const existingGapMs = Number(existing.gapMs ?? existing.gap?.getFlag?.(MODULE_ID, "gapDuration")) || 0;
+      finalizeNaturalSilenceCompletion(playlist, existing, existingGapMs, "next-track-completion");
+    } else {
+      await State.cleanup(playlist, {
+        cleanSilence: true,
+        cleanCrossfade: false,
+        cleanLoopers: false,
+        cleanSoundscape: false,
+      });
+    }
+    existing = State.getSilenceState(playlist);
+  }
   if (existing && !existing.cancelled && !existing.completed) {
     return {
       started: true,
@@ -496,8 +678,14 @@ export async function startSilenceGap(playlist, sourceSound) {
     const reason = state.abandoned
       ? "authority-changed"
       : (state.cancelled || State.getSilenceState(playlist) !== state ? "cancelled" : "creation-failed");
-    State.clearSilenceState(playlist, state);
-    state.resolve?.(false);
+    const unsafeMarkerStillOwned =
+      State.getSilenceState(playlist) === state &&
+      state.gap?.playing === true &&
+      playlist.sounds?.has?.(state.gap.id);
+    if (!unsafeMarkerStillOwned) {
+      State.clearSilenceState(playlist, state);
+      if (!state.cancelled && !state.terminalEventEmitted) state.resolve?.(false);
+    }
     debug(`[${MODULE_ID}] Gap creation failed; native advancement may continue.`);
     return { started: false, completion: state.completion, reason, gapMs };
   }
@@ -537,9 +725,38 @@ async function reconcilePersistedSilenceGaps(reason) {
 
     const gap = gaps[0];
 
+    const current = State.getSilenceState(playlist);
+
+    if (
+      current?.gap?.id === gap.id &&
+      (current.cancelled || current.terminalOutcome === "cancelled" || current.cleanupRetryScheduled)
+    ) {
+      // A cancellation that could not yet delete or deactivate its marker is
+      // cleanup-only work. Never replace it with a recovered live timer.
+      continue;
+    }
+
     // A persisted document is recoverable only while it is the playlist's
     // active sound. Stopped gap documents are leftovers, not resumable work.
     if (!gap.playing || !playlist.playing) {
+      if (current?.gap?.id === gap.id && (current.completionAttempt || current.deletingForCompletion)) {
+        // Natural completion has already selected the next real track and is
+        // still cleaning its marker. Do not let authority reconciliation
+        // convert that in-flight completion into cancellation.
+        continue;
+      }
+      if (current?.gap?.id === gap.id && current.advancementComplete) {
+        await completeSilenceGap(playlist, current, { reason: `cleanup:${reason}` });
+        continue;
+      }
+      if (current?.gap?.id === gap.id) {
+        await State.cleanup(playlist, {
+          cleanSilence: true,
+          cleanCrossfade: false,
+          cleanLoopers: false,
+          cleanSoundscape: false,
+        });
+      }
       for (const orphan of gaps) {
         await discardGap(orphan, `inactive persisted gap in "${playlist.name}"`);
       }
@@ -552,7 +769,6 @@ async function reconcilePersistedSilenceGaps(reason) {
       await discardGap(duplicate, `duplicate recovered gap in "${playlist.name}"`);
     }
 
-    const current = State.getSilenceState(playlist);
     if (current && current.gap?.id === gap.id && !current.cancelled && !current.completed) {
       continue;
     }
@@ -623,10 +839,12 @@ export function registerSilenceRecoveryHooks() {
     const playlist = sound.parent;
     const state = State.getSilenceState(playlist);
     if (state?.gap?.id !== sound.id) return;
-    const naturalCompletion = state.completed || state.deletingForCompletion;
+    const naturalCompletion = state.terminalOutcome === "natural" ||
+      state.completed || state.deletingForCompletion;
     if (!naturalCompletion) {
-      state.cancelled = true;
-      state.resolve?.(true);
+      const gapMs = Number(state.gapMs ?? sound.getFlag?.(MODULE_ID, "gapDuration")) || 0;
+      finalizeSilenceCancellation(playlist, state, gapMs, "gap-document-deleted");
+      return;
     }
     state.timer?.cancel?.();
     State.clearSilenceState(playlist, state);

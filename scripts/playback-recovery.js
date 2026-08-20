@@ -8,6 +8,7 @@ import { PlaybackClock } from "./playback-clock.js";
 import { maybeLoopPlaylist } from "./playlist-loop.js";
 import { Silence } from "./silence.js";
 import { State } from "./state-manager.js";
+import { getPlayableSoundsInOrder } from "./playlist/playable-order.js";
 import {
   debug,
   isAudioUnlocked,
@@ -75,10 +76,10 @@ function _getRecoverablePlayingSound(playlist) {
 }
 
 function _getNextSoundInPlaybackOrder(playlist, sourceSound) {
-  const order = playlist?.playbackOrder ?? [];
-  const idx = order.indexOf(sourceSound?.id);
+  const order = getPlayableSoundsInOrder(playlist);
+  const idx = order.findIndex((sound) => sound.id === sourceSound?.id);
   if (idx < 0) return null;
-  return playlist.sounds.get(order[idx + 1]) ?? null;
+  return order[idx + 1] ?? null;
 }
 
 function _markClockRecovered(playlist, clock) {

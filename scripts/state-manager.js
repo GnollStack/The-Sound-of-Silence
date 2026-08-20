@@ -6,7 +6,16 @@
  * For persistent configuration, see flag-service.js
  */
 
-import { debug, MODULE_ID, logFeature, LogSymbols, PlaylistActionAuthority, warn } from "./utils.js";
+import {
+    debug,
+    MODULE_ID,
+    logFeature,
+    LogSymbols,
+    PlaylistActionAuthority,
+    safeCancelTimer,
+    safeStop,
+    warn,
+} from "./utils.js";
 
 /**
  * Manages all runtime state for the module.
@@ -459,6 +468,22 @@ class StateManager {
     }
 
     /**
+     * Atomically replace one fade owner with another. This is used to hand a
+     * pre-play startup reservation to the real audio-thread curve without an
+     * interval where unrelated volume writers can claim the sound.
+     * @param {Sound} sound
+     * @param {object} expectedToken
+     * @param {object} [metadata]
+     * @returns {object|null}
+     */
+    replaceFade(sound, expectedToken, metadata = {}) {
+        if (!sound || !expectedToken || this._fadingSounds.get(sound) !== expectedToken) {
+            return null;
+        }
+        return this.startFade(sound, metadata);
+    }
+
+    /**
      * Mark a sound as currently fading only if it is not already owned by a fade.
      * Returns false if already fading; otherwise returns the new token.
      * @param {Sound} sound
@@ -656,11 +681,7 @@ class StateManager {
                     await session.settle({ mode: "cancel", reason: "playlist cleanup" });
                 }
 
-                if (timer?.timeout?.cancel) {
-                    timer.timeout.cancel();
-                } else if (timer?.cancel) {
-                    timer.cancel();
-                }
+                safeCancelTimer(timer, `crossfade cleanup for "${playlist?.name}"`);
                 if (this.getCrossfadeTimer(playlist) === timer) {
                     this.clearCrossfadeTimer(playlist);
                 }
@@ -689,11 +710,39 @@ class StateManager {
             try {
                 const silenceState = this.getSilenceState(playlist);
                 if (silenceState) {
+                    const naturalCompletionOwnsState =
+                        silenceState.terminalOutcome === "natural" ||
+                        (silenceState.advancementComplete && !silenceState.cancelled) ||
+                        silenceState.deletingForCompletion;
+                    if (naturalCompletionOwnsState && final) {
+                        silenceState.terminalOutcome = "natural";
+                        safeCancelTimer(silenceState.timer, `final silence cleanup for "${playlist.name}"`);
+                        if (!silenceState.terminalEventEmitted) {
+                            silenceState.terminalEventEmitted = true;
+                            const gapMs = silenceState.gap?.getFlag?.('the-sound-of-silence', 'gapDuration') || 0;
+                            Hooks.callAll('the-sound-of-silence.silenceEnd', {
+                                playlist,
+                                duration: gapMs,
+                                completed: true
+                            });
+                            this.recordSilence(gapMs, false);
+                            silenceState.resolve?.(false);
+                        }
+                        this.clearSilenceState(playlist, silenceState);
+                    } else if (naturalCompletionOwnsState) {
+                        // The next real-track (or terminal stop) update already
+                        // committed. Let that completion own marker deletion;
+                        // this cleanup request applies to the new playlist state.
+                        silenceState.terminalOutcome = "natural";
+                        debug(`[State] Preserving naturally completed silent gap for "${playlist.name}" until marker cleanup finishes`);
+                    } else {
                     debug(`[State] Cleaning up active silent gap for "${playlist.name}"`);
+                    if (!silenceState.terminalOutcome) silenceState.terminalOutcome = "cancelled";
                     silenceState.cancelled = true;
-                    if (silenceState.timer) silenceState.timer.cancel();
+                    safeCancelTimer(silenceState.timer, `silence cleanup for "${playlist.name}"`);
 
                     const gap = silenceState.gap;
+                    let gapSettled = true;
                     if (gap) {
                         this.markGapAsCancelled(gap);
                         if (!final && gap.id && PlaylistActionAuthority.isAuthorizedGM()) {
@@ -702,10 +751,36 @@ class StateManager {
                             } catch (err) {
                                 debug(`[State] Failed to delete silent gap "${gap?.name}":`, err.message);
                             }
+
+                            // Deletion can be rejected by a wrapper, hook, or
+                            // transient database failure. Before releasing
+                            // local ownership, force any surviving marker to
+                            // an inactive document state so reload recovery
+                            // cannot resurrect a cancelled gap.
+                            if (playlist.sounds?.has?.(gap.id)) {
+                                try {
+                                    if (typeof gap.update === "function") {
+                                        await gap.update({ playing: false, pausedTime: null }, { noHook: true });
+                                    } else {
+                                        await playlist.updateEmbeddedDocuments(
+                                            "PlaylistSound",
+                                            [{ _id: gap.id, playing: false, pausedTime: null }],
+                                            { noHook: true }
+                                        );
+                                    }
+                                } catch (stopErr) {
+                                    warn(`[State] Failed to stop surviving silent gap "${gap?.name}":`, stopErr);
+                                }
+                            }
                         }
+                        if (gap.sound?.playing) await safeStop(gap.sound, "cancel silent gap");
+                        gapSettled = final || !playlist.sounds?.has?.(gap.id) || gap.playing !== true;
                     }
 
-                    if (silenceState.resolve) {
+                    if (gapSettled && !silenceState.terminalEventEmitted) {
+                        // Claim the one public terminal notification before
+                        // hooks run, since they may synchronously re-enter.
+                        silenceState.terminalEventEmitted = true;
                         const gapMs = gap?.getFlag?.('the-sound-of-silence', 'gapDuration') || 0;
                         Hooks.callAll('the-sound-of-silence.silenceEnd', {
                             playlist,
@@ -714,9 +789,30 @@ class StateManager {
                             cancelled: true
                         });
                         this.recordSilence(gapMs, true);
-                        silenceState.resolve(true); // Resolve the promise immediately
+                        silenceState.resolve?.(true); // Resolve the promise immediately
                     }
-                    this.clearSilenceState(playlist, silenceState); // Clean up only the state we cancelled
+                    if (gapSettled) {
+                        this.clearSilenceState(playlist, silenceState); // Clean up only the state we cancelled
+                    } else if (!silenceState.cleanupRetryScheduled) {
+                        // Preserve the cancelled generation until the
+                        // persistent document is safely stopped or removed.
+                        // This keeps authority recovery from claiming it as
+                        // live work after a transient double failure.
+                        silenceState.cleanupRetryScheduled = true;
+                        globalThis.setTimeout?.(() => {
+                            if (this.getSilenceState(playlist) !== silenceState) return;
+                            silenceState.cleanupRetryScheduled = false;
+                            this.cleanup(playlist, {
+                                cleanSilence: true,
+                                cleanCrossfade: false,
+                                cleanLoopers: false,
+                                cleanSoundscape: false,
+                            }).catch((retryErr) =>
+                                warn(`[State] Silent-gap cleanup retry failed for "${playlist?.name}":`, retryErr)
+                            );
+                        }, 1000);
+                    }
+                    }
                 }
             } catch (err) {
                 warn(`[State] Error during silence cleanup for "${playlist?.name}":`, err);
