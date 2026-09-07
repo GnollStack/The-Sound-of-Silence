@@ -74,6 +74,7 @@ globalThis.game ??= {
 };
 
 const { State } = await import("../scripts/state-manager.js");
+const { PlaybackClock } = await import("../scripts/playback-clock.js");
 const {
   completeSilenceGap,
   recoverPersistedSilenceGaps,
@@ -208,7 +209,8 @@ test("playable order excludes silence gaps in every raw position and preserves w
     const second = makeSound({ id: "second", parent: playlist });
     const third = makeSound({ id: "third", parent: playlist });
     const gap = makeSound({ id: "gap", parent: playlist, flags: { isSilenceGap: true } });
-    playlist.sounds.push(first, second, third, gap);
+    // Embedded collection order can differ from the sequential playback order.
+    playlist.sounds.push(third, second, first, gap);
 
     assert.deepEqual(
       getPlayableSoundsInOrder(playlist).map((sound) => sound.id),
@@ -667,6 +669,159 @@ test("gap deletion failure completes naturally and background cleanup does not a
     assert.equal(playlist.sounds.has(gap.id), false);
   } finally {
     State.clearSilenceState(playlist, state);
+    game.user = previous.user;
+    game.users = previous.users;
+    game.playlists = previous.playlists;
+  }
+});
+
+test("Stop and Play wait for pending silence advancement before committing their selection", { timeout: 3000 }, async () => {
+  const previousLibWrapper = globalThis.libWrapper;
+  const previous = { user: game.user, users: game.users, playlists: game.playlists };
+  const registrations = new Map();
+  globalThis.libWrapper = {
+    register(_module, target, callback) { registrations.set(target, callback); },
+  };
+  installAuthority();
+  registerPlaylistCommandWrappers();
+  const stopAll = registrations.get("Playlist.prototype.stopAll");
+  const playSound = registrations.get("Playlist.prototype.playSound");
+
+  try {
+    for (const action of ["stop", "play"]) {
+      for (const rejectAdvancement of [false, true]) {
+        let releaseAdvancement;
+        const advancementGate = new Promise((resolve) => { releaseAdvancement = resolve; });
+        let advancementStarted;
+        const started = new Promise((resolve) => { advancementStarted = resolve; });
+        const selections = [];
+        let stopTransition;
+        let playbackClock = { soundId: "source" };
+        const playlist = {
+          id: `pending-advance-${action}-${rejectAdvancement}`,
+          name: `Pending Advance ${action}`,
+          isOwner: true,
+          mode: CONST.PLAYLIST_MODES.SEQUENTIAL,
+          fade: 0,
+          playing: true,
+          playbackOrder: ["source", "gap", "next", "manual"],
+          sounds: new SoundCollection(),
+          getFlag(_scope, key) { return key === "playbackClock" ? playbackClock : undefined; },
+          async setFlag(_scope, key, value) {
+            if (key === "stopTransition") stopTransition = value;
+            if (key === "playbackClock") playbackClock = value;
+            return this;
+          },
+          async unsetFlag(_scope, key) {
+            if (key === "playbackClock") playbackClock = null;
+            return this;
+          },
+          async update(changes) {
+            const selectedId = getSelectedSoundId(changes);
+            selections.push(selectedId);
+            if (selectedId === "next") {
+              advancementStarted();
+              await advancementGate;
+              if (rejectAdvancement) throw new Error("pending advancement rejected");
+            }
+            const result = applyPlaylistUpdate(this, changes);
+            for (const sound of this.sounds) {
+              if (sound.sound) sound.sound.playing = sound.playing;
+            }
+            if (selectedId === "next") {
+              // Model the start hooks publishing a clock and releasing the
+              // stopping latch when the pending update finally arrives.
+              State.clearStoppingFlag(this);
+              await PlaybackClock.record(this, next, next.sound, { reason: "pending advancement" });
+            }
+            return result;
+          },
+          async updateEmbeddedDocuments(_type, updates) {
+            return applyPlaylistUpdate(this, { sounds: updates });
+          },
+        };
+        const source = makeSound({ id: "source", parent: playlist });
+        const next = makeSound({ id: "next", parent: playlist });
+        next.sound = {
+          playing: false, currentTime: 0, duration: 120, stopCalls: 0,
+          stop() { this.playing = false; this.stopCalls += 1; },
+        };
+        const manual = makeSound({ id: "manual", parent: playlist });
+        const gap = makeSound({
+          id: "gap", parent: playlist, playing: true,
+          flags: { isSilenceGap: true, gapDuration: 1000, gapSourceSoundId: source.id },
+        });
+        playlist.sounds.push(source, gap, next, manual);
+        game.playlists = [playlist];
+        const state = makeState({ source, gap });
+        State.setSilenceState(playlist, state);
+        const captured = captureSilenceEnd(playlist);
+        let reentrantCleanup;
+        const reenter = (event) => {
+          if (event.playlist !== playlist) return;
+          reentrantCleanup = State.cleanup(playlist, {
+            cleanSilence: true, cleanCrossfade: false, cleanLoopers: false, cleanSoundscape: false,
+          });
+        };
+        Hooks.on("the-sound-of-silence.silenceEnd", reenter);
+
+        try {
+          const natural = completeSilenceGap(playlist, state, { reason: "pending-advance-test" });
+          await started;
+          const command = action === "stop"
+            ? stopAll.call(playlist)
+            : playSound.call(playlist, function (sound) {
+              return this.update({
+                playing: true,
+                sounds: this.sounds.map((entry) => ({
+                  _id: entry.id, playing: entry.id === sound.id, pausedTime: null,
+                })),
+              });
+            }, manual);
+          for (let attempt = 0; attempt < 20 && !state.cancelled; attempt += 1) {
+            await Promise.resolve();
+          }
+          assert.equal(state.terminalOutcome, "cancelled");
+          assert.equal(state.cancelled, true);
+          assert.deepEqual(selections, ["next"], "the user selection must wait for the old update");
+
+          releaseAdvancement();
+          assert.equal(await natural, false);
+          assert.equal(await command, playlist);
+          await reentrantCleanup;
+          assert.equal(state.resolved, true);
+          assert.equal(state.terminalOutcome, "cancelled");
+          assert.equal(state.completed, false);
+          assert.equal(state.completionRetryCount ?? 0, 0);
+          assert.equal(selections.includes("gap"), false, "a rejected cancelled update must not restore the gap");
+          assert.equal(playlist.sounds.has(gap.id), false);
+          assert.equal(State.getSilenceState(playlist), undefined);
+          assert.deepEqual(captured.events.map(({ completed, cancelled }) => ({ completed, cancelled })), [
+            { completed: false, cancelled: true },
+          ]);
+          if (action === "stop") {
+            assert.equal(playlist.playing, false);
+            assert.equal(playlist.sounds.some((sound) => sound.playing || sound.sound?.playing), false);
+            assert.equal(PlaybackClock.get(playlist), null, "Stop must clear the clock written by pending advancement");
+            assert.equal(State.isPlaylistStopping(playlist), true);
+            if (!rejectAdvancement) {
+              assert.equal(next.sound.stopCalls, 1, "Stop must stop the newly activated local media");
+              assert.ok(stopTransition.soundIds.includes("next"));
+            }
+          } else {
+            assert.deepEqual(playlist.sounds.filter((sound) => sound.playing).map((sound) => sound.id), ["manual"]);
+          }
+        } finally {
+          releaseAdvancement();
+          Hooks.off("the-sound-of-silence.silenceEnd", reenter);
+          captured.stop();
+          State.clearSilenceState(playlist);
+          State.clearStoppingFlag(playlist);
+        }
+      }
+    }
+  } finally {
+    globalThis.libWrapper = previousLibWrapper;
     game.user = previous.user;
     game.users = previous.users;
     game.playlists = previous.playlists;

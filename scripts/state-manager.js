@@ -741,6 +741,20 @@ class StateManager {
                     silenceState.cancelled = true;
                     safeCancelTimer(silenceState.timer, `silence cleanup for "${playlist.name}"`);
 
+                    // A document update already sent by natural completion
+                    // cannot be cancelled. Drain it before the caller applies
+                    // its Stop/Play/Next selection, so it cannot overwrite that
+                    // newer command afterward. Claim cancellation first so
+                    // completion neither reports success nor restores/retries
+                    // the gap if its pending update fails.
+                    if (!final && silenceState.completionAttempt) {
+                        try {
+                            await silenceState.completionAttempt;
+                        } catch (err) {
+                            debug(`[State] Pending silence completion ended during cancellation:`, err?.message ?? err);
+                        }
+                    }
+
                     const gap = silenceState.gap;
                     let gapSettled = true;
                     if (gap) {

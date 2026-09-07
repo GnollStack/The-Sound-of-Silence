@@ -231,6 +231,9 @@ export function registerPlaylistCommandWrappers() {
         cleanLoopers: true,
         allowFadeOut: fadeDuration > 0,
       });
+      // A pending silence advancement can publish a playing update while
+      // cleanup drains it, clearing this latch through the document hooks.
+      State.markPlaylistAsStopping(this);
 
       // State cleanup owns the active generation. Remove any older persisted
       // gap documents as well so Stop All cannot leave a reload-recoverable
@@ -248,7 +251,11 @@ export function registerPlaylistCommandWrappers() {
       // Include every surviving temporary document in the same authoritative
       // stopped update and local media cleanup as real tracks.
       for (const sound of Array.from(this.sounds ?? [])) {
-        if (Flags.getSoundFlag(sound, "isSilenceGap")) soundsToStopSet.add(sound);
+        // Cancelling silence can drain an already-pending advancement which
+        // activates a real track after the initial stop snapshot was taken.
+        if (sound.playing || sound.sound?.playing || Flags.getSoundFlag(sound, "isSilenceGap")) {
+          soundsToStopSet.add(sound);
+        }
       }
       const soundsToStop = Array.from(soundsToStopSet);
       const soundIdsToStop = soundsToStop.map((s) => s.id);
@@ -266,6 +273,10 @@ export function registerPlaylistCommandWrappers() {
       if (this.playing) {
         await this.update({ playing: false }, { noHook: true });
       }
+      // The drained advancement may also have recorded its new track clock
+      // after the initial clear. These stop updates use noHook, so finish
+      // clock cleanup explicitly once the stopped selection is committed.
+      await PlaybackClock.clear(this, "stopAll completed");
 
       if (PlaylistActionAuthority.isAuthorizedGM()) {
         try {

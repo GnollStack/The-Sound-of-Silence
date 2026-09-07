@@ -191,7 +191,9 @@ export function registerSoundConfigWrappers() {
 
       // SAFETY: Store original data for recovery
       const originalFormData = foundry.utils.deepClone(formData.object);
-      const existingFlags = this.document.getFlag(MODULE_ID);
+      // getFlag requires a key; read the namespace to distinguish explicit
+      // procedural overrides from inherited playlist defaults.
+      const existingFlags = this.document.flags?.[MODULE_ID];
 
       try {
         const segments = new Map();

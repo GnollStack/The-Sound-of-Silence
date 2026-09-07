@@ -557,6 +557,10 @@ async function runSilenceCompletion(playlist, state, reason) {
     }
   } catch (err) {
     warn(`[Silence] Failed to advance "${playlist.name}" after its gap:`, err);
+    // A command may be waiting for this in-flight update before applying its
+    // own selection. Once cancelled, release that waiter without restoring
+    // the gap or scheduling another completion attempt.
+    if (!isCurrentSilenceState(playlist, state)) return false;
     await restoreGapAfterFailedAdvancement(playlist, state);
     scheduleSilenceCompletionRetry(playlist, state);
     return false;

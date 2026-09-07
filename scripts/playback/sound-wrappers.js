@@ -82,6 +82,15 @@ function getInitialLoopPlaybackOffset(playlistSound, options = {}, { isResume = 
   return Number.isFinite(offset) && offset >= 0 ? offset : null;
 }
 
+function getStartedPlaybackOffset(sound, fallbackOffset) {
+  const contextTime = sound?.context?.currentTime;
+  const startTime = sound?.startTime;
+  // Check the raw numbers: null clock fields must not become a zero start.
+  if (!Number.isFinite(contextTime) || !Number.isFinite(startTime)) return fallbackOffset;
+  const offset = contextTime - startTime;
+  return Number.isFinite(offset) && offset >= 0 ? offset : fallbackOffset;
+}
+
 function _handleShuffleOnPlay(ps, sound, { isResume = false } = {}) {
   if (Flags.getSoundFlag(ps, "isSilenceGap")) {
     patchSilenceGapMediaClock(ps, sound);
@@ -185,7 +194,7 @@ function _schedulePostPlayActions(ps, sound, {
   fromCrossfade = false,
   initialLoopStart = null,
   isResume = false,
-  resumeOffset = null,
+  playbackOffset = null,
   startupFadeToken = null,
   targetVolume = null,
 } = {}) {
@@ -249,7 +258,7 @@ function _schedulePostPlayActions(ps, sound, {
 
   PlaybackClock.record(playlist, ps, sound, {
     reason: fromCrossfade ? "crossfade playback" : (isResume ? "resume" : "play"),
-    offsetSec: resumeOffset,
+    offsetSec: playbackOffset,
     force: isResume,
   }).catch((err) => {
     debug(`[Clock] Failed to record playback clock for "${ps.name}":`, err?.message ?? err);
@@ -321,9 +330,16 @@ export function registerSoundPlaybackWrappers() {
         return wrapped.call(this, options);
       }
 
+      const fromCrossfade = !!options?._fromCrossfade;
+      // Native load({autoplay:true}) may finish after a Stop update. Reject
+      // that delayed first start before Foundry creates an audible pipeline.
+      if (!fromCrossfade && ps.playing !== true) {
+        if (this.playing) await safeStop(this, "stopped document before native play");
+        return this;
+      }
+
       const playbackStart = getPlaybackStartState(ps, this);
       _handleShuffleOnPlay(ps, this, playbackStart);
-      const fromCrossfade = !!options?._fromCrossfade;
       const configuredFadeInMs = _consumeFadeInDuration(ps);
 
       const initialLoopOffset = getInitialLoopPlaybackOffset(ps, options, playbackStart);
@@ -377,6 +393,9 @@ export function registerSoundPlaybackWrappers() {
         };
       }
 
+      // Retain the classified position for Sound implementations which do
+      // not expose the native start clock after playback begins.
+      const fallbackPlaybackOffset = options?.offset ?? playbackStart.offset;
       let result;
       try {
         result = await wrapped.call(this, options);
@@ -386,12 +405,17 @@ export function registerSoundPlaybackWrappers() {
       }
 
       try {
+        // Native v14 adds finite pausedTime even to an explicit offset and
+        // can clamp the result to its playback bounds. Its startTime records
+        // that effective position; use it without changing native options or
+        // trusting a streamed media currentTime which may still report zero.
+        const playbackOffset = getStartedPlaybackOffset(this, fallbackPlaybackOffset);
         _schedulePostPlayActions(ps, this, {
           fadeInMs,
           fromCrossfade,
           initialLoopStart,
           isResume: playbackStart.isResume,
-          resumeOffset: playbackStart.offset,
+          playbackOffset,
           startupFadeToken,
           targetVolume,
         });
@@ -402,7 +426,9 @@ export function registerSoundPlaybackWrappers() {
 
       return result;
     },
-    "WRAPPER"
+    // Stale autoplay is intentionally suppressed without calling wrapped.
+    // WRAPPER requires unconditional chaining and unregisters violations.
+    "MIXED"
   );
 
   libWrapper.register(

@@ -12,6 +12,7 @@ const WATCHDOG_INTERVAL_MS = 2000;
 const RECOVERY_GRACE_MS = 1500;
 const CLOCK_SEQUENCES = new Map();
 const LAST_CLOCK_WRITES = new Map();
+const CLOCK_MUTATIONS = new Map();
 let cleanupHooksRegistered = false;
 
 function _clamp(value, min, max) {
@@ -56,6 +57,34 @@ function _canWriteClock(playlist) {
   return !!playlist?.isOwner && PlaylistActionAuthority.isAuthorizedGM();
 }
 
+function _queueClockMutation(playlist, mutate, cancelledResult) {
+  const key = playlist.id ?? playlist;
+  const ownerId = game.user.id;
+  let queue = CLOCK_MUTATIONS.get(key);
+  if (!queue) {
+    queue = { tail: Promise.resolve() };
+    CLOCK_MUTATIONS.set(key, queue);
+  }
+
+  const run = () => {
+    // Deleted playlists invalidate their queue. Authority may also change
+    // while an earlier database mutation is pending.
+    if (CLOCK_MUTATIONS.get(key) !== queue || !_canWriteClock(playlist) || game.user.id !== ownerId) {
+      return cancelledResult;
+    }
+    return mutate();
+  };
+  // A failed write must reject its own caller without blocking later Stop or
+  // Play requests. Keep only the current tail for each active playlist queue.
+  const task = queue.tail.then(run, run);
+  queue.tail = task;
+  return task.finally(() => {
+    if (CLOCK_MUTATIONS.get(key) === queue && queue.tail === task) {
+      CLOCK_MUTATIONS.delete(key);
+    }
+  });
+}
+
 export function registerPlaybackClockCleanupHooks() {
   if (cleanupHooksRegistered) return;
   cleanupHooksRegistered = true;
@@ -64,18 +93,18 @@ export function registerPlaybackClockCleanupHooks() {
     if (!id) return;
     CLOCK_SEQUENCES.delete(id);
     LAST_CLOCK_WRITES.delete(id);
+    CLOCK_MUTATIONS.delete(id);
   });
 }
 
 function _resolveOffsetSeconds(ps, media, explicitOffset) {
-  const explicit = Number(explicitOffset);
-  if (Number.isFinite(explicit) && explicit >= 0) return explicit;
-
-  const live = Number(media?.currentTime);
-  if (Number.isFinite(live) && live >= 0) return live;
-
-  const paused = Number(ps?.pausedTime);
-  if (Number.isFinite(paused) && paused >= 0) return paused;
+  for (const value of [explicitOffset, media?.currentTime, ps?.pausedTime]) {
+    // Missing offsets must fall through to the next clock source. Number(null)
+    // is zero and would otherwise hide an explicit seek's live media position.
+    if (value === null || value === undefined) continue;
+    const offset = Number(value);
+    if (Number.isFinite(offset) && offset >= 0) return offset;
+  }
 
   return 0;
 }
@@ -143,32 +172,38 @@ export const PlaybackClock = {
       reason,
     };
 
-    const existing = this.get(playlist);
-    const lastWrite = LAST_CLOCK_WRITES.get(playlist.id);
-    if (!force) {
-      if (_sameClock(existing, nextClock)) return existing;
-      if (_sameClock(lastWrite, nextClock)) return lastWrite;
-    }
+    // Capture playback timing above, then serialize the database work. A
+    // queued Stop must clear this write before a later Play records its clock.
+    return _queueClockMutation(playlist, async () => {
+      const existing = this.get(playlist);
+      const lastWrite = LAST_CLOCK_WRITES.get(playlist.id);
+      if (!force) {
+        if (_sameClock(existing, nextClock)) return existing;
+        if (_sameClock(lastWrite, nextClock)) return lastWrite;
+      }
 
-    debug(`[Clock] Recording "${ps.name}" for "${playlist.name}" (${reason}).`, nextClock);
-    LAST_CLOCK_WRITES.set(playlist.id, nextClock);
-    try {
-      await playlist.setFlag(MODULE_ID, FLAG_KEY, nextClock);
-    } catch (err) {
-      if (LAST_CLOCK_WRITES.get(playlist.id) === nextClock) LAST_CLOCK_WRITES.delete(playlist.id);
-      throw err;
-    }
-    return nextClock;
+      debug(`[Clock] Recording "${ps.name}" for "${playlist.name}" (${reason}).`, nextClock);
+      LAST_CLOCK_WRITES.set(playlist.id, nextClock);
+      try {
+        await playlist.setFlag(MODULE_ID, FLAG_KEY, nextClock);
+      } catch (err) {
+        if (LAST_CLOCK_WRITES.get(playlist.id) === nextClock) LAST_CLOCK_WRITES.delete(playlist.id);
+        throw err;
+      }
+      return nextClock;
+    }, null);
   },
 
   async clear(playlist, reason = "clear") {
     if (!_canWriteClock(playlist)) return false;
-    if (!this.get(playlist)) return false;
+    return _queueClockMutation(playlist, async () => {
+      LAST_CLOCK_WRITES.delete(playlist.id);
+      if (!this.get(playlist)) return false;
 
-    debug(`[Clock] Clearing playback clock for "${playlist.name}" (${reason}).`);
-    LAST_CLOCK_WRITES.delete(playlist.id);
-    await playlist.unsetFlag(MODULE_ID, FLAG_KEY);
-    return true;
+      debug(`[Clock] Clearing playback clock for "${playlist.name}" (${reason}).`);
+      await playlist.unsetFlag(MODULE_ID, FLAG_KEY);
+      return true;
+    }, false);
   },
 
   resolvePosition(ps, { now = Date.now() } = {}) {

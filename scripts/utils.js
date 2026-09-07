@@ -236,10 +236,11 @@ export function findPlaylistSoundForSound(sound) {
         result = playlist?.sounds.get(sound.playlistSoundId) || null;
     }
 
-    // Strategy 3: Search all playing sounds (slowest but most reliable)
+    // Strategy 3: Native Sounds do not have manager/ID metadata. Include
+    // stopped playlists so a first load finishing after Stop can still reach
+    // the Sound.play wrapper's stale-start guard before it acquires a cache.
     else {
         for (const playlist of game.playlists) {
-            if (!playlist.playing) continue;
             const found = playlist.sounds.find(s => s.sound === sound);
             if (found) {
                 result = found;

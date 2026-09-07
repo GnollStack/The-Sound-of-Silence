@@ -330,6 +330,7 @@ function getStatus(api, _args, availability) {
       },
       refresh: {
         confirmRefreshRequired: true,
+        scopes: ["client", "world"],
         gates: getRefreshAvailability({ confirmRefresh: false }).gates,
       },
       playbackAutomation: getPlaybackAutomationStatus(),
@@ -373,12 +374,42 @@ function getStatus(api, _args, availability) {
       compendiumPacks: Number(game.packs?.size ?? game.packs?.length ?? 0),
     },
     fixtures: getPlaybackFixtureCounts(),
+    fixtureStages: getFixtureStages(playlists),
     integrations: Integrations.diagnostics(),
     audio: getAudioSnapshot(playlists),
     playback: api.inspectAll(),
     crossfadePreloads: getCrossfadePreloadDiagnostics(),
     publicApiKeys: getPublicApiKeys(modulePackage?.api),
   };
+}
+
+function getFixtureStages(playlists) {
+  return playlists.flatMap((playlist) => {
+    const marker = playlist.getFlag?.(MODULE_ID, FIXTURE_FLAG);
+    if (marker?.kind !== "playlist" || !marker.stage ||
+        String(marker.worldId ?? "") !== String(game.world?.id ?? "") ||
+        !String(playlist.name ?? "").startsWith(FIXTURE_PREFIX) ||
+        !String(marker.fixtureName ?? "").startsWith(FIXTURE_PREFIX)) return [];
+    const stage = marker.stage;
+    return [{
+      playlistId: playlist.id,
+      runId: String(marker.runId ?? "").slice(0, 120),
+      scenario: String(marker.scenario ?? "").slice(0, 80),
+      name: String(stage.name ?? "").slice(0, 120),
+      at: finiteNumberOrNull(stage.at),
+      userId: String(stage.userId ?? "").slice(0, 80),
+      playlistPlaying: stage.playlistPlaying === true,
+      sounds: (Array.isArray(stage.sounds) ? stage.sounds : []).slice(0, 4).map((sound) => ({
+        id: String(sound?.id ?? "").slice(0, 80),
+        playing: sound?.playing === true,
+        mediaLoaded: sound?.mediaLoaded === true,
+        mediaPlaying: sound?.mediaPlaying === true,
+        mediaState: finiteNumberOrNull(sound?.mediaState),
+        mediaTime: finiteNumberOrNull(sound?.mediaTime),
+        mediaDuration: finiteNumberOrNull(sound?.mediaDuration),
+      })),
+    }];
+  }).slice(0, 20);
 }
 
 function getAudioSnapshot(playlists = []) {
@@ -420,6 +451,39 @@ function getAudioSnapshot(playlists = []) {
     soundDocumentsWithMedia,
     playingMediaObjects,
     documentPlayingSounds,
+    memory: getAudioMemorySnapshot(audio),
+  };
+}
+
+function getAudioMemorySnapshot(audio) {
+  const cache = audio?.buffers;
+  let retainedBytes = 0;
+  let entriesInspected = 0;
+  // Inspect Map entries without touching Foundry's LRU lookup or links.
+  if (cache instanceof Map) {
+    for (const entry of cache.values()) {
+      if (entriesInspected >= 10000) break;
+      retainedBytes += Math.max(0, Number(entry?.size) || 0);
+      entriesInspected += 1;
+    }
+  }
+  const heap = globalThis.performance?.memory;
+  const usage = cache instanceof Map ? cache.usage : null;
+  return {
+    bufferCache: cache instanceof Map ? {
+      entries: cache.size,
+      entriesInspected,
+      reportedBytes: finiteNumberOrNull(usage?.current),
+      limitBytes: finiteNumberOrNull(usage?.max),
+      retainedBytes,
+      truncated: entriesInspected < cache.size,
+    } : null,
+    javascriptHeap: heap ? {
+      usedBytes: finiteNumberOrNull(heap.usedJSHeapSize),
+      totalBytes: finiteNumberOrNull(heap.totalJSHeapSize),
+      limitBytes: finiteNumberOrNull(heap.jsHeapSizeLimit),
+    } : null,
+    userAgent: globalThis.navigator?.userAgent ?? null,
   };
 }
 
@@ -437,6 +501,7 @@ function booleanOrNull(value) {
 }
 
 function finiteNumberOrNull(value) {
+  if (value === null || value === undefined) return null;
   const number = Number(value);
   return Number.isFinite(number) ? number : null;
 }
@@ -625,11 +690,23 @@ async function validateAssets(args = {}) {
 }
 
 async function refreshClient(args = {}) {
+  const scope = args.scope ?? "client";
+  if (!["client", "world"].includes(scope)) {
+    throw new Error('Refresh scope must be "client" or "world".');
+  }
+  if (scope === "world" && (!game.user?.can?.("SETTINGS_MODIFY") || !game.socket?.emit)) {
+    throw new Error("World refresh requires permission to modify world settings and an active socket.");
+  }
   const delayMs = Math.max(0, Math.min(Number(args.delayMs) || 250, 5000));
-  window.setTimeout(() => window.location.reload(), delayMs);
+  window.setTimeout(() => {
+    if (scope === "world") game.socket.emit("reload");
+    // Foundry broadcasts the socket reload to other sessions; reload the sender too.
+    window.location.reload();
+  }, delayMs);
   return {
     success: true,
     initiated: true,
+    scope,
     delayMs,
   };
 }

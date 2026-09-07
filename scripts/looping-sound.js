@@ -263,7 +263,10 @@ export class LoopingSound {
       return !this.isDestroyed;
     }
 
-    this._armNextTimer();
+    // Playback may already be inside a segment when delayed startup gets the
+    // media. Adopt that segment without rewinding the intro or reviving one
+    // whose end has passed; otherwise arm the next future segment.
+    this._armFromCurrentPosition();
     return !this.isDestroyed;
   }
 
