@@ -125,6 +125,9 @@ async function createAndPlayGap(playlist, durationMs, sourceSound, state) {
   }
 
   if (!isCurrentSilenceState(playlist, state)) {
+    if (!state.cancelled && !PlaylistActionAuthority.isCurrent(state.authorityToken)) {
+      abandonLocalSilenceState(playlist, state, "authority changed during gap creation");
+    }
     if (!state.abandoned) {
       const discarded = await discardGap(gap, "stale gap creation");
       if (!discarded) scheduleDiscardGapRetry(gap, "stale gap creation");
@@ -159,6 +162,9 @@ async function createAndPlayGap(playlist, durationMs, sourceSound, state) {
   }
 
   if (!isCurrentSilenceState(playlist, state)) {
+    if (!state.cancelled && !PlaylistActionAuthority.isCurrent(state.authorityToken)) {
+      abandonLocalSilenceState(playlist, state, "authority changed during gap playback");
+    }
     if (!state.abandoned) {
       const discarded = await discardGap(gap, "stale gap playback");
       if (!discarded) scheduleDiscardGapRetry(gap, "stale gap playback");
@@ -181,7 +187,7 @@ function isCurrentSilenceState(playlist, state) {
   return State.getSilenceState(playlist) === state &&
     !state?.cancelled &&
     !state?.completed &&
-    PlaylistActionAuthority.isAuthorizedGM();
+    (state.authorityToken ? PlaylistActionAuthority.isCurrent(state.authorityToken) : PlaylistActionAuthority.isAuthorizedGM());
 }
 
 function patchGapMediaClock(sound, durationMs, startedAt) {
@@ -247,6 +253,7 @@ function createSilenceState({ gap = null, sourceSound = null, gapMs, startedAt, 
   });
   return {
     gap,
+    authorityToken: PlaylistActionAuthority.capture(),
     cancelled: false,
     completed: false,
     abandoned: false,
@@ -525,7 +532,7 @@ async function runSilenceCompletion(playlist, state, reason) {
     // Advance while the persisted gap still exists. If authority changes or a
     // document update fails, the gap remains a durable handoff/retry marker.
     if (!state.advancementComplete) {
-      if (!PlaylistActionAuthority.isAuthorizedGM()) {
+      if (!isCurrentSilenceState(playlist, state)) {
         abandonLocalSilenceState(playlist, state, "authority changed before advancement");
         return false;
       }
@@ -567,7 +574,7 @@ async function runSilenceCompletion(playlist, state, reason) {
   }
 
   if (State.getSilenceState(playlist) !== state || state.cancelled) return false;
-  if (!PlaylistActionAuthority.isAuthorizedGM()) {
+  if (!isCurrentSilenceState(playlist, state)) {
     if (state.advancementComplete) {
       return finalizeNaturalSilenceCompletion(playlist, state, gapMs, `${reason}:authority-handoff`);
     }
@@ -595,6 +602,7 @@ export async function completeSilenceGap(playlist, state = State.getSilenceState
   if (state.cancelled || state.completed) return false;
   if (!PlaylistActionAuthority.isAuthorizedGM()) return false;
   if (state.completionAttempt) return state.completionAttempt;
+  if (!isCurrentSilenceState(playlist, state)) return false;
 
   const attempt = runSilenceCompletion(playlist, state, reason);
   state.completionAttempt = attempt;
@@ -620,6 +628,7 @@ export async function startSilenceGap(playlist, sourceSound) {
   if (!PlaylistActionAuthority.isAuthorizedGM()) {
     return { started: false, completion: Promise.resolve(false), reason: "not-authority", gapMs: 0 };
   }
+  const authorityToken = PlaylistActionAuthority.capture();
 
   const gapMs = Flags.getSilenceDuration(playlist);
   if (playlist.mode === CONST.PLAYLIST_MODES.SIMULTANEOUS) {
@@ -656,6 +665,9 @@ export async function startSilenceGap(playlist, sourceSound) {
       });
     }
     existing = State.getSilenceState(playlist);
+  }
+  if (!PlaylistActionAuthority.isCurrent(authorityToken)) {
+    return { started: false, completion: Promise.resolve(false), reason: "authority-changed", gapMs };
   }
   if (existing && !existing.cancelled && !existing.completed) {
     return {
@@ -705,13 +717,20 @@ async function reconcilePersistedSilenceGaps(reason) {
   if (!PlaylistActionAuthority.isAuthorizedGM()) {
     for (const playlist of playlists) {
       const state = State.getSilenceState(playlist);
-      if (state) abandonLocalSilenceState(playlist, state, reason);
+      if (state) {
+        // An already-sent atomic selection owns its natural result. Drain it
+        // before releasing local state on handoff.
+        if (state.completionAttempt) await state.completionAttempt.catch(() => false);
+        if (State.getSilenceState(playlist) === state) abandonLocalSilenceState(playlist, state, reason);
+      }
     }
     return false;
   }
 
+  const authorityToken = PlaylistActionAuthority.capture();
   let recoveredAny = false;
   for (const playlist of playlists) {
+    if (!PlaylistActionAuthority.isCurrent(authorityToken)) return recoveredAny;
     const gaps = Array.from(playlist.sounds ?? [])
       .filter((sound) => Flags.getSoundFlag(sound, FLAG_KEY))
       .sort((left, right) => {
@@ -729,7 +748,13 @@ async function reconcilePersistedSilenceGaps(reason) {
 
     const gap = gaps[0];
 
-    const current = State.getSilenceState(playlist);
+    let current = State.getSilenceState(playlist);
+    if (current?.authorityToken && !PlaylistActionAuthority.isCurrent(current.authorityToken)) {
+      if (current.completionAttempt) await current.completionAttempt.catch(() => false);
+      if (!PlaylistActionAuthority.isCurrent(authorityToken)) return recoveredAny;
+      if (State.getSilenceState(playlist) === current) abandonLocalSilenceState(playlist, current, reason);
+      current = State.getSilenceState(playlist);
+    }
 
     if (
       current?.gap?.id === gap.id &&
@@ -762,6 +787,7 @@ async function reconcilePersistedSilenceGaps(reason) {
         });
       }
       for (const orphan of gaps) {
+        if (!PlaylistActionAuthority.isCurrent(authorityToken)) return recoveredAny;
         await discardGap(orphan, `inactive persisted gap in "${playlist.name}"`);
       }
       const staleState = State.getSilenceState(playlist);
@@ -770,8 +796,10 @@ async function reconcilePersistedSilenceGaps(reason) {
     }
 
     for (const duplicate of gaps.slice(1)) {
+      if (!PlaylistActionAuthority.isCurrent(authorityToken)) return recoveredAny;
       await discardGap(duplicate, `duplicate recovered gap in "${playlist.name}"`);
     }
+    if (!PlaylistActionAuthority.isCurrent(authorityToken)) return recoveredAny;
 
     if (current && current.gap?.id === gap.id && !current.cancelled && !current.completed) {
       continue;
@@ -795,6 +823,14 @@ async function reconcilePersistedSilenceGaps(reason) {
     state.sourceSoundId = sourceSoundId;
     State.setSilenceState(playlist, state);
     patchGapMediaClock(gap.sound, gapMs, startedAt);
+
+    // Creation may have committed just before the author disconnected, while
+    // the preceding real sound is still selected. Adopt the persisted gap
+    // without extending its original wall-clock deadline.
+    if (playlist.sounds.some(sound => sound.playing && !Flags.getSoundFlag(sound, FLAG_KEY))) {
+      await commitPlaylistSelection(playlist, gap);
+      if (!isCurrentSilenceState(playlist, state)) return recoveredAny;
+    }
 
     debug(`[Silence] Recovered persisted gap in "${playlist.name}" (${reason}).`);
     recoveredAny = true;
@@ -830,8 +866,7 @@ export function registerSilenceRecoveryHooks() {
     }, 0);
   };
 
-  Hooks.on("updateUser", () => queueAuthorityRecovery("user authority change"));
-  Hooks.on("userConnected", () => queueAuthorityRecovery("user connection change"));
+  Hooks.on(`${MODULE_ID}.playbackAuthorityChanged`, ({ reason }) => queueAuthorityRecovery(reason));
 
   Hooks.on("createPlaylistSound", (sound) => {
     if (!Flags.getSoundFlag(sound, FLAG_KEY)) return;

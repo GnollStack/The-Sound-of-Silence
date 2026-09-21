@@ -11,6 +11,7 @@ import { State } from "./state-manager.js";
 import { getPlayableSoundsInOrder } from "./playlist/playable-order.js";
 import {
   debug,
+  MODULE_ID,
   isAudioUnlocked,
   PlaylistActionAuthority,
   waitForMedia,
@@ -132,6 +133,7 @@ async function _bootstrapPlaybackClock(playlist, activeSound, reason) {
 export function queuePlaybackClockRecord(soundDoc, reason = "document playing", { force = false } = {}) {
   const playlist = soundDoc?.parent;
   if (!PlaylistActionAuthority.isAuthorizedGM()) return;
+  const authorityToken = PlaylistActionAuthority.capture();
   if (!playlist?.isOwner || !soundDoc?.playing) return;
   if (!_isSequentialOrShuffle(playlist)) return;
   if (Flags.getPlaybackMode(playlist).soundscape) return;
@@ -139,6 +141,7 @@ export function queuePlaybackClockRecord(soundDoc, reason = "document playing", 
   if (soundDoc.repeat) return;
 
   const attempt = async (label) => {
+    if (!PlaylistActionAuthority.isCurrent(authorityToken)) return;
     if (!soundDoc.playing || PlaybackClock.get(playlist)?.soundId === soundDoc.id) return;
     if (!isAudioUnlocked() && !soundDoc.sound) {
       debug(`[Clock] Delaying clock record for "${soundDoc.name}" until Foundry audio is unlocked.`);
@@ -161,6 +164,7 @@ export function queuePlaybackClockRecord(soundDoc, reason = "document playing", 
     }
 
     const media = await waitForMedia(soundDoc);
+    if (!PlaylistActionAuthority.isCurrent(authorityToken)) return;
     await PlaybackClock.record(playlist, soundDoc, media, {
       reason: `${reason}:${label}:media`,
       offsetSec,
@@ -196,6 +200,7 @@ async function _recoverOverdueSilenceGap(playlist, reason) {
 
 async function _recoverOverduePlaylist(playlist, reason = "watchdog") {
   if (!PlaylistActionAuthority.isAuthorizedGM()) return false;
+  const authorityToken = PlaylistActionAuthority.capture();
   if (!playlist?.isOwner || !playlist.playing) return false;
   if (!_isSequentialOrShuffle(playlist)) return false;
   if (Flags.getPlaybackMode(playlist).soundscape) return false;
@@ -207,6 +212,26 @@ async function _recoverOverduePlaylist(playlist, reason = "watchdog") {
   PLAYBACK_RECOVERY_IN_FLIGHT.add(key);
   try {
     if (await _recoverOverdueSilenceGap(playlist, reason)) return true;
+    if (!PlaylistActionAuthority.isCurrent(authorityToken)) return false;
+
+    const playing = Array.from(playlist.sounds ?? []).filter(sound => sound.playing);
+    if (playing.some(sound => Flags.getSoundFlag(sound, "isSilenceGap"))) return false;
+    if (playing.length > 1) {
+      // A committed incoming selection belongs to its original operation.
+      // Keep its fade intact; only finish the outgoing document if its author
+      // disappeared. Never select a third track from this intermediate state.
+      const transition = playlist.getFlag(MODULE_ID, "crossfadeTransition");
+      const incoming = playing.find(sound => sound.id === transition?.incomingSoundId);
+      const outgoing = playing.find(sound => sound.id === transition?.outgoingSoundId);
+      const authorConnected = Array.from(game.users ?? []).some(user =>
+        String(user.id) === String(transition?.gmId) && user.active
+      );
+      if (playing.length === 2 && incoming && outgoing && !authorConnected) {
+        await outgoing.update({ playing: false, pausedTime: null });
+        return true;
+      }
+      return false;
+    }
 
     const activeSound = _getRecoverablePlayingSound(playlist);
     if (!activeSound) return false;
@@ -264,9 +289,7 @@ async function _recoverOverduePlaylist(playlist, reason = "watchdog") {
 
 export function runPlaybackRecoveryWatchdog(reason = "watchdog") {
   if (!PlaylistActionAuthority.isAuthorizedGM()) return;
-  for (const playlist of game.playlists ?? []) {
-    _recoverOverduePlaylist(playlist, reason);
-  }
+  return Promise.all(Array.from(game.playlists ?? [], playlist => _recoverOverduePlaylist(playlist, reason)));
 }
 
 export function startPlaybackRecoveryWatchdog() {

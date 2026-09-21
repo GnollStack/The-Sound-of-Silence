@@ -485,7 +485,10 @@ export function advancedFade(sound, {
  * @returns {Promise<void>}
  */
 export async function fadeOutAndStop(sound, ms = 500) {
-  if (!sound) return Promise.resolve();
+  // Native document sync can stop the media before playlist cleanup reaches
+  // this helper. Its gain node survives for replay; adding a curve after stop
+  // can crash Electron's audio thread when that node is reused.
+  if (!sound?.playing) return;
 
   const token = advancedFade(sound, { targetVol: 0, duration: ms });
 

@@ -41,6 +41,7 @@ import { registerSoundPlaybackWrappers } from "../playback/sound-wrappers.js";
 import { registerCrossfadePreloadHooks } from "../playback/preload-coordinator.js";
 import { registerShuffleHooks } from "../playlist/shuffle-hooks.js";
 import { registerNormalizationHooks } from "../volume/normalization-hooks.js";
+import { registerPlaybackAuthorityHooks } from "../playback/authority-coordinator.js";
 
 export function registerLifecycleHooks() {
   Hooks.once("init", () => {
@@ -111,6 +112,7 @@ export function registerLifecycleHooks() {
     registerShuffleHooks();
     registerSoundscapePlaylistHooks();
     registerNormalizationHooks();
+    registerPlaybackAuthorityHooks();
     bootstrapSilenceGapRecovery().catch((err) =>
       debug("[Silence] Ready recovery failed:", err?.message ?? err)
     );

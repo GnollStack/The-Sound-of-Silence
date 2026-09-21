@@ -47,12 +47,37 @@ export function formatTimeValue(seconds, showMilliseconds = true) {
  * @param {Iterable<object>|null|undefined} users
  * @returns {string|null}
  */
-export function selectPrimaryActiveGmId(users) {
-  const activeGmIds = Array.from(users ?? [])
-    .filter((user) => user?.isGM && user?.active !== false && user?.id != null)
-    .map((user) => String(user.id))
-    .sort((left, right) => left < right ? -1 : (left > right ? 1 : 0));
-  return activeGmIds[0] ?? null;
+export function normalizePlaybackControllerPolicy(value) {
+  const policy = value && typeof value === "object" && !Array.isArray(value) ? value : {};
+  const id = (value) => typeof value === "string" && value.trim() ? value.trim() : null;
+  return {
+    preferredUserId: id(policy.preferredUserId),
+    excludedUserIds: [...new Set((Array.isArray(policy.excludedUserIds) ? policy.excludedUserIds : [])
+      .map(id).filter(Boolean))].sort(),
+  };
+}
+
+/** Role numbers are Foundry's persisted roles; this helper has no Foundry globals. */
+export function resolvePlaybackController(users, value) {
+  const policy = normalizePlaybackControllerPolicy(value);
+  const candidates = Array.from(users ?? []).filter((user) =>
+    user?.isGM && user.active === true && user.id != null &&
+    (user.role == null || Number(user.role) >= 3) &&
+    !policy.excludedUserIds.includes(String(user.id))
+  );
+  const preferred = candidates.find(user => String(user.id) === policy.preferredUserId);
+  if (preferred) return { userId: String(preferred.id), reason: "preferred" };
+  const fullGms = candidates.filter(user => Number(user.role) >= 4);
+  const pool = fullGms.length ? fullGms : candidates;
+  const ids = pool.map(user => String(user.id)).sort((a, b) => a < b ? -1 : a > b ? 1 : 0);
+  return {
+    userId: ids[0] ?? null,
+    reason: !ids.length ? "no-eligible-controller" : fullGms.length ? "automatic-full-gm" : "automatic-assistant",
+  };
+}
+
+export function selectPrimaryActiveGmId(users, policy) {
+  return resolvePlaybackController(users, policy).userId;
 }
 
 /**

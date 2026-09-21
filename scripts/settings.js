@@ -5,6 +5,7 @@
 import { AdvancedShuffle, SHUFFLE_PATTERNS } from "./advanced-shuffle.js";
 import { LegacyLoopMigrationLauncher } from "./legacy-loop-migration.js";
 import { debug, MODULE_ID } from "./utils.js";
+import { PlaybackControllerConfig } from "./playback/controller-config.js";
 
 export function registerSettings({
   applyPersonalPlaylistVolumesToActiveSounds,
@@ -13,6 +14,23 @@ export function registerSettings({
   const applyPersonalMix = () => {
     applyPersonalPlaylistVolumesToActiveSounds?.();
   };
+
+  game.settings.register(MODULE_ID, "playbackControllerPolicy", {
+    name: "Playback Controller Policy",
+    scope: "world",
+    config: false,
+    type: Object,
+    default: { preferredUserId: null, excludedUserIds: [] },
+    onChange: () => Hooks.callAll(`${MODULE_ID}.playbackControllerPolicyChanged`),
+  });
+  game.settings.registerMenu(MODULE_ID, "playbackControllerConfig", {
+    name: "Playback Controller",
+    label: "Configure Playback Controller",
+    hint: "Prefer a GM or co-GM for automatic playback and exclude automation accounts. Only full Gamemasters can configure this.",
+    icon: "fas fa-headphones",
+    restricted: true,
+    type: PlaybackControllerConfig,
+  });
 
   game.settings.register(MODULE_ID, "debug", {
     name: "Enable Debug Logging",

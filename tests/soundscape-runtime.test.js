@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 const { SoundscapeEngine } = await import("../scripts/procedural-ambience.js");
 const { registerSettings } = await import("../scripts/settings.js");
 const { API } = await import("../scripts/api.js");
+const { PlaylistActionAuthority } = await import("../scripts/utils.js");
 
 function makeUsers(...users) {
   const collection = [...users];
@@ -62,6 +63,94 @@ function captureGameState() {
 function restoreGameState(state) {
   Object.assign(game, state);
 }
+
+test("publisher handoff cancels timers but preserves accepted pending and playing recipes", async () => {
+  const saved = captureGameState(), oldSound = foundry.audio.Sound;
+  const gm = { id: "z-controller", role: 4, isGM: true, active: true };
+  const assistant = { id: "a-assistant", role: 3, isGM: true, active: true };
+  let preferredUserId = null, resolveLoad, engine;
+  const load = new Promise(resolve => { resolveLoad = resolve; });
+  const effects = [], emitted = [];
+  try {
+    game.user = gm;
+    game.users = makeUsers(gm, assistant);
+    game.settings = { get: (_scope, key) => key === "playbackControllerPolicy" ? { preferredUserId } : key === "soundscapeProceduralSyncEnabled" };
+    game.socket = { id: "publisher", emit: (_channel, recipe) => emitted.push(recipe) };
+    game.audio = { locked: false, music: { state: "running", sampleRate: 48000 } };
+    foundry.audio.Sound = class {
+      constructor() { this.events = new Map(); this.duration = 10; this.playing = false; this.stops = 0; effects.push(this); }
+      async load() { await load; }
+      async play() { this.playing = true; }
+      stop() { this.stops++; this.playing = false; this.events.get("stop")?.(); }
+      addEventListener(name, callback) { this.events.set(name, callback); }
+    };
+    const { playlist, sound } = makeSoundscapeFixture();
+    engine = new SoundscapeEngine(playlist);
+    engine.isStarted = true;
+    const fire = engine._fireOneShot(sound);
+    await Promise.resolve();
+    await Promise.resolve();
+    assert.equal(emitted.length, 1);
+    assert.equal(engine.isOneShotPending(sound.id), true);
+    preferredUserId = assistant.id;
+    PlaylistActionAuthority.getSelection();
+    engine.handlePublisherAuthorityChange(gm.id, assistant.id);
+    engine.syncProceduralSounds();
+    assert.equal(engine.oneShotTimers.size, 0);
+    resolveLoad();
+    assert.equal(await fire, true);
+    assert.equal(effects[0].playing, true);
+    assert.equal(effects[0].stops, 0);
+    assert.equal(engine.isOneShotActive(sound.id), true);
+    preferredUserId = gm.id;
+    PlaylistActionAuthority.getSelection();
+    engine.handlePublisherAuthorityChange(assistant.id, gm.id);
+    const newTimer = engine.oneShotTimers.get(sound.id).timer;
+    effects[0].playing = false;
+    effects[0].events.get("end")();
+    assert.equal(engine.oneShotTimers.get(sound.id).timer, newTimer, "old accepted cleanup must not replace the new publisher cadence");
+    assert.equal(engine.isOneShotActive(sound.id), false);
+    assert.equal(emitted.length, 1);
+  } finally {
+    resolveLoad();
+    engine?.destroy({ stopBeds: false });
+    foundry.audio.Sound = oldSound;
+    restoreGameState(saved);
+  }
+});
+
+test("a publisher timer cannot fire across a coalesced A-B-A controller transfer", async () => {
+  const saved = captureGameState();
+  let engine;
+  try {
+    const gm = { id: "z-controller", role: 4, isGM: true, active: true };
+    const assistant = { id: "a-assistant", role: 3, isGM: true, active: true };
+    game.user = gm;
+    game.users = makeUsers(gm, assistant);
+    let preferredUserId = null;
+    game.settings = { get: (_scope, key) => key === "playbackControllerPolicy" ? { preferredUserId } : true };
+    const { playlist, sound } = makeSoundscapeFixture();
+    engine = new SoundscapeEngine(playlist);
+    engine.isStarted = true;
+    let fires = 0;
+    engine._fireOneShot = async () => { fires++; };
+    engine.armProceduralSound(sound);
+    const oldTimer = engine.oneShotTimers.get(sound.id).timer;
+    preferredUserId = assistant.id;
+    PlaylistActionAuthority.getSelection();
+    preferredUserId = gm.id;
+    PlaylistActionAuthority.getSelection();
+    oldTimer._resolve();
+    await oldTimer.complete;
+    await Promise.resolve();
+    assert.equal(fires, 0);
+    engine.handlePublisherAuthorityChange(gm.id, gm.id);
+    assert.notEqual(engine.oneShotTimers.get(sound.id).timer, oldTimer);
+  } finally {
+    engine?.destroy({ stopBeds: false });
+    restoreGameState(saved);
+  }
+});
 
 test("primary GM keeps publishing when its local sync preference is disabled", () => {
   const saved = captureGameState();

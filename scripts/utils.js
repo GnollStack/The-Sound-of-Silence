@@ -3,7 +3,8 @@
 
 import {
     formatTimeValue,
-    selectPrimaryActiveGmId,
+    normalizePlaybackControllerPolicy,
+    resolvePlaybackController,
 } from "./core-helpers.js";
 
 const AudioTimeout = foundry.audio.AudioTimeout;
@@ -292,8 +293,38 @@ export const formatTime = formatTimeValue;
 
 
 export class PlaylistActionAuthority {
+    static _selectedId = undefined;
+    static _generation = 0;
+
+    static getPolicy() {
+        // Settings may not yet be registered during module import/init.
+        let value;
+        try { value = game.settings?.get(MODULE_ID, "playbackControllerPolicy"); } catch (_) { }
+        return normalizePlaybackControllerPolicy(value);
+    }
+
+    static getSelection() {
+        const selection = resolvePlaybackController(game.users, this.getPolicy());
+        if (selection.userId !== this._selectedId) {
+            this._selectedId = selection.userId;
+            this._generation++;
+        }
+        return { ...selection, generation: this._generation };
+    }
+
     static getAuthorizedGMId() {
-        return selectPrimaryActiveGmId(game.users);
+        return this.getSelection().userId;
+    }
+
+    static capture() {
+        const selection = this.getSelection();
+        return this.isAuthorizedGM() ? { ...selection, userId: String(game.user.id) } : null;
+    }
+
+    static isCurrent(token) {
+        const selection = this.getSelection();
+        return !!token && this.isAuthorizedGM() &&
+            token.userId === String(game.user.id) && token.generation === selection.generation;
     }
 
     static isActiveGMId(userId) {

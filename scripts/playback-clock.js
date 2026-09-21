@@ -59,7 +59,7 @@ function _canWriteClock(playlist) {
 
 function _queueClockMutation(playlist, mutate, cancelledResult) {
   const key = playlist.id ?? playlist;
-  const ownerId = game.user.id;
+  const authorityToken = PlaylistActionAuthority.capture();
   let queue = CLOCK_MUTATIONS.get(key);
   if (!queue) {
     queue = { tail: Promise.resolve() };
@@ -69,7 +69,7 @@ function _queueClockMutation(playlist, mutate, cancelledResult) {
   const run = () => {
     // Deleted playlists invalidate their queue. Authority may also change
     // while an earlier database mutation is pending.
-    if (CLOCK_MUTATIONS.get(key) !== queue || !_canWriteClock(playlist) || game.user.id !== ownerId) {
+    if (CLOCK_MUTATIONS.get(key) !== queue || !_canWriteClock(playlist) || !PlaylistActionAuthority.isCurrent(authorityToken)) {
       return cancelledResult;
     }
     return mutate();

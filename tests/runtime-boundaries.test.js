@@ -104,7 +104,8 @@ globalThis.ui = { playlists: { render() {} } };
 
 const { Flags, sanitizeSoundscapeGroups } = await import("../scripts/flag-service.js");
 const { safeStop } = await import("../scripts/utils.js");
-const { reserveFadeIn } = await import("../scripts/audio-fader.js");
+const { reserveFadeIn, fadeOutAndStop } = await import("../scripts/audio-fader.js");
+const { registerTransitionReplicationHooks } = await import("../scripts/playlist/transition-replication-hooks.js");
 const { applyFadeIn } = await import("../scripts/fade-in.js");
 const { PlaybackClock } = await import("../scripts/playback-clock.js");
 const {
@@ -112,7 +113,7 @@ const {
   createCrossfadeSession,
   settleCrossfadeSession,
 } = await import("../scripts/playback/transition-session.js");
-const { performCrossfade } = await import("../scripts/cross-fade.js");
+const { performCrossfade, prepareIncomingCrossfadeMedia } = await import("../scripts/cross-fade.js");
 const {
   planCrossfadePreload,
   resolveNextCrossfadeSound,
@@ -138,6 +139,112 @@ const { registerSoundPlaybackWrappers } = await import("../scripts/playback/soun
 const { maybeLoopPlaylist } = await import("../scripts/playlist-loop.js");
 const { registerSoundConfigWrappers } = await import("../scripts/sound-config.js");
 const { createPlaybackAutomation } = await import("../scripts/diagnostics-playback-automation.js");
+
+test("crossfade waits for an existing Sound's pending preload before native play", async () => {
+  const previousAudio = game.audio;
+  game.audio = {locked:false,music:{state:"running",sampleRate:96000}};
+  let resolveLoad;
+  const pendingLoad = new Promise(resolve => {resolveLoad=resolve;});
+  let loads=0, plays=0;
+  const media = {
+    loaded:false, playing:false, volume:0.25,
+    context:{currentTime:1,state:"running"},
+    gain:{value:0.25,cancelAndHoldAtTime(){},setValueAtTime(){}},
+    async play() { plays++; if (this.loaded) this.playing=true; return this; },
+  };
+  const ps = {name:"Preloading incoming track",sound:media,async load(){loads++;await pendingLoad;media.loaded=true;}};
+  let prepared;
+  try {
+    prepared=prepareIncomingCrossfadeMedia(ps);
+    await Promise.resolve();
+    await Promise.resolve();
+    assert.equal(loads,1,"join the existing load instead of treating object existence as readiness");
+    assert.equal(plays,0,"native play while loading would be a no-op");
+    resolveLoad();
+    assert.equal(await prepared,media);
+    assert.equal(plays,1);
+    assert.equal(media.playing,true);
+  } finally {
+    resolveLoad();
+    await prepared;
+    game.audio=previousAudio;
+  }
+});
+
+test("fade-out stop leaves inactive native media and its reusable gain untouched", async () => {
+  for (const state of ["stopped", "stopping", "paused"]) {
+    const media = {
+      playing: false,
+      get gain() { assert.fail(`must not automate ${state} media`); },
+      stop() { assert.fail(`must not restart ${state} cleanup`); },
+    };
+    await fadeOutAndStop(media, 1);
+    assert.equal(State.isSoundFading(media), false);
+  }
+});
+
+test("active fade-out retains its curve and ownership until the stop completes", async () => {
+  const previousWait = foundry.audio.AudioTimeout.wait;
+  const waits = new Map();
+  const curves = [];
+  let stopCalls = 0;
+  const media = {
+    playing: true,
+    context: { currentTime: 10, state: "running" },
+    gain: {
+      value: 0.5,
+      cancelAndHoldAtTime() {},
+      setValueAtTime() {},
+      setValueCurveAtTime(curve, start, duration) { curves.push({curve,start,duration}); },
+    },
+    stop() { stopCalls++; this.playing = false; },
+  };
+  try {
+    foundry.audio.AudioTimeout.wait = ms => new Promise(resolve => waits.set(ms, resolve));
+    const stopping = fadeOutAndStop(media, 1);
+    assert.equal(curves.length, 1);
+    assert.equal(curves[0].curve[0], 0.5);
+    assert.equal(curves[0].curve.at(-1), 0);
+    assert.equal(curves[0].duration, 0.001);
+    assert.equal(State.getFadeToken(media)?.type, "fade-out");
+    assert.equal(stopCalls, 0);
+    waits.get(1)();
+    await stopping;
+    assert.equal(stopCalls, 1);
+    assert.equal(State.isSoundFading(media), false);
+  } finally {
+    for (const resolve of waits.values()) resolve();
+    State.clearFadingSound(media);
+    foundry.audio.AudioTimeout.wait = previousWait;
+  }
+});
+
+test("replicated Stop does not schedule a fade after native document sync stops media", async () => {
+  const originalListeners = new Map([...hookListeners].map(([name, callbacks]) => [name, [...callbacks]]));
+  const previousUser = game.user;
+  const media = {playing:false, get gain() { assert.fail("stopped replicated media must not receive automation"); }};
+  const sounds = [{id:"stopped-track", name:"Stopped", sound:media, getFlag() {}}];
+  sounds.get = id => sounds.find(sound => sound.id === id);
+  const playlist = {
+    id:"replicated-stopped-gain", name:"Replicated stopped gain", sounds,
+    getFlag(_scope,key) { return key === "stopTransition" ? {soundIds:["stopped-track"],fadeMs:1,seq:1,gmId:"other-gm"} : undefined; },
+  };
+  try {
+    game.user = {id:"stopped-player",isGM:false};
+    hookListeners.clear();
+    registerTransitionReplicationHooks();
+    for (const callback of hookListeners.get("updatePlaylist")) {
+      await callback(playlist, {"flags.the-sound-of-silence.stopTransition":{}});
+    }
+    assert.equal(State.isSoundFading(media), false);
+  } finally {
+    State.clearStoppingFlag(playlist);
+    State.clearFadingSound(media);
+    hookListeners.clear();
+    for (const [name,callbacks] of originalListeners) hookListeners.set(name,callbacks);
+    game.user = previousUser;
+  }
+});
 
 test("sound form preserves explicit procedural defaults and inherited fields stay absent", () => {
   const previousWrapper = globalThis.libWrapper;
@@ -468,7 +575,7 @@ test("crossfade rolls back an incoming document when its session is cancelled du
     parent: playlist,
     playing: true,
     sound: {
-      playing: false,
+      playing: true,
       volume: 0.5,
       stop() { this.playing = false; },
     },
@@ -489,7 +596,6 @@ test("crossfade rolls back an incoming document when its session is cancelled du
 
   try {
     const committed = await performCrossfade(playlist, outgoing, {
-      recovery: true,
       reason: "rollback regression",
     });
 
@@ -574,7 +680,6 @@ test("a crossfade that completes while replication is pending still commits its 
 
   try {
     const committed = await performCrossfade(playlist, outgoing, {
-      recovery: true,
       reason: "short replication regression",
     });
     assert.equal(completedSession?.status, "completed");
@@ -663,7 +768,6 @@ test("a completed crossfade cannot commit or roll back after a replacement claim
 
   try {
     const committed = await performCrossfade(playlist, outgoing, {
-      recovery: true,
       reason: "replacement replication regression",
     });
 
@@ -990,7 +1094,7 @@ test("failed gap playback clears state after delete fails but deactivation succe
   }
 });
 
-test("userConnected authority handoff reconstructs only an active persisted silence gap", async () => {
+test("shared authority handoff reconstructs only an active persisted silence gap", async () => {
   const previous = {
     user: game.user,
     users: game.users,
@@ -1039,7 +1143,7 @@ test("userConnected authority handoff reconstructs only an active persisted sile
     assert.equal(State.getSilenceState(playlist), undefined);
 
     gmA.active = false;
-    Hooks.callAll("userConnected", gmA, false);
+    Hooks.callAll("the-sound-of-silence.playbackAuthorityChanged", { reason: "userConnected" });
     await new Promise((resolve) => setTimeout(resolve, 5));
     await recoverPersistedSilenceGaps("test queue drain");
 
@@ -3864,13 +3968,13 @@ test("shuffle stop and actual GM-authority changes reset deterministic local cyc
     AdvancedShuffle.generateOrder(first);
     game.playlists = [first];
     secondary.active = false;
-    Hooks.callAll("userConnected", secondary, false);
+    Hooks.callAll("the-sound-of-silence.playbackAuthorityChanged", { reason: "userConnected" });
     await new Promise((resolve) => setTimeout(resolve, 5));
     assert.notEqual(State.getShuffleState(first), undefined, "secondary GM changes must preserve the cycle");
 
     primary.active = false;
     secondary.active = true;
-    Hooks.callAll("userConnected", primary, false);
+    Hooks.callAll("the-sound-of-silence.playbackAuthorityChanged", { reason: "userConnected" });
     await new Promise((resolve) => setTimeout(resolve, 5));
     assert.equal(State.getShuffleState(first), undefined);
   } finally {

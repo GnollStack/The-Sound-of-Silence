@@ -154,14 +154,15 @@ export function registerPlaylistCommandWrappers() {
         return wrapped(...args);
       }
 
+      const authorityToken = PlaylistActionAuthority.capture();
       return handleTrackCompletion(this)
         .then((useNativeCompletion) => {
-          if (useNativeCompletion) return wrapped(...args);
+          if (useNativeCompletion && PlaylistActionAuthority.isCurrent(authorityToken)) return wrapped(...args);
           return undefined;
         })
         .catch((err) => {
           debug(`[Completion] SoS transition failed for "${this.name}"; using Foundry advancement.`, err?.message ?? err);
-          return PlaylistActionAuthority.isAuthorizedGM() ? wrapped(...args) : undefined;
+          return PlaylistActionAuthority.isCurrent(authorityToken) ? wrapped(...args) : undefined;
         });
     },
     "MIXED"

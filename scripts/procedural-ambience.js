@@ -142,6 +142,7 @@ export class SoundscapeEngine {
         // session id lets failover/reload safely restart at sequence 1.
         this.publisherSessionId = _createPublisherSessionId();
         this.syncedFireSeq = 0;
+        this.publisherGeneration = 0;
         this.processedSyncedEventIds = new Set();
         this.lastSyncedSeqBySound = new Map();
         this.recentSyncedEvents = [];
@@ -248,7 +249,7 @@ export class SoundscapeEngine {
      * @param {{minimumDelayMs?: number, initial?: boolean}} [options]
      */
     _armOneShot(ps, { minimumDelayMs = 0, initial = false } = {}) {
-        if (this.isDestroyed) return;
+        if (this.isDestroyed || !this._shouldArmLocalProcedurals()) return;
         // Only arm for procedurals the user has marked active on the document.
         // Covers the updatePlaylistSound disarm path and all internal re-arms.
         if (!this._isLiveProceduralSound(ps)) return;
@@ -261,6 +262,10 @@ export class SoundscapeEngine {
         const eta = Date.now() + delayMs;
 
         const timer = new AudioTimeout(delayMs);
+        const generation = this.publisherGeneration;
+        const authorityToken = this._shouldEmitSyncedFires() ? PlaylistActionAuthority.capture() : null;
+        const stillOwnsTimer = () => generation === this.publisherGeneration &&
+            (!authorityToken || PlaylistActionAuthority.isCurrent(authorityToken));
         this.oneShotTimers.set(ps.id, { timer, eta });
         _notifySoundscapeUi(this.playlist, "soundscape-one-shot-armed", ps.id);
 
@@ -275,10 +280,10 @@ export class SoundscapeEngine {
             // Verify map ownership too, so an old timer cannot fire after a
             // replacement was armed for the same sound.
             const current = this.oneShotTimers.get(ps.id);
-            if (this.isDestroyed || timer.cancelled || current?.timer !== timer) return;
+            if (this.isDestroyed || timer.cancelled || current?.timer !== timer || !stillOwnsTimer()) return;
             this._fireOneShot(ps).catch((err) => {
                 warn(`[Soundscape] Fire failed for "${ps.name}":`, err?.message);
-                if (this._isLiveProceduralSound(ps)) {
+                if (stillOwnsTimer() && this._isLiveProceduralSound(ps)) {
                     this._armOneShot(ps, { minimumDelayMs: RETRY_BACKOFF_MS });
                 }
             });
@@ -392,6 +397,7 @@ export class SoundscapeEngine {
         allowGmAuthorship = false,
     } = {}) {
         if (this.isDestroyed) return false;
+        if (!allowGmAuthorship && !this._shouldArmLocalProcedurals()) return false;
         this.oneShotTimers.delete(ps.id);
         _notifySoundscapeUi(this.playlist, "soundscape-one-shot-timer", ps.id);
 
@@ -685,7 +691,12 @@ export class SoundscapeEngine {
     } = {}) {
         const normalized = this._normalizeFireRecipe(recipe, ps);
         const isSyncedEvent = Boolean(normalized.eventId);
+        const publisherGeneration = this.publisherGeneration;
+        const authorityToken = this._shouldEmitSyncedFires() ? PlaylistActionAuthority.capture() : null;
         const canRearm = () => rearmAfter &&
+            publisherGeneration === this.publisherGeneration &&
+            (!authorityToken || PlaylistActionAuthority.isCurrent(authorityToken)) &&
+            !this.oneShotTimers.has(ps.id) &&
             this._shouldArmLocalProcedurals() &&
             this._isLiveProceduralSound(ps);
 
@@ -1232,14 +1243,21 @@ export class SoundscapeEngine {
     handlePublisherAuthorityChange(previousAuthorityId, nextAuthorityId) {
         if (this.isDestroyed || !this.isStarted) return;
         const localUserId = String(game.user?.id ?? "");
-        const becamePublisher = localUserId &&
-            String(nextAuthorityId ?? "") === localUserId &&
-            String(previousAuthorityId ?? "") !== localUserId;
+        const becamePublisher = localUserId && String(nextAuthorityId ?? "") === localUserId;
+        const wasPublisher = localUserId && String(previousAuthorityId ?? "") === localUserId;
+        if (!becamePublisher && !wasPublisher) return;
+        this.publisherGeneration++;
         if (becamePublisher) {
             this.publisherSessionId = _createPublisherSessionId();
             this.syncedFireSeq = 0;
         }
-        this.syncProceduralSounds();
+        // Cancel unpublished work only. Accepted recipes keep their existing
+        // load, media, deduplication, overlap reservations and cooldowns.
+        for (const { timer } of this.oneShotTimers.values()) safeCancelTimer(timer, "publisher handoff");
+        this.oneShotTimers.clear();
+        for (const ps of this.playlist.sounds) {
+            if (this._isLiveProceduralSound(ps)) this._armOneShot(ps);
+        }
     }
 
     /**
@@ -1262,7 +1280,9 @@ export class SoundscapeEngine {
                 if (this._shouldArmLocalProcedurals()) {
                     this.armProceduralSound(ps);
                 } else if (hasRuntimeState) {
-                    this.disarmProceduralSound(ps);
+                    const existing = this.oneShotTimers.get(ps.id);
+                    if (existing?.timer) safeCancelTimer(existing.timer, "publisher relinquished");
+                    this.oneShotTimers.delete(ps.id);
                 }
                 continue;
             }

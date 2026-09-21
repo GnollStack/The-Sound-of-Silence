@@ -2,7 +2,7 @@
 
 # The Sound of Silence
 
-**Turn Foundry playlists into boss loops, smooth transitions, and living ambience.**
+**Loop your music, fade between tracks, and build ambience for your Foundry games.**
 
 [![Latest Release](https://img.shields.io/github/v/release/GnollStack/The-Sound-of-Silence?label=Latest%20Release&style=flat-square)](https://github.com/GnollStack/The-Sound-of-Silence/releases/latest)
 [![Downloads](https://img.shields.io/github/downloads/GnollStack/The-Sound-of-Silence/total?style=flat-square&color=green)](https://github.com/GnollStack/The-Sound-of-Silence/releases)
@@ -18,16 +18,14 @@
 
 ---
 
-## Feature Index
+## At a Glance
 
-| Feature | Why it matters |
+| Feature | What you can do |
 | --- | --- |
 | **[Internal Loops](#internal-loop-sequencer)** | Keep the best part of a track running until the scene changes. |
-| **[Crossfading](#auto-crossfade)** | Move from travel to combat without an ugly hard cut. |
-| **[Silence Gaps](#silence-gaps)** | Let playlists breathe instead of firing every track back-to-back. |
-| **[Soundscape](#soundscape-mode)** | Build ambience that keeps itself alive while you run the table. |
-
-> *Foundry's default music player plays files. I wanted it to make the game feel alive: silence between tracks, crossfades, loops, dynamic ambience, and enough control to make boss fights fearsome and tavern nights cinematic.*
+| **[Crossfading](#auto-crossfade)** | Blend one track into the next. |
+| **[Silence Gaps](#silence-gaps)** | Leave a little space between songs. |
+| **[Soundscape](#soundscape-mode)** | Mix background ambience with occasional sounds, such as birds or thunder. |
 
 ---
 
@@ -37,8 +35,8 @@
 
 1. Install and enable **The Sound of Silence** in your world.
 2. Open the **Playlists** sidebar and expand any playlist.
-3. Use the playlist header toggles for silence gaps and auto-crossfade, or use Foundry's playback-mode control.
-4. Right-click a playlist or sound and choose **Configure** for playlist looping and deeper setup, including internal loops and Soundscape defaults.
+3. Use the buttons beside the playlist name to turn silence gaps or crossfading on and off, or to choose a playback mode.
+4. Right-click a playlist or sound and choose **Configure** to set up loops, fades, and Soundscape options.
 
 <img width="397" height="751" alt="Playlist configuration settings" src="https://github.com/user-attachments/assets/ec6abdae-3136-4bc3-98d8-13e86482760a" />
 
@@ -57,9 +55,10 @@
 ## What You Get
 
 ### Internal Loop Sequencer
-**Build intro → loop → outro structures inside a single track.**
 
-Up to 16 segments per track with draggable handles, color-coded zones, crossfade preview, and live break controls in the transport. Treat one MP3 like a multi-part composition, no editing required.
+**Let the intro play, repeat the part you want, then move on when you're ready.**
+
+Choose up to 16 loop sections in one track without editing the audio file. Drag the handles to set each section, preview how the joins sound, and use the playback controls to break out of a loop during the game.
 
 <img width="444" height="564" alt="Internal loop editor" src="https://github.com/user-attachments/assets/bdf30e8b-93ad-409e-9078-1293fca74c9e" />
 
@@ -68,123 +67,143 @@ Up to 16 segments per track with draggable handles, color-coded zones, crossfade
 ---
 
 ### Auto Crossfade
-**Seamless equal-power blends between consecutive tracks.**
 
-The same curve used in Logic Pro and Ableton, with constant perceived power across the blend, no harsh cuts, and no mid-fade dips. Inherit the playlist's fade-out time, or override per playlist.
+**Fade one track out while the next fades in.**
 
-Pausing during a blend safely commits the incoming track as the resumable track. Long blends also preload their next track earlier when Foundry's native preload window would be too late.
+SoS uses equal-power crossfades to help keep the volume steady through the blend. Use the playlist's fade-out time or choose a separate crossfade duration.
+
+If you pause during a crossfade, playback resumes on the incoming track. For longer fades, SoS starts loading the next track early so it has time to get ready.
 
 ▶ **[Watch demo (1 min)](https://youtu.be/7K72lde_jus)**
 
 ---
 
 ### Silence Gaps
-**Natural pauses between tracks, static or randomized.**
 
-Works in Sequential, Shuffle, and Simultaneous modes. Set a fixed gap, or a min/max range and let SoS pick. It gives a playlist room to breathe instead of slamming track-to-track.
+**Give your playlist a pause between tracks.**
+
+Set a fixed pause or a minimum and maximum length, and let SoS choose each time. Silence gaps work in Sequential, Shuffle, and Simultaneous modes.
 
 ▶ **[Watch demo (1 min)](https://youtu.be/qWQ8Ci46iiw)**
 
 ---
 
 ### Soundscape Mode
-**Procedural ambience that runs itself.**
 
-Bed tracks loop while procedural one-shots are GM-authored and synced to players by default. Configure cadence (Uniform / Fixed / Natural), global or named group polyphony caps, group cooldowns, pan, and play-chance per sound; players can opt out to use local procedural timing when needed.
+**Set the scene with background sounds and occasional effects.**
+
+Loop a steady background, such as rain, then add sounds that play now and then, such as thunder or a creaking branch. Choose how often they play, where they sit between the left and right speakers, and how many can overlap. By default, the GM controls these sounds and players hear the same events.
 
 <img width="373" height="563" alt="Soundscape procedural roster and preview controls" src="https://github.com/user-attachments/assets/239080e1-500f-4753-963e-def61ae4ce47" />
 
 <details>
-<summary><strong>Internal loop sequencer — full detail</strong></summary>
 
-- Multi-segment editor — up to 16 segments per track with start/end timestamps, crossfade duration, and loop count.
-- Per-segment behavior — skip to next, play through, or fade out.
-- Skip-intro jumps to the first loop point with a configurable fade-in.
-- Visual timeline with draggable handles, color-coded segments, and crossfade-zone preview.
-- Loop preview plays full loops or just the transition points; volume slider opens at the sound's configured volume.
-- Live controls in the Currently Playing panel — break, skip prev/next segment, disable all loops.
-- Between-segment skipping works from the current playback position, even after pressing Break.
-- Finite loop retirement clears runtime state so API inspection does not report destroyed loopers as active.
+---
 
-</details>
+<summary><strong>More about internal loops</strong></summary>
 
-<details>
-<summary><strong>Automatic crossfading — full detail</strong></summary>
-
-- Equal-power crossfades — the math used in Logic Pro and Ableton for constant perceived power across the blend.
-- Configurable duration — inherit from the playlist's fade-out, or override.
-- Exponential fade curves so volume changes sound linear to human hearing.
-- Works with manual track skips, automatic progression, and across connected clients.
+- Add up to 16 sections, each with its own start, end, crossfade time, and repeat count.
+- Choose what happens after a section: skip to the next, keep playing, or fade out.
+- Skip the intro and fade straight into the first loop section.
+- Adjust sections on a color-coded timeline and see where crossfades overlap.
+- Preview a whole loop or just the join. The preview starts at the sound's saved volume.
+- Use **Currently Playing** to break a loop, jump to the previous or next section, or turn loops off.
+- Section controls still work between loops and after you press **Break**.
+- Finished loops are cleared so they no longer appear as active in the API.
 
 </details>
 
 <details>
-<summary><strong>Silence gaps — full detail</strong></summary>
+<summary><strong>More about crossfading</strong></summary>
 
-- Static mode — fixed gap duration.
-- Random mode — randomized within a configurable min/max range.
-- Works in Sequential, Shuffle, and Simultaneous playback.
-
-</details>
-
-<details>
-<summary><strong>Soundscape mode — full detail</strong></summary>
-
-Soundscape is the 5th option in the playback-mode picker, alongside Soundboard / Sequential / Shuffle / Simultaneous. Inside it:
-
-- **Bed layer** — repeating background tracks that start together with Play All, or one at a time.
-- **Procedural cadence** — Uniform Random, Fixed Cadence, or Natural (center-weighted) timing per sound.
-- **Startup mode** — Use Cadence, Stagger First Fire, or Immediate First Fire.
-- **Polyphony cap** — limit overlapping one-shots, with Independent, Linear, or Soft chance-scaling.
-- **Soundscape groups** - assign related one-shots to a named shared cap and post-completion cooldown. Fire Now bypasses cooldown for testing, but still respects caps.
-- **Synced procedural fires** - the GM client chooses each live one-shot recipe and synced players play that same sound, sequence, group, pan, variance, fade-in, and scheduled start.
-- **Client opt-out** - players can disable synced procedural events for local procedural RNG while beds and document playback state remain synced.
-- **Audition** — test the full mix from the playlist's Preview control, or any procedural from its sound sheet. Both are local-only and neither affects live state.
-- **Soundboard control** — play or stop any sound individually; auto-stops the playlist when the last sound ends.
-- **Procedural Roster** — an at-a-glance table in playlist config showing cadence, first-fire, play-chance, and pan per sound.
-- GMs see a Fire Now bolt button on each procedural; in a live soundscape it emits the same synced fire recipe, while preview and audition remain local-only.
+- Equal-power blending helps keep the change in volume smooth.
+- Use the playlist's fade-out time or set a separate duration.
+- Fade curves control how the volume rises and falls.
+- Crossfades work when tracks advance on their own or you skip manually, and stay in sync for connected players.
 
 </details>
 
 <details>
-<summary><strong>Currently Playing — redesign notes</strong></summary>
+<summary><strong>More about silence gaps</strong></summary>
 
-- Playlist-first layout — playlist name primary, track name secondary.
-- Full transport row — repeat, silence, crossfade, internal loop, mode cycle, prev/next, pause/resume, stop.
-- Dual Track Volume / Playlist Volume sliders side by side.
-- Fade-aware progress bars — gray fade-in/fade-out zones over the amber progress.
-- Loop control row stays visible across segment gaps and after Break.
-- Soundscape group strips with caret, polyphony meter, group Stop button, and compact ~22px procedural rows.
-- Height-clamped panel (`clamp(200px, 40vh, 480px)`) with a thin amber scrollbar, so the playlist directory stays reachable.
-- Scroll-safe playback updates preserve directory scroll position during track advances.
+- **Static:** use the same pause every time.
+- **Random:** choose a pause between your minimum and maximum.
+- Available in Sequential, Shuffle, and Simultaneous playback.
 
 </details>
 
 <details>
-<summary><strong>Advanced shuffle, fades, normalization</strong></summary>
+<summary><strong>More about Soundscape</strong></summary>
 
-**Shuffle:** Foundry Default, Exhaustive, Weighted Random, Round-Robin.
-**Fade-in curves:** Logarithmic, Linear, S-Curve, Steep — configured world-wide.
-**Fade-out:** exponential curves for perceptually linear volume reduction.
-**Volume normalization:** per-playlist target with per-sound opt-out.
-**Playlist looping:** integrates with silence gaps and crossfading.
+Choose **Soundscape** from the playlist's playback-mode picker. It appears alongside Soundboard, Sequential, Shuffle, and Simultaneous.
+
+- **Background tracks (beds):** loop continuously. Start them together with **Play All** or individually.
+- **Occasional sounds (procedurals):** use Uniform Random, Fixed Cadence, or Natural timing. Natural timing favors delays near the middle of your range.
+- **First sound:** wait for the normal timing, stagger the first sounds, or play them immediately.
+- **Overlapping sounds:** set a limit, called the polyphony cap. Independent, Linear, and Soft options control how play chances respond as the mix gets busier.
+- **Groups:** give related sounds a shared limit and a cooldown after a sound finishes.
+- **Player sync:** players hear the GM's chosen sounds with the same timing, stereo position, variations, and fades. Players can switch to their own random timing; background tracks and playlist controls still stay synced.
+- **Preview:** listen to the full mix from the playlist or try one sound from its configuration sheet. Only you hear previews, and they don't change live playback.
+- **Individual controls:** play or stop any sound. The playlist stops when its last sound ends.
+- **Procedural Roster:** see each sound's timing, first-play behavior, play chance, and stereo position in one table.
+- **Fire Now:** the GM can click the lightning-bolt button to trigger a sound. During live playback, players hear it too. It skips the group cooldown for testing but still respects overlap limits.
 
 </details>
 
 <details>
-<summary><strong>Diagnostics</strong></summary>
+<summary><strong>Currently Playing controls</strong></summary>
 
-Enable **Trace Currently Playing Timers** in module settings for world-level timer logging across clients.
+- See the playlist name and current track together.
+- Control repeat, silence, crossfade, loops, playback mode, previous/next, pause/resume, and Stop.
+- Adjust track and playlist volume with separate sliders.
+- See fade-in and fade-out sections marked in gray on the progress bar.
+- Keep loop controls available between sections and after **Break**.
+- Expand Soundscape groups, see how many sounds are playing, or stop a whole group.
+- Scroll within the panel while keeping the playlist list within reach.
+- Keep your place in the playlist list when a track changes.
 
-GMs can request a multi-client state snapshot:
+</details>
+
+<details>
+<summary><strong>Shuffle, fades, and volume</strong></summary>
+
+- **Shuffle:** choose Foundry Default, Exhaustive, Weighted Random, or Round-Robin.
+- **Fade-in:** choose Logarithmic, Linear, S-Curve, or Steep in the world settings.
+- **Fade-out:** control how the volume falls as a sound ends.
+- **Volume normalization:** set a target for each playlist and exclude individual sounds when needed.
+- **Playlist looping:** repeat the playlist with silence gaps or crossfades still in place.
+
+</details>
+
+<details>
+<summary><strong>Playback controller and co-DMs</strong></summary>
+
+Open **Configure Settings > The Sound of Silence > Configure Playback Controller** as a full GM.
+
+- **Automatic — prefer full GM** gives connected full GMs priority over assistants. Accounts with the same role use a stable selection order.
+- Choose a **Preferred Playback Controller** to delegate automatic playback to a particular GM or assistant. Offline accounts remain available in the list.
+- Use **Excluded Playback Controllers** to keep bridge or automation accounts from running SoS automation. An account cannot be preferred and excluded at the same time.
+
+Changes apply during playback without a reload. If the preferred account is unavailable, another eligible full GM takes over, followed by an assistant. The preferred account takes over again when it returns. With no eligible controller, local playback continues and SoS waits to author new automatic transitions.
+
+These settings do not change anyone's manual playback permissions. Controller selection and handoff details appear only when **Enable Debug Logging** is on.
+
+</details>
+
+<details>
+<summary><strong>Troubleshooting and testing</strong></summary>
+
+If you're tracking down a playback problem, **Trace Currently Playing Timers** adds timing details to the logs across clients.
+
+GMs can compare what's happening on their own client and connected players' clients:
 
 ```javascript
 game.modules.get('the-sound-of-silence').api.requestClientDiagnostics()
 ```
 
-After 3 seconds a dialog shows per-sound gain, fade status, AudioContext state, dedup sequence numbers, playback-clock drift, and core audio volume. Red highlights stuck gains and suspended contexts; amber highlights active fades.
+After about three seconds, a dialog shows volume, fades, audio readiness, and playback timing for each client. Red highlights possible problems; amber marks active fades.
 
-For MCP-based diagnostics, enable both **Enable Debug Logging** and **Enable MCP Diagnostics**, then use the Foundry MCP Bridge generic action tool. These are advanced GM-only diagnostics, and the MCP Diagnostics setting also covers confirmed automation; leave it disabled during normal play unless you are intentionally debugging or testing this module:
+For the **Foundry MCP Bridge**, turn on **Enable Debug Logging** and **Enable MCP Diagnostics**, then use its module action tool. These tools are for GM troubleshooting and testing; leave MCP Diagnostics off during normal play. For example:
 
 ```javascript
 call-module-debug-action({
@@ -194,14 +213,22 @@ call-module-debug-action({
 })
 ```
 
-These diagnostics intentionally ship with the module, but are disabled by default and require explicit GM-side settings before use. Available inspection and client-control actions are allowlisted under `game.modules.get("the-sound-of-silence").api.diagnostics.actions`: `getStatus`, `validateSettings`, `validateAssets`, `collectClientDiagnostics`, `runSmokeTests`, `openWindow`, `parseText`, `validateText`, and `refreshClient`. They are GM-only, JSON-safe, and never create world documents. `refreshClient` requires `confirmRefresh: true` and accepts `scope: "client"` (default) or `scope: "world"`; world refresh also requires permission to modify world settings and reloads connected clients. The MCP bridge `reload-foundry-client` tool remains the main hard refresh path. `collectClientDiagnostics` can be filtered with `playlistIds` to keep remote payloads compact. `getStatus` includes normalized gate output (`activeGMUser`, `debugLogging`, `enableMcpDiagnostics`, `mutationEnabled`, and `refreshEnabled`) plus an audio preflight snapshot; `audio.locked: true` or zero available audio contexts means live media tests such as crossfade cannot prove real playback until the GM client unlocks Foundry audio.
+The built-in inspection tools check settings, assets, playback, and connected clients. They are GM-only, off by default, and do not create world documents. The available actions under `api.diagnostics.actions` are `getStatus`, `validateSettings`, `validateAssets`, `collectClientDiagnostics`, `runSmokeTests`, `openWindow`, `parseText`, `validateText`, and `refreshClient`.
 
-Dedicated test worlds can run mutating automation with the same **Enable MCP Diagnostics** gate plus `confirmMutation: true` in the call args. The standard mutating aliases are `runAutomation` and `cleanupFixtures`; existing SoS-specific actions remain available as `controlPlayback`, `runPlaybackAutomation`, `runClientSyncAutomation`, and `cleanupPlaybackFixtures`. Fixture cleanup only touches SoS MCP fixture documents with both the expected marker flag and `SoS MCP Test -` name prefix, and it honors `runId` when provided. Routine fixtures reuse a bounded pool of short generated WAV tones; scenarios requiring a specific duration supply explicit clips. `runPlaybackAutomation` includes shuffle-pattern checks for exhaustive, weighted-random, and round-robin ordering, custom fade checks for all configured curve types, loop retirement cleanup, legacy loop crossfade checks, fixture-scoped legacy loop migration checks, and advanced soundscape checks for procedural one-shots, polyphony caps, default inheritance, panners, and bed cleanup. `runClientSyncAutomation` requires active non-GM clients by default and compares their remote snapshots against GM-driven playback actions, including crossfade, stop, silence completion/cancellation, rapid start/stop, loop break/disable/segment-skip replication, and soundscape start/stop, bed-only, procedural-fire, arm/disarm, opt-out, and cleanup scenarios. Missing expected client responses fail validation. Locked audio or no running audio context makes live-media checks inconclusive; missing expected media on a client with unlocked, running audio fails the check.
+- **Status:** `getStatus` shows which permissions and settings are enabled, along with audio readiness. Click inside each game client to unlock audio before testing playback.
+- **Client reports:** use `collectClientDiagnostics` to compare clients. Add `playlistIds` to focus on particular playlists.
+- **Refresh:** `refreshClient` needs `confirmRefresh: true`. Use `scope: "client"` for the current client or `scope: "world"` for all connected clients. World refresh also requires permission to change world settings. The bridge's `reload-foundry-client` tool is also available for a full reload.
 
-GM maintenance tools are available in Foundry's Configure Settings window under **The Sound of Silence**. **Migrate Legacy Internal Loops** scans all playlists and permanently upgrades old flat internal-loop flags into the current segment-based format after a confirmation prompt. Back up your world first; the migration refuses to run while playlists are playing and leaves existing segment-based loop configs alone.
+Automated playback tests belong in a dedicated test world. They require **Enable MCP Diagnostics** and `confirmMutation: true`, and use short test tones to check fades, shuffle, loops, silence, soundscapes, and player sync.
+
+- Use `runAutomation` and `cleanupFixtures`, or the specific actions `controlPlayback`, `runPlaybackAutomation`, `runClientSyncAutomation`, and `cleanupPlaybackFixtures`.
+- Multiplayer tests normally need at least one connected player. Missing client responses or missing playback on an audio-ready client fail the check. Locked audio makes playback checks inconclusive.
+- Cleanup removes only marked SoS test documents whose names start with `SoS MCP Test -`. Supply `runId` to limit cleanup to one test run.
+
+To update old loop setups, open **Configure Settings → The Sound of Silence → Migrate Legacy Internal Loops**. This permanently converts older loop settings to the current segment format after you confirm. Back up your world first and stop all playlists. Existing segment-based loops are left alone.
 
 > [!WARNING]
-> If the GM owns the playlist, sets Foundry's Music Volume to exact `0`, and backgrounds the tab, the browser audio clock can stall. Use `0.01` or mute the tab/OS instead.
+> If the GM controls playback, setting Music Volume to exactly `0` and switching away from the tab can stall the audio clock. Keep it at `0.01`, or mute the browser tab or app instead.
 
 </details>
 
@@ -211,19 +238,19 @@ GM maintenance tools are available in Foundry's Configure Settings window under 
 
 ## Installation
 
-1. Foundry → **Add-on Modules** → **Install Module**.
-2. Search "Sound of Silence", or paste this manifest URL:
+1. From Foundry's setup screen, open **Add-on Modules → Install Module**.
+2. Search for "Sound of Silence" or paste this manifest URL:
 
 ```text
 https://github.com/GnollStack/The-Sound-of-Silence/releases/latest/download/module.json
 ```
 
-3. Enable the module in your world.
+3. Install **libWrapper** if needed, then enable both modules in your world.
 
 | Requirement | Version |
 | --- | --- |
-| Foundry VTT | v13 - v14; current runtime checks on v14.367 (see validation scope below) |
-| [libWrapper](https://github.com/ruipin/fvtt-lib-wrapper) | 1.13.3.0 minimum; tested with 1.13.5.1 |
+| Foundry VTT | v13–v14; latest tests used v14.367 |
+| [libWrapper](https://github.com/ruipin/fvtt-lib-wrapper) | 1.13.3.0 or newer; latest tests used 1.13.5.1 |
 
 ---
 
@@ -231,15 +258,15 @@ https://github.com/GnollStack/The-Sound-of-Silence/releases/latest/download/modu
 
 ## Use It For
 
-| Use case | What it looks like |
+| At the table | Try this |
 | --- | --- |
-| **Boss battles** | Build multi-phase music in a single track. Break the loop to advance phases. |
-| **Atmosphere** | Soundscape mode runs evolving ambience without manual cueing. |
-| **Narrative beats** | Equal-power crossfades carry emotional turns without harsh cuts. |
-| **Music curation** | Love part of a song, hate the rest? Loop only the parts you want. |
+| **Boss battles** | Give each phase its own loop, then press Break when the fight changes. |
+| **Atmosphere** | Keep rain, wind, wildlife, or tavern sounds going while you run the game. |
+| **Quiet moments** | Leave a pause between songs or gently fade into the next track. |
+| **Favorite tracks** | Loop the parts you want to hear again. |
 
 <details>
-<summary><strong>Recipe — boss battle, multi-phase music</strong></summary>
+<summary><strong>Example: music for a boss fight</strong></summary>
 
 ```text
 Segment 1  00:00–01:30   Intro      loop 1×, skip to next
@@ -248,19 +275,19 @@ Segment 3  03:00–04:45   Phase 2    loop ∞
 Segment 4  04:45–06:00   Victory    loop 1×, play through
 ```
 
-Intro plays once, jumps to Phase 1. Click *break* when the boss enters Phase 2. Break again on defeat, and victory plays once before the track ends.
+The intro plays once, then Phase 1 loops. Press **Break** when the boss enters Phase 2. Press it again when the boss falls, and the victory section plays once before the track ends.
 
 </details>
 
 <details>
-<summary><strong>Recipe — rainy forest soundscape</strong></summary>
+<summary><strong>Example: a rainy forest</strong></summary>
 
-| Track | Role | Config |
+| Track | Type | Settings |
 | --- | --- | --- |
-| Forest Bed | Bed | Repeat on |
-| Wind Gust | Procedural | Uniform 10–25s, random pan |
-| Bird Call | Procedural | Natural 6–18s, 70% chance |
-| Branch Creak | Procedural | Fixed 30s, stagger first fire |
+| Forest Bed | Background | Repeat on |
+| Wind Gust | Occasional sound | Uniform Random, 10–25 seconds, random stereo position |
+| Bird Call | Occasional sound | Natural, 6–18 seconds, 70% play chance |
+| Branch Creak | Occasional sound | Every 30 seconds, stagger the first sound |
 
 </details>
 
@@ -270,46 +297,44 @@ Intro plays once, jumps to Phase 1. Click *break* when the boss enters Phase 2. 
 
 ## Compatibility
 
-**Foundry VTT:** v13 - v14. The 14.15.3 release candidate was tested on Foundry **14.367** with **dnd5e 5.3.3** and **libWrapper 1.13.5.1**. SoS is system-neutral and does not require dnd5e. Foundry 13.351 was tested in earlier releases; v13 has not been rerun for this candidate.
+**Foundry VTT:** supports v13–v14. The latest tests used Foundry **14.367**, **dnd5e 5.3.3**, and **libWrapper 1.13.5.1**. SoS works independently of your game system; dnd5e was simply the test world. Earlier releases were tested on v13.351, but v13 has not been retested for this update.
 
-**Validation scope:** on September 7, 2026, the final playback code passed **161 GM assertions** (15 scenarios plus repeated native playback) and **154 client-sync assertions across 16 scenarios**, with no failures or inconclusive results. The GM used Chrome 152 with one connected browser player; both clients refreshed and unlocked their 48 kHz audio contexts. Cleanup left no playing media or fixture documents. The Node regression suite passed **112 tests**. See [release validation](RELEASE-VALIDATION.md) for detailed evidence and remaining release checks; Firefox, v13, and third-party integrations have not been rerun for this candidate.
-
-**Foundry desktop client:** repeated playback caused failures in Foundry's Electron client (Chromium 146) as both GM and player. A final GM comparison with the latest fixes and 48 kHz audio also disconnected during the short natural-replay test, with one Foundry process exiting. The desktop failure remains unresolved; the successful browser checks do not establish its cause.
-
-**Browsers:** earlier releases were tested with connected player clients on Chrome, Opera GX, and Firefox. Chrome/Chromium and Firefox are the supported browser families; Opera GX is Chromium-based. Each client must unlock browser audio before live playback can be verified.
+**Browsers:** Chrome/Chromium and Firefox are supported. The latest browser tests used Chrome 153; earlier releases were also tested with Opera GX and Firefox. Click inside the game on each client to unlock audio before playing.
 
 > [!TIP]
-> Run SoS as your only playlist/audio module. It's a superset of Monks Sound Enhancements and Playlist Enchantment's audio features. Keep them only if you use their non-audio features (actor sounds, drag-drop upload, prehear preview).
+> For the simplest setup, use SoS on its own for playlists and audio. Keep Monks Sound Enhancements or Playlist Enchantment only if you need their other features, such as actor sounds, audio uploads, or previews.
 
 <details>
 <summary><strong>Monks Sound Enhancements</strong></summary>
 
-**Module ID:** `monks-sound-enhancements` · Compatible with caveats.
+**Module ID:** `monks-sound-enhancements` · Can be used alongside SoS, with some overlap.
 
-**Overridden by SoS:** Currently Playing UI, playlist config sheet, sound-effect volume slider.
+**SoS takes over:** the Currently Playing panel, playlist settings, and sound-effect volume slider.
 
-**Still works alongside:** actor/token sound effects, `@Sound[]` enrichers, combat-turn sounds, drag-and-drop between playlists, hotbar macros, playlist tooltips, name/playlist hiding.
+**Features you can keep:** actor and token sounds, `@Sound[]` links, combat-turn sounds, dragging sounds between playlists, hotbar macros, playlist tooltips, and hiding names or playlists.
 
 </details>
 
 <details>
 <summary><strong>Playlist Enchantment</strong></summary>
 
-**Module ID:** `playlistenchantment` · Compatible with caveats.
+**Module ID:** `playlistenchantment` · Can be used alongside SoS, with some overlap.
 
-**Overridden by SoS:** Currently Playing UI, volume normalization, fade-in/out, playlist loop toggle, global play/stop/skip-all.
+**SoS takes over:** the Currently Playing panel, volume normalization, fades, playlist looping, and the controls to play, stop, or skip all playlists.
 
-**Still works alongside:** drag-drop audio upload, prehear preview, hotbar macros, hotbar hover popup.
+**Features you can keep:** dragging files in to upload audio, prehear previews, hotbar macros, and the hotbar hover popup.
 
 > [!WARNING]
-> Enchantment's `alwaysFade` setting forces fades on every playlist update and can interfere with SoS crossfades. SoS guards against it, but disable `alwaysFade` for cleanest behavior.
+> Turn off Enchantment's `alwaysFade` setting to avoid conflicting fades. SoS includes a guard for it, but disabling it is the simplest way to avoid overlap.
 
 </details>
 
 <details>
-<summary><strong>UI-layer notes for other module authors</strong></summary>
+<summary><strong>Notes for other module authors</strong></summary>
 
-SoS replaces `PARTS.playing` at the `ready` hook and renders sound rows through its own partials (`sos-sound-partial.hbs`, `sos-soundscape-group.hbs`). Foundry's core selectors (`.sound[data-sound-uuid]`, `.current`, `.duration`, `.pause`) are preserved via hidden compatibility targets. SoS uses the `--sos-*` CSS prefix; click targets are `data-sos-action` attributes. Wheel events on SoS volume controls bypass the panel scrollbar.
+SoS replaces `PARTS.playing` during the `ready` hook. It uses `sos-sound-partial.hbs` and `sos-soundscape-group.hbs` to display sound rows.
+
+Foundry's selectors (`.sound[data-sound-uuid]`, `.current`, `.duration`, `.pause`) remain available through hidden elements for compatibility. SoS styles use the `--sos-*` prefix, and buttons use `data-sos-action`. Scrolling over a volume control adjusts that control without scrolling the panel.
 
 </details>
 
@@ -319,7 +344,7 @@ SoS replaces `PARTS.playing` at the `ready` hook and renders sound rows through 
 
 ## Developer API
 
-Access:
+For macros and other modules, start with:
 
 ```javascript
 const api = game.modules.get("the-sound-of-silence").api;
@@ -340,7 +365,7 @@ api.crossfade(soundOut, soundIn, durationMs)
 </details>
 
 <details>
-<summary><strong>Configuration &amp; state</strong></summary>
+<summary><strong>Settings and playback status</strong></summary>
 
 ```javascript
 api.getPlaylistConfig(playlist) / updatePlaylistConfig(playlist, updates)
@@ -360,7 +385,7 @@ api.enableFeature(playlist, feature)  / disableFeature(playlist, feature)
 </details>
 
 <details>
-<summary><strong>Diagnostics &amp; utilities</strong></summary>
+<summary><strong>Troubleshooting and helpers</strong></summary>
 
 ```javascript
 api.requestClientDiagnostics()   // GM-only multi-client snapshot
@@ -387,7 +412,7 @@ the-sound-of-silence.silenceStart        / silenceEnd
 
 ### Example macros
 
-**Crossfade the active playlist to its next track.**
+**Fade the playing track into the next one.** Change `"Combat"` to your playlist's name.
 
 ```javascript
 const api = game.modules.get("the-sound-of-silence").api;
@@ -398,7 +423,7 @@ if (!playlist || !current) return ui.notifications.warn("Nothing playing.");
 await api.crossfadeToNext(playlist, current);
 ```
 
-**Break the current loop on every looping sound.** Useful as a "phase change" hotbar macro during boss fights.
+**Break all active loops.** Put this on your hotbar to move the music on when a boss changes phase.
 
 ```javascript
 const api = game.modules.get("the-sound-of-silence").api;
@@ -409,13 +434,13 @@ for (const sound of looping) api.breakLoop(sound);
 ui.notifications.info(`Broke ${looping.length} loop(s).`);
 ```
 
-**Capture a multi-client diagnostic snapshot.** GM-only; opens a side-by-side comparison dialog after ~3 seconds.
+**Compare playback across clients.** GMs can run this to open a comparison of their client and connected players after about three seconds.
 
 ```javascript
 game.modules.get("the-sound-of-silence").api.requestClientDiagnostics();
 ```
 
-**Toggle the soundscape on a playlist by name.**
+**Turn Soundscape mode on or off.** Change `"Rainy Forest"` to your playlist's name.
 
 ```javascript
 const api = game.modules.get("the-sound-of-silence").api;

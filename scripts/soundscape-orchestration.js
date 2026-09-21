@@ -10,7 +10,6 @@ import { debug, MODULE_ID, PlaylistActionAuthority } from "./utils.js";
 let soundHooksRegistered = false;
 let playlistHooksRegistered = false;
 let authorityHooksRegistered = false;
-let lastPublisherAuthorityId = null;
 
 function _getActiveSoundscapeSounds(playlist) {
   if (!playlist?.sounds) return [];
@@ -71,45 +70,20 @@ export function reconcileAllSoundscapeEngines(reason = "global reconcile") {
   }
 }
 
-function _reconcilePublisherAuthority(reason) {
-  const previousAuthorityId = lastPublisherAuthorityId;
-  const nextAuthorityId = PlaylistActionAuthority.getAuthorizedGMId();
-  if (String(previousAuthorityId ?? "") === String(nextAuthorityId ?? "")) return;
-  lastPublisherAuthorityId = nextAuthorityId;
-
-  debug(
-    `[Soundscape] Publisher authority changed ` +
-    `${previousAuthorityId ?? "none"} -> ${nextAuthorityId ?? "none"} (${reason}).`
-  );
+function _reconcilePublisherAuthority({ previousUserId, userId, reason }) {
   for (const playlist of game.playlists ?? []) {
     const engine = State.getSoundscapeEngine(playlist);
-    engine?.handlePublisherAuthorityChange?.(previousAuthorityId, nextAuthorityId);
+    engine?.handlePublisherAuthorityChange?.(previousUserId, userId);
     if (engine || shouldRunSoundscapeEngine(playlist)) {
       scheduleSoundscapeReconcile(playlist, `publisher authority: ${reason}`);
     }
   }
 }
 
-function _schedulePublisherAuthorityReconcile(reason) {
-  const run = () => _reconcilePublisherAuthority(reason);
-  if (globalThis.setTimeout) setTimeout(run, 0);
-  else globalThis.queueMicrotask?.(run);
-}
-
 function _registerSoundscapeAuthorityHooks() {
   if (authorityHooksRegistered) return;
   authorityHooksRegistered = true;
-  lastPublisherAuthorityId = PlaylistActionAuthority.getAuthorizedGMId();
-
-  Hooks.on("userConnected", (user) => {
-    if (!user?.isGM) return;
-    _schedulePublisherAuthorityReconcile("GM connection changed");
-  });
-
-  Hooks.on("updateUser", (user, changes) => {
-    if (!user?.isGM && !Object.prototype.hasOwnProperty.call(changes ?? {}, "role")) return;
-    _schedulePublisherAuthorityReconcile("GM role changed");
-  });
+  Hooks.on(`${MODULE_ID}.playbackAuthorityChanged`, _reconcilePublisherAuthority);
 }
 
 export function bootstrapSoundscapeEngines() {

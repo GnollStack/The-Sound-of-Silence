@@ -4,7 +4,7 @@
  */
 import { cancelActiveFade } from "../audio-fader.js";
 import { State } from "../state-manager.js";
-import { debug, safeCancelTimer, safeStop } from "../utils.js";
+import { debug, MODULE_ID, safeCancelTimer, safeStop } from "../utils.js";
 
 const AudioTimeout = foundry.audio.AudioTimeout;
 const latestSessions = new WeakMap();
@@ -149,6 +149,7 @@ export async function settleCrossfadeSession(playlist, {
   }
 
   debug("[Crossfade Session] " + session.id + " settled as " + session.status + " (" + reason + ").");
+  Hooks.callAll(`${MODULE_ID}.playbackTransitionSettled`, { playlist, mode });
   return true;
 }
 

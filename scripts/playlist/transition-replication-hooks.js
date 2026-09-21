@@ -113,7 +113,9 @@ export function registerTransitionReplicationHooks() {
       }
 
       const media = await waitForMedia(ps);
-      if (!media) continue;
+      // The stopped document may have reached native sync before this flag.
+      // Leave an inactive gain node untouched, just as local Stop does.
+      if (!media?.playing) continue;
 
       try {
         cancelActiveFade(media);
@@ -173,7 +175,7 @@ export function registerTransitionReplicationHooks() {
 
       const [soundOut, soundIn] = await Promise.all([
         psOut ? waitForMedia(psOut) : Promise.resolve(null),
-        prepareIncomingCrossfadeMedia(psIn),
+        prepareIncomingCrossfadeMedia(psIn, { isCurrent: () => isCurrentCrossfadeSession(transitionSession) }),
       ]);
       if (!isCurrentCrossfadeSession(transitionSession)) {
         if (soundIn?.playing) safeStop(soundIn, "stale replicated incoming media");

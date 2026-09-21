@@ -8,6 +8,7 @@ import { Flags } from "./flag-service.js";
 import { MODULE_ID, toSec, debug, waitForMedia, formatTime, logFeature, LogSymbols, PlaylistActionAuthority, safeStop, safeCancelTimer, error } from "./utils.js";
 import { State } from "./state-manager.js";
 import { getPlayableSoundsInOrder } from "./playlist/playable-order.js";
+import { retainLoopCompletion } from "./playback/loop-completion.js";
 
 const AudioTimeout = foundry.audio.AudioTimeout;
 
@@ -901,9 +902,10 @@ export class LoopingSound {
     const isCrossfadeEnabled = Flags.getPlaybackMode(playlist).crossfade;
 
     if (isCrossfadeEnabled) {
-      // This part is correct and remains the same.
       debug(`[LoopingSound] Crossfade enabled. Delegating to performCrossfade for "${this.ps.name}".`);
-      await performCrossfade(playlist, this.ps);
+      await retainLoopCompletion(this.ps, ({ commit }) =>
+        commit(() => performCrossfade(playlist, this.ps, { recovery: true, reason: "loop completion" }))
+      );
 
     } else {
       // --- ROBUST LOGIC FOR SILENCE/DEFAULT MODES ---
@@ -913,43 +915,45 @@ export class LoopingSound {
       // First, fade out and stop the current sound.
       await fadeOutAndStop(this.activeSound, fadeMs);
 
-      // Now, decide what to do next. Only the GM should control this.
-      if (!PlaylistActionAuthority.isAuthorizedGM()) return;
+      await retainLoopCompletion(this.ps, async ({ current, commit }) => {
+        const isSilenceEnabled = Flags.getPlaybackMode(playlist).silence;
 
-      const isSilenceEnabled = Flags.getPlaybackMode(playlist).silence;
+        // This is the logic that finds the next track or loops the playlist.
+        // We define it here so we can call it after the silence, or immediately.
+        const playNextOrLoop = async () => {
+          if (!current()) return;
+          const order = getPlayableSoundsInOrder(playlist);
+          const currentIndex = order.findIndex((sound) => sound.id === this.ps.id);
+          const nextSound = currentIndex >= 0 ? order[currentIndex + 1] : null;
 
-      // This is the logic that finds the next track or loops the playlist.
-      // We define it here so we can call it after the silence, or immediately.
-      const playNextOrLoop = async () => {
-        const order = getPlayableSoundsInOrder(playlist);
-        const currentIndex = order.findIndex((sound) => sound.id === this.ps.id);
-        const nextSound = currentIndex >= 0 ? order[currentIndex + 1] : null;
+          if (nextSound) {
+            debug(`[LoopingSound] Advancing to next track: "${nextSound.name}"`);
+            await commit(() => playlist.playSound(nextSound));
+          } else {
+            // End of playlist - check for playlist looping
+            await commit(async () => {
+              const loopRestart = maybeLoopPlaylist(playlist);
+              if (loopRestart) await loopRestart;
+              else await playlist.stopAll();
+            });
+          }
+        };
 
-        if (nextSound) {
-          debug(`[LoopingSound] Advancing to next track: "${nextSound.name}"`);
-          await playlist.playSound(nextSound);
+        if (isSilenceEnabled) {
+          debug(`[LoopingSound] Silence is enabled. Injecting silent gap.`);
+          const started = await commit(async () => (await Silence.startGap(playlist, this.ps)).started);
+          if (!started) await playNextOrLoop();
         } else {
-          // End of playlist - check for playlist looping
-          const loopRestart = maybeLoopPlaylist(playlist);
-          if (loopRestart) await loopRestart;
-          else await playlist.stopAll();
+          // If silence is not enabled, just play the next track after a short buffer.
+          debug(`[LoopingSound] Silence is disabled. Advancing to next track immediately.`);
+          try {
+            await AudioTimeout.wait(100);
+          } catch (_) {
+            // A rejected audio timer must not prevent document advancement.
+          }
+          await playNextOrLoop();
         }
-      };
-
-      if (isSilenceEnabled) {
-        debug(`[LoopingSound] Silence is enabled. Injecting silent gap.`);
-        const transition = await Silence.startGap(playlist, this.ps);
-        if (!transition.started) await playNextOrLoop();
-      } else {
-        // If silence is not enabled, just play the next track after a short buffer.
-        debug(`[LoopingSound] Silence is disabled. Advancing to next track immediately.`);
-        try {
-          await AudioTimeout.wait(100);
-        } catch (_) {
-          // A rejected audio timer must not prevent document advancement.
-        }
-        await playNextOrLoop();
-      }
+      });
     }
   }
 

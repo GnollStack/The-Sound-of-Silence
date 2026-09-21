@@ -1,0 +1,21 @@
+<div class="standard-form">
+  <div class="form-group stacked">
+    <label for="sos-preferred-controller">Preferred Playback Controller</label>
+    <select id="sos-preferred-controller" name="preferredUserId">
+      <option value="" {{#if automatic}}selected{{/if}}>Automatic — prefer full GM</option>
+      {{#each accounts}}
+      <option value="{{id}}" {{#if preferred}}selected{{/if}}>{{label}}</option>
+      {{/each}}
+    </select>
+    <p class="hint">Choose who runs automatic transitions. If that account is unavailable, an eligible full GM takes over, followed by an assistant.</p>
+  </div>
+  <fieldset>
+    <legend>Excluded Playback Controllers</legend>
+    <p class="hint">Exclude bridge or automation accounts from automatic playback. Manual playback permissions are unchanged.</p>
+    {{#each accounts}}
+    <label class="checkbox"><input type="checkbox" name="excludedUserIds" value="{{id}}" {{#if excluded}}checked{{/if}}> {{label}}</label>
+    {{/each}}
+  </fieldset>
+  <p class="hint">Changes apply during playback. A returning preferred account takes over automatically.</p>
+  <footer class="form-footer"><button type="submit"><i class="fas fa-save"></i> Save</button></footer>
+</div>
