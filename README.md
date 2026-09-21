@@ -5,8 +5,8 @@
 **Loop your music, fade between tracks, and build ambience for your Foundry games.**
 
 [![Latest Release](https://img.shields.io/github/v/release/GnollStack/The-Sound-of-Silence?label=Latest%20Release&style=flat-square)](https://github.com/GnollStack/The-Sound-of-Silence/releases/latest)
-[![Downloads](https://img.shields.io/github/downloads/GnollStack/The-Sound-of-Silence/total?style=flat-square&color=green)](https://github.com/GnollStack/The-Sound-of-Silence/releases)
-[![Downloads@latest](https://img.shields.io/github/downloads/GnollStack/The-Sound-of-Silence/latest/total?style=flat-square)](https://github.com/GnollStack/The-Sound-of-Silence/releases/latest)
+[![Package Downloads](https://img.shields.io/github/downloads/GnollStack/The-Sound-of-Silence/the-sound-of-silence.zip?label=Package%20Downloads&style=flat-square&color=green)](https://github.com/GnollStack/The-Sound-of-Silence/releases)
+[![Latest Package Downloads](https://img.shields.io/github/downloads/GnollStack/The-Sound-of-Silence/latest/the-sound-of-silence.zip?label=Latest%20Package%20Downloads&style=flat-square)](https://github.com/GnollStack/The-Sound-of-Silence/releases/latest)
 [![Foundry VTT](https://img.shields.io/badge/Foundry-v13--v14-orange?style=flat-square)](https://foundryvtt.com)
 [![Ko-fi](https://img.shields.io/badge/Ko--fi-Buy%20a%20Steak-FF5E5B?style=flat-square&logo=ko-fi&logoColor=white)](https://ko-fi.com/gnollstack)
 
