@@ -84,6 +84,44 @@
   "manifest": "https://github.com/GnollStack/The-Sound-of-Silence/releases/latest/download/module.json",
   "download": "https://github.com/GnollStack/The-Sound-of-Silence/releases/download/V14.15.4/the-sound-of-silence.zip",
   "license": "LICENSE.txt",
+  "changelog": "https://github.com/GnollStack/The-Sound-of-Silence/releases",
+  "media": [
+    {
+      "type": "cover",
+      "url": "https://raw.githubusercontent.com/GnollStack/Bakshi-s-Bazaar-Media/main/the-sound-of-silence/images/the-sound-of-silence-currently-playing.png",
+      "caption": "Currently Playing transport controls"
+    },
+    {
+      "type": "screenshot",
+      "url": "https://raw.githubusercontent.com/GnollStack/Bakshi-s-Bazaar-Media/main/the-sound-of-silence/images/the-sound-of-silence-loop-editor.png",
+      "caption": "Internal loop editor"
+    },
+    {
+      "type": "screenshot",
+      "url": "https://raw.githubusercontent.com/GnollStack/Bakshi-s-Bazaar-Media/main/the-sound-of-silence/images/the-sound-of-silence-playlist-config.png",
+      "caption": "Playlist configuration settings"
+    },
+    {
+      "type": "screenshot",
+      "url": "https://raw.githubusercontent.com/GnollStack/Bakshi-s-Bazaar-Media/main/the-sound-of-silence/images/the-sound-of-silence-soundscape-roster.png",
+      "caption": "Soundscape procedural roster and preview controls"
+    },
+    {
+      "type": "video",
+      "url": "https://youtu.be/ykLuKt_UPlg",
+      "caption": "Internal loops demo"
+    },
+    {
+      "type": "video",
+      "url": "https://youtu.be/7K72lde_jus",
+      "caption": "Auto crossfade demo"
+    },
+    {
+      "type": "video",
+      "url": "https://youtu.be/qWQ8Ci46iiw",
+      "caption": "Silence gaps demo"
+    }
+  ],
   "readme": "https://github.com/GnollStack/The-Sound-of-Silence/blob/main/README.md",
   "bugs": "https://github.com/GnollStack/The-Sound-of-Silence/issues",
   "socket": true,

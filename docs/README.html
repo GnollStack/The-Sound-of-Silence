@@ -1,0 +1,575 @@
+<div style="text-align: center;">
+<h1 id="the-sound-of-silence">The Sound of Silence</h1>
+<p><strong>Loop your music, fade between tracks, and build ambience for your Foundry games.</strong></p>
+<p><a href="https://github.com/GnollStack/The-Sound-of-Silence/releases/latest"><img src="https://img.shields.io/github/v/release/GnollStack/The-Sound-of-Silence?label=Latest%20Release&amp;style=flat-square" alt="Latest Release" /></a>
+<a href="https://github.com/GnollStack/The-Sound-of-Silence/releases"><img src="https://img.shields.io/github/downloads/GnollStack/The-Sound-of-Silence/the-sound-of-silence.zip?label=Downloads&amp;style=flat-square&amp;color=green" alt="Downloads" /></a>
+<a href="https://github.com/GnollStack/The-Sound-of-Silence/releases/latest"><img src="https://img.shields.io/github/downloads/GnollStack/The-Sound-of-Silence/latest/the-sound-of-silence.zip?label=Latest%20Downloads&amp;style=flat-square" alt="Latest Downloads" /></a>
+<a href="https://foundryvtt.com"><img src="https://img.shields.io/badge/Foundry-v13--v14-orange?style=flat-square" alt="Foundry VTT v13–v14" /></a>
+<a href="https://ko-fi.com/gnollstack"><img src="https://img.shields.io/badge/Ko--fi-Buy%20a%20Steak-FF5E5B?style=flat-square&amp;logo=ko-fi&amp;logoColor=white" alt="Ko-fi" /></a>
+<a href="https://www.patreon.com/cw/GnollStack"><img src="https://img.shields.io/badge/Patreon-Bazaar%20Patron-F96854?style=flat-square&amp;logo=patreon&amp;logoColor=white" alt="Patreon: Bazaar Patron" /></a>
+<a href="https://discord.gg/bGQDnyqYJ"><img src="https://img.shields.io/badge/Discord-Bakshi%27s%20Bazaar-5865F2?style=flat-square&amp;logo=discord&amp;logoColor=white" alt="Discord: Bakshi's Bazaar" /></a></p>
+<p><em>For GMs who want music to help tell a story.</em></p>
+<p><a href="#preview">Preview</a> · <a href="#quick-start">Quick Start</a> · <a href="#features">Features</a> · <a href="#use-it-for">Use It For</a> · <a href="#installation">Installation</a> · <a href="#compatibility">Compatibility</a> · <a href="#developer-api">API</a> · <a href="#bakshis-bazaar">Bakshi's Bazaar</a> · <a href="#roadmap">Roadmap</a> · <a href="#community">Community</a> · <a href="#contributing">Contributing</a> · <a href="#ai-use">AI Use</a> · <a href="#support-development">Support</a> · <a href="#license-permissions">License</a></p>
+</div>
+<hr />
+<div style="text-align: center;">
+<h2 id="feature-index">Feature Index</h2>
+<table style="margin-left: auto; margin-right: auto;">
+<thead>
+<tr>
+<th style="text-align:left">Feature</th>
+<th style="text-align:left">What it does</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align:left"><strong><a href="#internal-loop-sequencer">Internal Loops</a></strong></td>
+<td style="text-align:left">Keep the best part of a track running until the scene changes.</td>
+</tr>
+<tr>
+<td style="text-align:left"><strong><a href="#auto-crossfade">Crossfading</a></strong></td>
+<td style="text-align:left">Blend one track into the next.</td>
+</tr>
+<tr>
+<td style="text-align:left"><strong><a href="#silence-gaps">Silence Gaps</a></strong></td>
+<td style="text-align:left">Leave a little space between songs.</td>
+</tr>
+<tr>
+<td style="text-align:left"><strong><a href="#soundscape-mode">Soundscape</a></strong></td>
+<td style="text-align:left">Mix background ambience with occasional sounds, such as birds or thunder.</td>
+</tr>
+</tbody>
+</table>
+<p><em>SoS works on Foundry's own playlists. The GM sets up loops, fades, and soundscapes, and connected players hear the same playback.</em></p>
+</div>
+<hr />
+<div style="text-align: center;">
+<h2 id="preview">Preview</h2>
+</div>
+<div style="text-align: center;">
+<a href="https://raw.githubusercontent.com/GnollStack/Bakshi-s-Bazaar-Media/main/the-sound-of-silence/images/the-sound-of-silence-currently-playing.png"><img width="375" height="252" alt="Currently Playing transport controls" src="https://raw.githubusercontent.com/GnollStack/Bakshi-s-Bazaar-Media/main/the-sound-of-silence/images/the-sound-of-silence-currently-playing.png" style="max-width: 100%; height: auto;" decoding="async" /></a>
+</div>
+<hr />
+<div style="text-align: center;">
+<h2 id="quick-start">Quick Start</h2>
+</div>
+<ol>
+<li>Install and enable <strong>The Sound of Silence</strong> in your world.</li>
+<li>Open the <strong>Playlists</strong> sidebar and expand any playlist.</li>
+<li>Use the buttons beside the playlist name to turn silence gaps or crossfading on and off, or to choose a playback mode.</li>
+<li>Right-click a playlist or sound and choose <strong>Configure</strong> to set up loops, fades, and Soundscape options.</li>
+</ol>
+<div style="text-align: center;">
+<a href="https://raw.githubusercontent.com/GnollStack/Bakshi-s-Bazaar-Media/main/the-sound-of-silence/images/the-sound-of-silence-playlist-config.png"><img width="397" height="751" alt="Playlist configuration settings" src="https://raw.githubusercontent.com/GnollStack/Bakshi-s-Bazaar-Media/main/the-sound-of-silence/images/the-sound-of-silence-playlist-config.png" style="max-width: 100%; height: auto;" loading="lazy" decoding="async" /></a>
+</div>
+<hr />
+<div style="text-align: center;">
+<h2 id="features">Features</h2>
+</div>
+<h3 id="internal-loop-sequencer">Internal Loop Sequencer</h3>
+<p><strong>Let the intro play, repeat the part you want, then move on when you're ready.</strong></p>
+<p>Choose up to 16 loop sections in one track without editing the audio file. Drag the handles to set each section, preview how the joins sound, and use the playback controls to break out of a loop during the game.</p>
+<div style="text-align: center;">
+<a href="https://raw.githubusercontent.com/GnollStack/Bakshi-s-Bazaar-Media/main/the-sound-of-silence/images/the-sound-of-silence-loop-editor.png"><img width="444" height="564" alt="Internal loop editor" src="https://raw.githubusercontent.com/GnollStack/Bakshi-s-Bazaar-Media/main/the-sound-of-silence/images/the-sound-of-silence-loop-editor.png" style="max-width: 100%; height: auto;" loading="lazy" decoding="async" /></a>
+<p>▶ <strong><a href="https://youtu.be/ykLuKt_UPlg">Watch demo (2 min)</a></strong></p>
+</div>
+<hr />
+
+<h3 id="auto-crossfade">Auto Crossfade</h3>
+<p>SoS uses equal-power crossfades to help keep the volume steady while one track fades out and the next fades in. Use the playlist's fade-out time or choose a separate crossfade duration.</p>
+<p>If you pause during a crossfade, playback resumes on the incoming track. For longer fades, SoS starts loading the next track early so it has time to get ready.</p>
+<p>▶ <strong><a href="https://youtu.be/7K72lde_jus">Watch demo (1 min)</a></strong></p>
+<hr />
+
+<h3 id="silence-gaps">Silence Gaps</h3>
+<p>Set a fixed pause between tracks, or a minimum and maximum length and let SoS choose each time. Silence gaps work in Sequential, Shuffle, and Simultaneous modes.</p>
+<p>▶ <strong><a href="https://youtu.be/qWQ8Ci46iiw">Watch demo (1 min)</a></strong></p>
+<hr />
+
+<h3 id="soundscape-mode">Soundscape Mode</h3>
+<p>Loop a steady background, such as rain, then add sounds that play now and then, such as thunder or a creaking branch. Choose how often they play, where they sit between the left and right speakers, and how many can overlap. By default, the GM controls these sounds and players hear the same events.</p>
+<div style="text-align: center;">
+<a href="https://raw.githubusercontent.com/GnollStack/Bakshi-s-Bazaar-Media/main/the-sound-of-silence/images/the-sound-of-silence-soundscape-roster.png"><img width="373" height="563" alt="Soundscape procedural roster and preview controls" src="https://raw.githubusercontent.com/GnollStack/Bakshi-s-Bazaar-Media/main/the-sound-of-silence/images/the-sound-of-silence-soundscape-roster.png" style="max-width: 100%; height: auto;" loading="lazy" decoding="async" /></a>
+</div>
+<hr />
+
+<h3 id="more-details">More Details</h3>
+<details>
+<summary><strong>More about internal loops</strong></summary>
+<ul>
+<li>Add up to 16 sections, each with its own start, end, crossfade time, and repeat count.</li>
+<li>Choose what happens after a section: skip to the next, keep playing, or fade out.</li>
+<li>Skip the intro and fade straight into the first loop section.</li>
+<li>Adjust sections on a color-coded timeline and see where crossfades overlap.</li>
+<li>Preview a whole loop or just the join. The preview starts at the sound's saved volume.</li>
+<li>Use <strong>Currently Playing</strong> to break a loop, jump to the previous or next section, or turn loops off.</li>
+<li>Section controls still work between loops and after you press <strong>Break</strong>.</li>
+<li>Finished loops are cleared so they no longer appear as active in the API.</li>
+</ul>
+</details>
+<details>
+<summary><strong>More about crossfading</strong></summary>
+<ul>
+<li>Equal-power blending helps keep the change in volume smooth.</li>
+<li>Use the playlist's fade-out time or set a separate duration.</li>
+<li>Fade curves control how the volume rises and falls.</li>
+<li>Crossfades work when tracks advance on their own or you skip manually, and stay in sync for connected players.</li>
+</ul>
+</details>
+<details>
+<summary><strong>More about silence gaps</strong></summary>
+<ul>
+<li><strong>Static:</strong> use the same pause every time.</li>
+<li><strong>Random:</strong> choose a pause between your minimum and maximum.</li>
+<li>Available in Sequential, Shuffle, and Simultaneous playback.</li>
+</ul>
+</details>
+<details>
+<summary><strong>More about Soundscape</strong></summary>
+<p>Choose <strong>Soundscape</strong> from the playlist's playback-mode picker. It appears alongside Soundboard, Sequential, Shuffle, and Simultaneous.</p>
+<ul>
+<li><strong>Background tracks (beds):</strong> loop continuously. Start them together with <strong>Play All</strong> or individually.</li>
+<li><strong>Occasional sounds (procedurals):</strong> use Uniform Random, Fixed Cadence, or Natural timing. Natural timing favors delays near the middle of your range.</li>
+<li><strong>First sound:</strong> wait for the normal timing, stagger the first sounds, or play them immediately.</li>
+<li><strong>Overlapping sounds:</strong> set a limit, called the polyphony cap. Independent, Linear, and Soft options control how play chances respond as the mix gets busier.</li>
+<li><strong>Groups:</strong> give related sounds a shared limit and a cooldown after a sound finishes.</li>
+<li><strong>Player sync:</strong> players hear the GM's chosen sounds with the same timing, stereo position, variations, and fades. Players can switch to their own random timing; background tracks and playlist controls still stay synced.</li>
+<li><strong>Preview:</strong> listen to the full mix from the playlist or try one sound from its configuration sheet. Only you hear previews, and they don't change live playback.</li>
+<li><strong>Individual controls:</strong> play or stop any sound. The playlist stops when its last sound ends.</li>
+<li><strong>Procedural Roster:</strong> see each sound's timing, first-play behavior, play chance, and stereo position in one table.</li>
+<li><strong>Fire Now:</strong> the GM can click the lightning-bolt button to trigger a sound. During live playback, players hear it too. It skips the group cooldown for testing but still respects overlap limits.</li>
+</ul>
+</details>
+<details>
+<summary><strong>Currently Playing controls</strong></summary>
+<ul>
+<li>See the playlist name and current track together.</li>
+<li>Control repeat, silence, crossfade, loops, playback mode, previous/next, pause/resume, and Stop.</li>
+<li>Adjust track and playlist volume with separate sliders.</li>
+<li>See fade-in and fade-out sections marked in gray on the progress bar.</li>
+<li>Keep loop controls available between sections and after <strong>Break</strong>.</li>
+<li>Expand Soundscape groups, see how many sounds are playing, or stop a whole group.</li>
+<li>Scroll within the panel while keeping the playlist list within reach.</li>
+<li>Keep your place in the playlist list when a track changes.</li>
+</ul>
+</details>
+<details>
+<summary><strong>Shuffle, fades, and volume</strong></summary>
+<ul>
+<li><strong>Shuffle:</strong> choose Foundry Default, Exhaustive, Weighted Random, or Round-Robin.</li>
+<li><strong>Fade-in:</strong> choose Logarithmic, Linear, S-Curve, or Steep in the world settings.</li>
+<li><strong>Fade-out:</strong> control how the volume falls as a sound ends.</li>
+<li><strong>Volume normalization:</strong> set a target for each playlist and exclude individual sounds when needed.</li>
+<li><strong>Playlist looping:</strong> repeat the playlist with silence gaps or crossfades still in place.</li>
+</ul>
+</details>
+<details>
+<summary><strong>Playback controller and co-DMs</strong></summary>
+<p>Open <strong>Configure Settings &gt; The Sound of Silence &gt; Configure Playback Controller</strong> as a full GM.</p>
+<ul>
+<li><strong>Automatic — prefer full GM</strong> gives connected full GMs priority over assistants. Accounts with the same role use a stable selection order.</li>
+<li>Choose a <strong>Preferred Playback Controller</strong> to delegate automatic playback to a particular GM or assistant. Offline accounts remain available in the list.</li>
+<li>Use <strong>Excluded Playback Controllers</strong> to keep bridge or automation accounts from running SoS automation. An account cannot be preferred and excluded at the same time.</li>
+</ul>
+<p>Changes apply during playback without a reload. If the preferred account is unavailable, another eligible full GM takes over, followed by an assistant. The preferred account takes over again when it returns. With no eligible controller, local playback continues and SoS waits to author new automatic transitions.</p>
+<p>These settings do not change anyone's manual playback permissions. Controller selection and handoff details appear only when <strong>Enable Debug Logging</strong> is on.</p>
+</details>
+<details>
+<summary><strong>Troubleshooting</strong></summary>
+<p>If you're tracking down a playback problem, <strong>Trace Currently Playing Timers</strong> adds timing details to the logs across clients.</p>
+<p>GMs can compare what's happening on their own client and connected players' clients:</p>
+<pre><code class="language-javascript">game.modules.get('the-sound-of-silence').api.requestClientDiagnostics()
+</code></pre>
+<p>After about three seconds, a dialog shows volume, fades, audio readiness, and playback timing for each client. Red highlights possible problems; amber marks active fades.</p>
+<p>To update old loop setups, open <strong>Configure Settings → The Sound of Silence → Migrate Legacy Internal Loops</strong>. This permanently converts older loop settings to the current segment format after you confirm. Back up your world first and stop all playlists. Existing segment-based loops are left alone.</p>
+<blockquote>
+<p><strong>Warning:</strong> If the GM controls playback, setting Music Volume to exactly <code>0</code> and switching away from the tab can stall the audio clock. Keep it at <code>0.01</code>, or mute the browser tab or app instead.</p>
+</blockquote>
+</details>
+<details>
+<summary><strong>Diagnostics (MCP Bridge)</strong></summary>
+<p>For the <strong>Foundry MCP Bridge</strong>, turn on <strong>Enable Debug Logging</strong> and <strong>Enable MCP Diagnostics</strong>, then use its module action tool. These tools are for GM troubleshooting and testing; leave MCP Diagnostics off during normal play. For example:</p>
+<pre><code class="language-javascript">call-module-debug-action({
+  moduleId: &quot;the-sound-of-silence&quot;,
+  action: &quot;getStatus&quot;,
+  args: {}
+})
+</code></pre>
+<p>The built-in inspection tools check settings, assets, playback, and connected clients. They are GM-only, off by default, and do not create world documents. The available actions under <code>api.diagnostics.actions</code> are <code>getStatus</code>, <code>validateSettings</code>, <code>validateAssets</code>, <code>collectClientDiagnostics</code>, <code>runSmokeTests</code>, <code>openWindow</code>, <code>parseText</code>, <code>validateText</code>, and <code>refreshClient</code>.</p>
+<ul>
+<li><strong>Status:</strong> <code>getStatus</code> shows which permissions and settings are enabled, along with audio readiness. Click inside each game client to unlock audio before testing playback.</li>
+<li><strong>Client reports:</strong> use <code>collectClientDiagnostics</code> to compare clients. Add <code>playlistIds</code> to focus on particular playlists.</li>
+<li><strong>Refresh:</strong> <code>refreshClient</code> needs <code>confirmRefresh: true</code>. Use <code>scope: &quot;client&quot;</code> for the current client or <code>scope: &quot;world&quot;</code> for all connected clients. World refresh also requires permission to change world settings. The bridge's <code>reload-foundry-client</code> tool is also available for a full reload.</li>
+</ul>
+<p>Automated playback tests belong in a dedicated test world. They require <strong>Enable MCP Diagnostics</strong> and <code>confirmMutation: true</code>, and use short test tones to check fades, shuffle, loops, silence, soundscapes, and player sync.</p>
+<ul>
+<li>Use <code>runAutomation</code> and <code>cleanupFixtures</code>, or the specific actions <code>controlPlayback</code>, <code>runPlaybackAutomation</code>, <code>runClientSyncAutomation</code>, and <code>cleanupPlaybackFixtures</code>.</li>
+<li>Multiplayer tests normally need at least one connected player. Missing client responses or missing playback on an audio-ready client fail the check. Locked audio makes playback checks inconclusive.</li>
+<li>Cleanup removes only marked SoS test documents whose names start with <code>SoS MCP Test -</code>. Supply <code>runId</code> to limit cleanup to one test run.</li>
+</ul>
+</details>
+<hr />
+<div style="text-align: center;">
+<h2 id="use-it-for">Use It For</h2>
+</div>
+<table>
+<thead>
+<tr>
+<th>At the table</th>
+<th>Try this</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Boss battles</strong></td>
+<td>Give each phase its own loop, then press Break when the fight changes.</td>
+</tr>
+<tr>
+<td><strong>Atmosphere</strong></td>
+<td>Keep rain, wind, wildlife, or tavern sounds going while you run the game.</td>
+</tr>
+<tr>
+<td><strong>Quiet moments</strong></td>
+<td>Leave a pause between songs or gently fade into the next track.</td>
+</tr>
+<tr>
+<td><strong>Favorite tracks</strong></td>
+<td>Loop the parts you want to hear again.</td>
+</tr>
+</tbody>
+</table>
+<details>
+<summary><strong>Example: music for a boss fight</strong></summary>
+<pre><code class="language-text">Segment 1  00:00–01:30   Intro      loop 1×, skip to next
+Segment 2  01:30–03:00   Phase 1    loop ∞
+Segment 3  03:00–04:45   Phase 2    loop ∞
+Segment 4  04:45–06:00   Victory    loop 1×, play through
+</code></pre>
+<p>The intro plays once, then Phase 1 loops. Press <strong>Break</strong> when the boss enters Phase 2. Press it again when the boss falls, and the victory section plays once before the track ends.</p>
+</details>
+<details>
+<summary><strong>Example: a rainy forest</strong></summary>
+<table>
+<thead>
+<tr>
+<th>Track</th>
+<th>Type</th>
+<th>Settings</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Forest Bed</td>
+<td>Background</td>
+<td>Repeat on</td>
+</tr>
+<tr>
+<td>Wind Gust</td>
+<td>Occasional sound</td>
+<td>Uniform Random, 10–25 seconds, random stereo position</td>
+</tr>
+<tr>
+<td>Bird Call</td>
+<td>Occasional sound</td>
+<td>Natural, 6–18 seconds, 70% play chance</td>
+</tr>
+<tr>
+<td>Branch Creak</td>
+<td>Occasional sound</td>
+<td>Every 30 seconds, stagger the first sound</td>
+</tr>
+</tbody>
+</table>
+</details>
+<hr />
+<div style="text-align: center;">
+<h2 id="installation">Installation</h2>
+</div>
+<ol>
+<li>From Foundry's setup screen, open <strong>Add-on Modules → Install Module</strong>.</li>
+<li>Search for &quot;Sound of Silence&quot; or paste this manifest URL:</li>
+</ol>
+<pre><code class="language-text">https://github.com/GnollStack/The-Sound-of-Silence/releases/latest/download/module.json
+</code></pre>
+<ol start="3">
+<li>Install <strong>libWrapper</strong> if needed, then enable both modules in your world.</li>
+</ol>
+<table>
+<thead>
+<tr>
+<th>Requirement</th>
+<th>Version</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Foundry VTT</td>
+<td>v13–v14; verified on 14.367</td>
+</tr>
+<tr>
+<td><a href="https://github.com/ruipin/fvtt-lib-wrapper">libWrapper</a></td>
+<td>Required; 1.13.3.0 or newer, tested with 1.13.5.1</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<div style="text-align: center;">
+<h2 id="compatibility">Compatibility</h2>
+</div>
+<p><strong>Foundry VTT:</strong> v13–v14; verified on <strong>14.367</strong>. Earlier releases were tested on v13.351, and v13 hasn't been retested for this update.</p>
+<p><strong>Game systems:</strong> works in any system; tested in <strong>dnd5e 5.3.3</strong>.</p>
+<p><strong>Browsers:</strong> Chrome/Chromium and Firefox. The latest tests used Chrome 153; earlier releases were also tested with Opera GX and Firefox. Click inside the game on each client to unlock audio before playing.</p>
+<blockquote>
+<p><strong>Tip:</strong> For the simplest setup, use SoS on its own for playlists and audio. Keep Monks Sound Enhancements or Playlist Enchantment only if you need their other features, such as actor sounds, audio uploads, or previews.</p>
+</blockquote>
+<details>
+<summary><strong>Monks Sound Enhancements</strong></summary>
+<p><strong>Module ID:</strong> <code>monks-sound-enhancements</code> · Can be used alongside SoS, with some overlap.</p>
+<p><strong>SoS takes over:</strong> the Currently Playing panel, playlist settings, and sound-effect volume slider.</p>
+<p><strong>Features you can keep:</strong> actor and token sounds, <code>@Sound[]</code> links, combat-turn sounds, dragging sounds between playlists, hotbar macros, playlist tooltips, and hiding names or playlists.</p>
+</details>
+<details>
+<summary><strong>Playlist Enchantment</strong></summary>
+<p><strong>Module ID:</strong> <code>playlistenchantment</code> · Can be used alongside SoS, with some overlap.</p>
+<p><strong>SoS takes over:</strong> the Currently Playing panel, volume normalization, fades, playlist looping, and the controls to play, stop, or skip all playlists.</p>
+<p><strong>Features you can keep:</strong> dragging files in to upload audio, prehear previews, hotbar macros, and the hotbar hover popup.</p>
+<blockquote>
+<p><strong>Warning:</strong> Turn off Enchantment's <code>alwaysFade</code> setting to avoid conflicting fades. SoS includes a guard for it, but disabling it is the simplest way to avoid overlap.</p>
+</blockquote>
+</details>
+<details>
+<summary><strong>Notes for other module authors</strong></summary>
+<p>SoS replaces <code>PARTS.playing</code> during the <code>ready</code> hook. It uses <code>sos-sound-partial.hbs</code> and <code>sos-soundscape-group.hbs</code> to display sound rows.</p>
+<p>Foundry's selectors (<code>.sound[data-sound-uuid]</code>, <code>.current</code>, <code>.duration</code>, <code>.pause</code>) remain available through hidden elements for compatibility. SoS styles use the <code>--sos-*</code> prefix, and buttons use <code>data-sos-action</code>. Scrolling over a volume control adjusts that control without scrolling the panel.</p>
+</details>
+<hr />
+<div style="text-align: center;">
+<h2 id="developer-api">Developer API</h2>
+</div>
+<p>For macros and other modules, start with:</p>
+<pre><code class="language-javascript">const api = game.modules.get(&quot;the-sound-of-silence&quot;).api;
+</code></pre>
+<details>
+<summary><strong>Playback control</strong></summary>
+<pre><code class="language-javascript">api.crossfadeToNext(playlist, fromSound)
+api.startLoop(sound) / stopLoop(sound, options) / breakLoop(sound)
+api.playSoundWithFadeIn(sound, overrideFadeInMs)
+api.stopSoundWithFadeOut(sound, overrideFadeOutMs)
+api.fade(sound, targetVolume, durationMs)
+api.crossfade(soundOut, soundIn, durationMs)
+</code></pre>
+</details>
+<details>
+<summary><strong>Settings and playback status</strong></summary>
+<pre><code class="language-javascript">api.getPlaylistConfig(playlist) / updatePlaylistConfig(playlist, updates)
+api.getLoopConfig(sound)         / updateLoopConfig(sound, loopConfig)
+api.getPlaybackMode(playlist)
+
+api.isLooping(sound)
+api.isCrossfadeScheduled(playlist)
+api.isSilenceActive(playlist)
+api.getCurrentLoopSegment(sound)
+api.getAllLoopingSounds()
+api.getActivePlaylists()
+
+api.enableFeature(playlist, feature)  / disableFeature(playlist, feature)
+</code></pre>
+</details>
+<details>
+<summary><strong>Troubleshooting and helpers</strong></summary>
+<pre><code class="language-javascript">api.requestClientDiagnostics()   // GM-only multi-client snapshot
+api.inspectPlaylist(playlist) / inspectAll()
+api.getMetrics() / resetMetrics()
+
+api.findSounds(name)
+api.toSeconds(&quot;01:30&quot;) / formatTime(seconds, showMs)
+api.cleanup(playlist, options)
+</code></pre>
+</details>
+<details>
+<summary><strong>Hook events</strong></summary>
+<pre><code class="language-javascript">the-sound-of-silence.crossfadeStart      / crossfadeComplete
+the-sound-of-silence.loopStart           / loopIteration / loopEnd
+the-sound-of-silence.silenceStart        / silenceEnd
+</code></pre>
+</details>
+<h3 id="example-macros">Example macros</h3>
+<p><strong>Fade the playing track into the next one.</strong> Change <code>&quot;Combat&quot;</code> to your playlist's name.</p>
+<pre><code class="language-javascript">const api = game.modules.get(&quot;the-sound-of-silence&quot;).api;
+const playlist = game.playlists.getName(&quot;Combat&quot;);
+const current  = playlist?.sounds.find(s =&gt; s.playing);
+if (!playlist || !current) return ui.notifications.warn(&quot;Nothing playing.&quot;);
+
+await api.crossfadeToNext(playlist, current);
+</code></pre>
+<p><strong>Break all active loops.</strong> Put this on your hotbar to move the music on when a boss changes phase.</p>
+<pre><code class="language-javascript">const api = game.modules.get(&quot;the-sound-of-silence&quot;).api;
+const looping = api.getAllLoopingSounds();
+if (!looping.length) return ui.notifications.info(&quot;No active loops.&quot;);
+
+for (const sound of looping) api.breakLoop(sound);
+ui.notifications.info(`Broke ${looping.length} loop(s).`);
+</code></pre>
+<p><strong>Compare playback across clients.</strong> GMs can run this to open a comparison of their client and connected players after about three seconds.</p>
+<pre><code class="language-javascript">game.modules.get(&quot;the-sound-of-silence&quot;).api.requestClientDiagnostics();
+</code></pre>
+<p><strong>Turn Soundscape mode on or off.</strong> Change <code>&quot;Rainy Forest&quot;</code> to your playlist's name.</p>
+<pre><code class="language-javascript">const api = game.modules.get(&quot;the-sound-of-silence&quot;).api;
+const playlist = game.playlists.getName(&quot;Rainy Forest&quot;);
+if (!playlist) return ui.notifications.warn(&quot;Playlist not found.&quot;);
+
+const mode = api.getPlaybackMode(playlist);
+mode.soundscape
+  ? await api.disableFeature(playlist, &quot;soundscape&quot;)
+  : await api.enableFeature(playlist, &quot;soundscape&quot;);
+</code></pre>
+<hr />
+<div style="text-align: center;">
+<h2 id="bakshis-bazaar">Bakshi's Bazaar</h2>
+<p><em>The Sound of Silence is free. My premium modules are released as <strong>Bakshi's Bazaar</strong> for <a href="https://www.patreon.com/cw/GnollStack">Bazaar Patrons</a> and install through Foundry's Premium Content.</em></p>
+</div>
+<table>
+<thead>
+<tr>
+<th>Module</th>
+<th>What it adds</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong><a href="https://foundryvtt.com/packages/5e-activity-importer">5e Activity Importer</a></strong></td>
+<td>Adds activities and Active Effects to dnd5e Items from YAML, or imports complete Items together with 5e Item Importer.</td>
+</tr>
+<tr>
+<td><strong><a href="https://foundryvtt.com/packages/custom-currency-5e">Custom Currency 5e</a></strong></td>
+<td>Custom coins, exchange rates, regional markets, and physical coin items on native dnd5e sheets.</td>
+</tr>
+<tr>
+<td><strong><a href="https://foundryvtt.com/packages/filesmith">FileSmith</a></strong></td>
+<td>Folder colors, multi-select, clipboard actions, and move undo for Foundry's sidebar.</td>
+</tr>
+<tr>
+<td><strong><a href="https://foundryvtt.com/packages/immersive-vision-fx">Immersive Vision FX</a></strong></td>
+<td>Soft vision and light edges, creature vision profiles, cave light, and eyeshine.</td>
+</tr>
+<tr>
+<td><strong><a href="https://foundryvtt.com/packages/traffick">Traffick</a></strong></td>
+<td>Party trading, merchant catalogs, perceived prices, and appraisal checks for dnd5e.</td>
+</tr>
+</tbody>
+</table>
+<p>A Bazaar Patron membership includes:</p>
+<ul>
+<li>Every Bakshi's Bazaar premium module while your membership is active, including ongoing updates and new modules as they're added.</li>
+<li>Patron-only channels in the <a href="https://discord.gg/bGQDnyqYJ">Bakshi's Bazaar Discord</a>.</li>
+<li>Priority module support.</li>
+<li>A direct place to share feedback and feature suggestions. Suggestions are welcome and taken seriously, but development priorities remain at my discretion.</li>
+</ul>
+<p>Everyone is welcome in the <a href="https://discord.gg/bGQDnyqYJ">Bakshi's Bazaar Discord</a>: the public channels cover release announcements, questions, and feature ideas, and patrons also get the patron-only channels and priority support. Bug reports for The Sound of Silence still go to <a href="https://github.com/GnollStack/The-Sound-of-Silence/issues">GitHub issues</a>, as described under Community.</p>
+<hr />
+<div style="text-align: center;">
+<h2 id="roadmap">Roadmap</h2>
+</div>
+<table>
+<thead>
+<tr>
+<th>Item</th>
+<th>What it unlocks</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Cross-playlist crossfading</strong></td>
+<td>Fade from Exploration → Combat without manually stopping the first playlist.</td>
+</tr>
+<tr>
+<td><strong>Intro-to-playlist linking</strong></td>
+<td>Play a one-shot intro track, then auto-switch into a looping playlist.</td>
+</tr>
+<tr>
+<td><strong>Preset system</strong></td>
+<td>Save, load, and share loop configurations between worlds and GMs.</td>
+</tr>
+<tr>
+<td><strong>Automation triggers</strong></td>
+<td>Fire on combat start, scene change, or arbitrary hook conditions.</td>
+</tr>
+<tr>
+<td><strong>Non-sequential segments</strong></td>
+<td>Jump between loop segments in any order, not just forward.</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<div style="text-align: center;">
+<h2 id="community">Community</h2>
+</div>
+<ul>
+<li><strong>Report bugs</strong> — <a href="https://github.com/GnollStack/The-Sound-of-Silence/issues">open an issue</a> with your Foundry version, module version, steps to reproduce, console logs, and screenshots or short clips when useful.</li>
+<li><strong>Ask on Discord</strong> — anyone can ask questions in the public channels of the <a href="https://discord.gg/bGQDnyqYJ">Bakshi's Bazaar Discord</a>. Bazaar Patrons get priority support in the patron-only channels.</li>
+<li><strong>Request features</strong> — tell me what happened at your table and what you wish the module could do.</li>
+<li><strong>Star the repo</strong> — if the module is useful at your table, a star helps other GMs find it.</li>
+<li><strong>Watch releases</strong> — follow the repo for updates, compatibility notes, and new feature releases.</li>
+</ul>
+<hr />
+<div style="text-align: center;">
+<h2 id="contributing">Contributing</h2>
+</div>
+<p>Bug reports, feature ideas, reproduction notes, documentation fixes, and localization ideas are welcome.</p>
+<p>I am not generally accepting unsolicited code PRs for features, refactors, architecture, or behavior changes. This is still my module and my codebase; I will decide how features are designed and implemented unless I explicitly say otherwise.</p>
+<ul>
+<li><strong>Bug reports</strong> — include Foundry version, module version, a console log, and the steps to reproduce. Screenshots or short clips help a lot.</li>
+<li><strong>Feature requests</strong> — tell me what happened at your table and what you wish the module could do.</li>
+<li><strong>Pull requests</strong> — please do not open code PRs unless I ask for one. Open an issue with the idea instead.</li>
+<li><strong>Code ownership</strong> — core implementation, architecture, and release decisions remain with me unless stated otherwise.</li>
+<li><strong>Translations and docs</strong> — typo fixes, wording suggestions, and localization ideas are welcome by issue first. I do not have a public translation setup yet, so I will fold useful wording in myself.</li>
+</ul>
+<p>I may adapt, decline, or implement submitted ideas. Any accepted contribution or submitted project material may be released under the same EULA as the rest of the module.</p>
+<hr />
+<div style="text-align: center;">
+<h2 id="ai-use">AI-Assisted Development</h2>
+</div>
+<p>This module is developed and maintained with the help of AI-assisted tools for coding, debugging, and testing.</p>
+<p>I care about the quality, behavior, performance, security, and long-term maintainability of this module, and I take full responsibility for what ships. AI assistance does not replace review, testing, debugging, or security and design judgment.</p>
+<p>AI is used here as a tool under my direction to make Foundry better and allow for long term mod support while still having a life outside of building and maintaining my free and premium modules.</p>
+<p>If you are uncomfortable using software developed with AI-assisted tools, this module is not for you.</p>
+<hr />
+<div style="text-align: center;">
+<h2 id="support-development">🥩 Support Development</h2>
+<p>This module represents <strong>many hours</strong> of development.</p>
+<p><strong>If this module enhanced your immersion, consider treating me to a steak, much better than coffee!</strong></p>
+<a href='https://ko-fi.com/gnollstack' target='_blank'>
+<img height='36' style='border:0px;height:36px;' src='https://storage.ko-fi.com/cdn/kofi3.png?v=3' border='0' alt='Buy Me a Steak at ko-fi.com' />
+</a>
+<blockquote>
+<p><em>&quot;Thanks for the support! It helps me maintain support for the module and puts a nice steak on the table.&quot;</em></p>
+</blockquote>
+</div>
+<hr />
+<div style="text-align: center;">
+<h2 id="license-permissions">⚖️ License &amp; Permissions</h2>
+</div>
+<h3 id="proprietary-eula">Proprietary EULA</h3>
+<p>This module is licensed under the <strong>GnollStack Proprietary EULA</strong>.
+It is <strong>Free for Personal Use</strong>, meaning you can use it in your home games, stream it, or modify it for your own table without restriction.</p>
+<p>However, <strong>Commercial Redistribution is Strictly Prohibited.</strong>
+You may <strong>NOT</strong> sell this module, bundle it within paid content (such as Patreon maps or adventures), or host it as a commercial service without prior written consent.</p>
+<h3 id="commercial-licensing">Commercial Licensing</h3>
+<p>I am open to partnerships! If you are a map maker, adventure writer, or developer who wishes to use this module commercially, please contact me. I offer commercial licenses for:</p>
+<ul>
+<li>Bundling this module with paid VTT content.</li>
+<li>Official integration into commercial systems.</li>
+<li>Custom feature development for your specific product.</li>
+</ul>
+<h3 id="contact">Contact</h3>
+<p>For licensing inquiries or permission slips:</p>
+<ul>
+<li><strong>Discord:</strong> <code>GnollStack</code> (Preferred)</li>
+<li><strong>Email:</strong> <code>Somedudeed@gmail.com</code></li>
+<li><em>Please do not open GitHub Issues for commercial licensing discussions. But feel free to contact me via Discord or Email</em></li>
+</ul>
+<hr />
+<div style="text-align: center;">
+<p><strong>Author:</strong> <a href="https://github.com/GnollStack">GnollStack</a> · <strong>Compatibility:</strong> Foundry VTT v13 - v14</p>
+<p><a href="#the-sound-of-silence">⬆ Back to Top</a></p>
+</div>
