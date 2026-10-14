@@ -14,7 +14,7 @@
 
 *For GMs who want music to help tell a story.*
 
-[Preview](#preview) · [Quick Start](#quick-start) · [Features](#features) · [Use It For](#use-it-for) · [Installation](#installation) · [Compatibility](#compatibility) · [API](#developer-api) · [Bakshi's Bazaar](#bakshis-bazaar) · [Roadmap](#roadmap) · [Community](#community) · [Contributing](#contributing) · [AI Use](#ai-use) · [Support](#support-development) · [License](#license-permissions)
+[Preview](#preview) · [Quick Start](#quick-start) · [Features](#features) · [Use It For](#use-it-for) · [Installation](#installation) · [Changelog](https://github.com/GnollStack/Bakshi-s-Bazaar-Media/blob/main/the-sound-of-silence/CHANGELOG.md) · [Compatibility](#compatibility) · [API](#developer-api) · [Bakshi's Bazaar](#bakshis-bazaar) · [Roadmap](#roadmap) · [Community](#community) · [Contributing](#contributing) · [AI Use](#ai-use) · [Support](#support-development) · [License](#license-permissions)
 
 </div>
 

@@ -1,19 +1,21 @@
 {
   "id": "the-sound-of-silence",
   "title": "The Sound of Silence",
-  "description": "Transform Foundry's playlists into a dynamic sound design studio. Create complex tracks with intros and seamless loops using the multi-segment sequencer, blend songs perfectly with equal-power crossfading, and control the mood with configurable silence gaps.",
-  "version": "14.15.4",
-  "compatibility": {
-    "minimum": "13",
-    "verified": "14.367"
-  },
+  "type": "module",
+  "description": "Build tracks with intros and multiple loop segments, crossfade between songs, and add configurable silence gaps to Foundry playlists.",
+  "version": "14.15.5",
   "authors": [
     {
       "name": "GnollStack",
-      "discord": "GnollStack",
-      "flags": {}
+      "url": "https://github.com/GnollStack",
+      "discord": "GnollStack"
     }
   ],
+  "compatibility": {
+    "minimum": "13",
+    "verified": "14.367",
+    "maximum": "14"
+  },
   "relationships": {
     "requires": [
       {
@@ -23,7 +25,8 @@
         "compatibility": {
           "minimum": "1.13.3.0",
           "verified": "1.13.5.1"
-        }
+        },
+        "reason": "Required for playlist playback, loops, and crossfading."
       }
     ]
   },
@@ -80,11 +83,12 @@
       "src": "styles/light-overrides.css"
     }
   ],
-  "url": "https://github.com/GnollStack/The-Sound-of-Silence",
-  "manifest": "https://github.com/GnollStack/The-Sound-of-Silence/releases/latest/download/module.json",
-  "download": "https://github.com/GnollStack/The-Sound-of-Silence/releases/download/V14.15.4/the-sound-of-silence.zip",
+  "socket": true,
   "license": "LICENSE.txt",
-  "changelog": "https://github.com/GnollStack/The-Sound-of-Silence/releases",
+  "url": "https://github.com/GnollStack/The-Sound-of-Silence",
+  "readme": "https://github.com/GnollStack/The-Sound-of-Silence/blob/main/README.md",
+  "bugs": "https://github.com/GnollStack/The-Sound-of-Silence/issues",
+  "changelog": "https://github.com/GnollStack/Bakshi-s-Bazaar-Media/blob/main/the-sound-of-silence/CHANGELOG.md",
   "media": [
     {
       "type": "cover",
@@ -122,8 +126,6 @@
       "caption": "Silence gaps demo"
     }
   ],
-  "readme": "https://github.com/GnollStack/The-Sound-of-Silence/blob/main/README.md",
-  "bugs": "https://github.com/GnollStack/The-Sound-of-Silence/issues",
-  "socket": true,
-  "flags": {}
+  "manifest": "https://github.com/GnollStack/The-Sound-of-Silence/releases/latest/download/module.json",
+  "download": "https://github.com/GnollStack/The-Sound-of-Silence/releases/download/V14.15.5/the-sound-of-silence.zip"
 }
