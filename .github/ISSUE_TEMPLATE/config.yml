@@ -1,5 +1,8 @@
 blank_issues_enabled: true
 contact_links:
+  - name: Questions and chat
+    url: https://discord.gg/tcdYk54fxC
+    about: Ask questions or chat about the module in the public channels of the Bakshi's Bazaar Discord.
   - name: Commercial licensing or written permissions
     url: https://github.com/GnollStack/The-Sound-of-Silence
     about: Please contact GnollStack directly by Discord or email for commercial licensing or written permission requests.
