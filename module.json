@@ -88,26 +88,26 @@
   "url": "https://github.com/GnollStack/The-Sound-of-Silence",
   "readme": "https://github.com/GnollStack/The-Sound-of-Silence/blob/main/README.md",
   "bugs": "https://github.com/GnollStack/The-Sound-of-Silence/issues",
-  "changelog": "https://github.com/GnollStack/Bakshi-s-Bazaar-Media/blob/main/the-sound-of-silence/CHANGELOG.md",
+  "changelog": "https://github.com/GnollStack/bakshis-bazaar-archives/blob/main/the-sound-of-silence/CHANGELOG.md",
   "media": [
     {
       "type": "cover",
-      "url": "https://raw.githubusercontent.com/GnollStack/Bakshi-s-Bazaar-Media/main/the-sound-of-silence/images/the-sound-of-silence-currently-playing.png",
+      "url": "https://raw.githubusercontent.com/GnollStack/bakshis-bazaar-archives/main/the-sound-of-silence/images/the-sound-of-silence-currently-playing.png",
       "caption": "Currently Playing transport controls"
     },
     {
       "type": "screenshot",
-      "url": "https://raw.githubusercontent.com/GnollStack/Bakshi-s-Bazaar-Media/main/the-sound-of-silence/images/the-sound-of-silence-loop-editor.png",
+      "url": "https://raw.githubusercontent.com/GnollStack/bakshis-bazaar-archives/main/the-sound-of-silence/images/the-sound-of-silence-loop-editor.png",
       "caption": "Internal loop editor"
     },
     {
       "type": "screenshot",
-      "url": "https://raw.githubusercontent.com/GnollStack/Bakshi-s-Bazaar-Media/main/the-sound-of-silence/images/the-sound-of-silence-playlist-config.png",
+      "url": "https://raw.githubusercontent.com/GnollStack/bakshis-bazaar-archives/main/the-sound-of-silence/images/the-sound-of-silence-playlist-config.png",
       "caption": "Playlist configuration settings"
     },
     {
       "type": "screenshot",
-      "url": "https://raw.githubusercontent.com/GnollStack/Bakshi-s-Bazaar-Media/main/the-sound-of-silence/images/the-sound-of-silence-soundscape-roster.png",
+      "url": "https://raw.githubusercontent.com/GnollStack/bakshis-bazaar-archives/main/the-sound-of-silence/images/the-sound-of-silence-soundscape-roster.png",
       "caption": "Soundscape procedural roster and preview controls"
     },
     {

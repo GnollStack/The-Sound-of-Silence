@@ -10,11 +10,11 @@
 [![Foundry VTT v13–v14](https://img.shields.io/badge/Foundry-v13--v14-orange?style=flat-square)](https://foundryvtt.com)
 [![Ko-fi](https://img.shields.io/badge/Ko--fi-Buy%20a%20Steak-FF5E5B?style=flat-square&logo=ko-fi&logoColor=white)](https://ko-fi.com/gnollstack)
 [![Patreon: Bazaar Patron](https://img.shields.io/badge/Patreon-Bazaar%20Patron-F96854?style=flat-square&logo=patreon&logoColor=white)](https://www.patreon.com/cw/GnollStack)
-[![Discord: Bakshi's Bazaar](https://img.shields.io/badge/Discord-Bakshi%27s%20Bazaar-5865F2?style=flat-square&logo=discord&logoColor=white)](https://discord.gg/bGQDnyqYJ)
+[![Discord: Bakshi's Bazaar](https://img.shields.io/badge/Discord-Bakshi%27s%20Bazaar-5865F2?style=flat-square&logo=discord&logoColor=white)](https://discord.gg/tcdYk54fxC)
 
 *For GMs who want music to help tell a story.*
 
-[Preview](#preview) · [Quick Start](#quick-start) · [Features](#features) · [Use It For](#use-it-for) · [Installation](#installation) · [Changelog](https://github.com/GnollStack/Bakshi-s-Bazaar-Media/blob/main/the-sound-of-silence/CHANGELOG.md) · [Compatibility](#compatibility) · [API](#developer-api) · [Bakshi's Bazaar](#bakshis-bazaar) · [Roadmap](#roadmap) · [Community](#community) · [Contributing](#contributing) · [AI Use](#ai-use) · [Support](#support-development) · [License](#license-permissions)
+[Preview](#preview) · [Quick Start](#quick-start) · [Features](#features) · [Use It For](#use-it-for) · [Installation](#installation) · [Changelog](https://github.com/GnollStack/bakshis-bazaar-archives/blob/main/the-sound-of-silence/CHANGELOG.md) · [Compatibility](#compatibility) · [API](#developer-api) · [Bakshi's Bazaar](#bakshis-bazaar) · [Roadmap](#roadmap) · [Community](#community) · [Contributing](#contributing) · [AI Use](#ai-use) · [Support](#support-development) · [License](#license-permissions)
 
 </div>
 
@@ -47,7 +47,7 @@
 
 <div align="center">
 
-<img width="375" height="252" alt="Currently Playing transport controls" src="https://raw.githubusercontent.com/GnollStack/Bakshi-s-Bazaar-Media/main/the-sound-of-silence/images/the-sound-of-silence-currently-playing.png" />
+<img width="375" height="252" alt="Currently Playing transport controls" src="https://raw.githubusercontent.com/GnollStack/bakshis-bazaar-archives/main/the-sound-of-silence/images/the-sound-of-silence-currently-playing.png" />
 
 </div>
 
@@ -68,7 +68,7 @@
 
 <div align="center">
 
-<img width="397" height="751" alt="Playlist configuration settings" src="https://raw.githubusercontent.com/GnollStack/Bakshi-s-Bazaar-Media/main/the-sound-of-silence/images/the-sound-of-silence-playlist-config.png" />
+<img width="397" height="751" alt="Playlist configuration settings" src="https://raw.githubusercontent.com/GnollStack/bakshis-bazaar-archives/main/the-sound-of-silence/images/the-sound-of-silence-playlist-config.png" />
 
 </div>
 
@@ -92,7 +92,7 @@ Choose up to 16 loop sections in one track without editing the audio file. Drag 
 
 <div align="center">
 
-<img width="444" height="564" alt="Internal loop editor" src="https://raw.githubusercontent.com/GnollStack/Bakshi-s-Bazaar-Media/main/the-sound-of-silence/images/the-sound-of-silence-loop-editor.png" />
+<img width="444" height="564" alt="Internal loop editor" src="https://raw.githubusercontent.com/GnollStack/bakshis-bazaar-archives/main/the-sound-of-silence/images/the-sound-of-silence-loop-editor.png" />
 
 ▶ **[Watch demo (2 min)](https://youtu.be/ykLuKt_UPlg)**
 
@@ -130,7 +130,7 @@ Loop a steady background, such as rain, then add sounds that play now and then, 
 
 <div align="center">
 
-<img width="373" height="563" alt="Soundscape procedural roster and preview controls" src="https://raw.githubusercontent.com/GnollStack/Bakshi-s-Bazaar-Media/main/the-sound-of-silence/images/the-sound-of-silence-soundscape-roster.png" />
+<img width="373" height="563" alt="Soundscape procedural roster and preview controls" src="https://raw.githubusercontent.com/GnollStack/bakshis-bazaar-archives/main/the-sound-of-silence/images/the-sound-of-silence-soundscape-roster.png" />
 
 </div>
 
@@ -538,11 +538,11 @@ mode.soundscape
 A Bazaar Patron membership includes:
 
 - Every Bakshi's Bazaar premium module while your membership is active, including ongoing updates and new modules as they're added.
-- Patron-only channels in the [Bakshi's Bazaar Discord](https://discord.gg/bGQDnyqYJ).
+- Patron-only channels in the [Bakshi's Bazaar Discord](https://discord.gg/tcdYk54fxC).
 - Priority module support.
 - A direct place to share feedback and feature suggestions. Suggestions are welcome and taken seriously, but development priorities remain at my discretion.
 
-Everyone is welcome in the [Bakshi's Bazaar Discord](https://discord.gg/bGQDnyqYJ): the public channels cover release announcements, questions, and feature ideas, and patrons also get the patron-only channels and priority support. Bug reports for The Sound of Silence still go to [GitHub issues](https://github.com/GnollStack/The-Sound-of-Silence/issues), as described under Community.
+Everyone is welcome in the [Bakshi's Bazaar Discord](https://discord.gg/tcdYk54fxC): the public channels cover release announcements, questions, and feature ideas, and patrons also get the patron-only channels and priority support. Bug reports for The Sound of Silence still go to [GitHub issues](https://github.com/GnollStack/The-Sound-of-Silence/issues), as described under Community.
 
 ---
 
@@ -573,7 +573,7 @@ Everyone is welcome in the [Bakshi's Bazaar Discord](https://discord.gg/bGQDnyqY
 </div>
 
 - **Report bugs** — [open an issue](https://github.com/GnollStack/The-Sound-of-Silence/issues) with your Foundry version, module version, steps to reproduce, console logs, and screenshots or short clips when useful.
-- **Ask on Discord** — anyone can ask questions in the public channels of the [Bakshi's Bazaar Discord](https://discord.gg/bGQDnyqYJ). Bazaar Patrons get priority support in the patron-only channels.
+- **Ask on Discord** — anyone can ask questions in the public channels of the [Bakshi's Bazaar Discord](https://discord.gg/tcdYk54fxC). Bazaar Patrons get priority support in the patron-only channels.
 - **Request features** — tell me what happened at your table and what you wish the module could do.
 - **Star the repo** — if the module is useful at your table, a star helps other GMs find it.
 - **Watch releases** — follow the repo for updates, compatibility notes, and new feature releases.
