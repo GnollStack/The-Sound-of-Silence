@@ -8,13 +8,12 @@
 [![Downloads](https://img.shields.io/github/downloads/GnollStack/The-Sound-of-Silence/the-sound-of-silence.zip?label=Downloads&style=flat-square&color=green)](https://github.com/GnollStack/The-Sound-of-Silence/releases)
 [![Latest Downloads](https://img.shields.io/github/downloads/GnollStack/The-Sound-of-Silence/latest/the-sound-of-silence.zip?label=Latest%20Downloads&style=flat-square)](https://github.com/GnollStack/The-Sound-of-Silence/releases/latest)
 [![Foundry VTT v13–v14](https://img.shields.io/badge/Foundry-v13--v14-orange?style=flat-square)](https://foundryvtt.com)
-[![Ko-fi](https://img.shields.io/badge/Ko--fi-Buy%20a%20Steak-FF5E5B?style=flat-square&logo=ko-fi&logoColor=white)](https://ko-fi.com/gnollstack)
 [![Patreon: Bazaar Patron](https://img.shields.io/badge/Patreon-Bazaar%20Patron-F96854?style=flat-square&logo=patreon&logoColor=white)](https://www.patreon.com/cw/GnollStack)
 [![Discord: Bakshi's Bazaar](https://img.shields.io/badge/Discord-Bakshi%27s%20Bazaar-5865F2?style=flat-square&logo=discord&logoColor=white)](https://discord.gg/tcdYk54fxC)
 
 *For GMs who want music to help tell a story.*
 
-[Preview](#preview) · [Quick Start](#quick-start) · [Features](#features) · [Use It For](#use-it-for) · [Installation](#installation) · [Changelog](https://github.com/GnollStack/bakshis-bazaar-archives/blob/main/the-sound-of-silence/CHANGELOG.md) · [Compatibility](#compatibility) · [API](#developer-api) · [Bakshi's Bazaar](#bakshis-bazaar) · [Roadmap](#roadmap) · [Community](#community) · [Contributing](#contributing) · [AI Use](#ai-use) · [Support](#support-development) · [License](#license-permissions)
+[Preview](#preview) · [Quick Start](#quick-start) · [Features](#features) · [Use It For](#use-it-for) · [Installation](#installation) · [Changelog](https://github.com/GnollStack/bakshis-bazaar-archives/blob/main/the-sound-of-silence/CHANGELOG.md) · [Compatibility](#compatibility) · [API](#developer-api) · [Bakshi's Bazaar](#bakshis-bazaar) · [Roadmap](#roadmap) · [Community](#community) · [Contributing](#contributing) · [AI Use](#ai-use) · [License](#license-permissions)
 
 </div>
 
@@ -617,26 +616,6 @@ I care about the quality, behavior, performance, security, and long-term maintai
 AI is used here as a tool under my direction to make Foundry better and allow for long term mod support while still having a life outside of building and maintaining my free and premium modules.
 
 If you are uncomfortable using software developed with AI-assisted tools, this module is not for you.
-
----
-
-<div align="center">
-
-<a id="support-development"></a>
-
-## 🥩 Support Development
-
-This module represents **many hours** of development.
-
-**If this module enhanced your immersion, consider treating me to a steak, much better than coffee!**
-
-<a href='https://ko-fi.com/gnollstack' target='_blank'>
-<img height='36' style='border:0px;height:36px;' src='https://storage.ko-fi.com/cdn/kofi3.png?v=3' border='0' alt='Buy Me a Steak at ko-fi.com' />
-</a>
-
-> *"Thanks for the support! It helps me maintain support for the module and puts a nice steak on the table."*
-
-</div>
 
 ---
 
