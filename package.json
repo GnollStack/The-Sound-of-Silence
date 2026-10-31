@@ -4,6 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "package:release": "node tools/package-release.mjs",
     "test": "node tests/run-tests.js",
     "check:syntax": "powershell -ExecutionPolicy Bypass -File tests/check-syntax.ps1"
   }
