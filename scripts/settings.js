@@ -52,7 +52,7 @@ export function registerSettings({
 
   game.settings.register(MODULE_ID, "enableMcpDiagnostics", {
     name: "Enable MCP Diagnostics",
-    hint: "Advanced GM-only diagnostics for Foundry MCP Bridge workflows, including confirmed test automation. Leave this disabled during normal play unless you are intentionally debugging or testing this module.",
+    hint: "Advanced GM-only diagnostics, including confirmed test automation. Leave this disabled during normal play unless you are intentionally debugging or testing this module.",
     scope: "world",
     config: true,
     type: Boolean,

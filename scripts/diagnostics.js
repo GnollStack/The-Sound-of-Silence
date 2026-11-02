@@ -81,6 +81,9 @@ const MODULE_ASSETS = Object.freeze([
 const VALIDATION_KINDS = ["playlistFlags", "soundFlags", "loopConfig"];
 const TIME_PATTERN = /^\d{1,3}:\d{2}(?:\.\d{1,3})?$/;
 const SOCKET_CHANNEL = `module.${MODULE_ID}`;
+const CLIENT_EVIDENCE_MAX_CHARS = 15000;
+const CLIENT_EVIDENCE_MAX_SOUNDS = 30;
+const CLIENT_EVIDENCE_MAX_SOUNDSCAPES = 10;
 
 export function createSoundOfSilenceDiagnostics(api) {
   const playbackAutomation = createPlaybackAutomation(api);
@@ -124,7 +127,71 @@ export function createSoundOfSilenceDiagnostics(api) {
     getMutationAvailability,
     getPlaybackAutomationAvailability: getMutationAvailability,
     getRefreshAvailability,
+    clientEvidence: () => clientEvidence(api),
   };
+}
+
+/**
+ * Player-side snapshot for support diagnostics. Runs on any client, so it applies no gate, and it stays
+ * read-only and under 16 kB.
+ */
+function clientEvidence(api) {
+  try {
+    return buildClientEvidence(api);
+  } catch (err) {
+    return { success: false, reason: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+// The full local snapshot grows with every playlist, so this projects the state that differs per client.
+function buildClientEvidence(api) {
+  const local = api._gatherLocalDiagnostics({ playlistIds: [] });
+  const evidence = {
+    user: { id: local.client.userId, name: local.client.userName, isGM: local.client.isGM },
+    scene: { id: canvas?.scene?.id ?? null, name: canvas?.scene?.name ?? null, ready: Boolean(canvas?.ready) },
+    runtime: {
+      moduleVersion: game.modules?.get(MODULE_ID)?.version ?? null,
+      foundryVersion: game.version ?? null,
+      clientInstanceId: local.client.clientInstanceId,
+      socketId: local.client.socketId,
+    },
+    settings: getSettingsSnapshot(),
+    moduleState: {
+      audio: local.audio,
+      audioContexts: local.audioContexts,
+      coreAudioVolumes: local.coreAudioVolumes,
+      playingSounds: local.playingSounds.slice(0, CLIENT_EVIDENCE_MAX_SOUNDS).map((sound) => ({
+        playlistId: sound.playlistId,
+        soundId: sound.soundId,
+        soundName: sound.soundName,
+        gainValue: sound.gainValue,
+        volume: sound.volume,
+        isFading: sound.isFading,
+        currentTime: sound.currentTime,
+        duration: sound.duration,
+        contextState: sound.contextState,
+      })),
+      playingSoundCount: local.playingSounds.length,
+      soundscapes: local.soundscapes.slice(0, CLIENT_EVIDENCE_MAX_SOUNDSCAPES).map((soundscape) => ({
+        playlistId: soundscape.playlistId,
+        active: soundscape.active,
+        syncMode: soundscape.syncMode,
+        bedCount: soundscape.bedCount,
+        armedOneShots: soundscape.armedOneShots,
+        activeOneShots: soundscape.activeOneShots,
+        pendingOneShots: soundscape.pendingOneShots,
+      })),
+      soundscapeProceduralSyncEnabled: local.soundscapeProceduralSyncEnabled,
+      personalAudioMix: { enabled: local.personalAudioMix.enabled, trackOverrideCount: local.personalAudioMix.trackOverrideCount },
+    },
+  };
+  if (JSON.stringify(evidence).length > CLIENT_EVIDENCE_MAX_CHARS) {
+    evidence.settings = { truncated: true };
+    evidence.moduleState.playingSounds = evidence.moduleState.playingSounds.map(({ playlistId, soundId, contextState }) => ({ playlistId, soundId, contextState }));
+    evidence.moduleState.soundscapes = [];
+    evidence.moduleState.truncated = true;
+  }
+  return { success: true, ...evidence };
 }
 
 function withGate(action, fn) {

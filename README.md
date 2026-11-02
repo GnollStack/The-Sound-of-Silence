@@ -248,33 +248,6 @@ To update old loop setups, open **Configure Settings â†’ The Sound of Silence â†
 
 </details>
 
-<details>
-<summary><strong>Diagnostics (MCP Bridge)</strong></summary>
-
-For the **Foundry MCP Bridge**, turn on **Enable Debug Logging** and **Enable MCP Diagnostics**, then use its module action tool. These tools are for GM troubleshooting and testing; leave MCP Diagnostics off during normal play. For example:
-
-```javascript
-call-module-debug-action({
-  moduleId: "the-sound-of-silence",
-  action: "getStatus",
-  args: {}
-})
-```
-
-The built-in inspection tools check settings, assets, playback, and connected clients. They are GM-only, off by default, and do not create world documents. The available actions under `api.diagnostics.actions` are `getStatus`, `validateSettings`, `validateAssets`, `collectClientDiagnostics`, `runSmokeTests`, `openWindow`, `parseText`, `validateText`, and `refreshClient`.
-
-- **Status:** `getStatus` shows which permissions and settings are enabled, along with audio readiness. Click inside each game client to unlock audio before testing playback.
-- **Client reports:** use `collectClientDiagnostics` to compare clients. Add `playlistIds` to focus on particular playlists.
-- **Refresh:** `refreshClient` needs `confirmRefresh: true`. Use `scope: "client"` for the current client or `scope: "world"` for all connected clients. World refresh also requires permission to change world settings. The bridge's `reload-foundry-client` tool is also available for a full reload.
-
-Automated playback tests belong in a dedicated test world. They require **Enable MCP Diagnostics** and `confirmMutation: true`, and use short test tones to check fades, shuffle, loops, silence, soundscapes, and player sync.
-
-- Use `runAutomation` and `cleanupFixtures`, or the specific actions `controlPlayback`, `runPlaybackAutomation`, `runClientSyncAutomation`, and `cleanupPlaybackFixtures`.
-- Multiplayer tests normally need at least one connected player. Missing client responses or missing playback on an audio-ready client fail the check. Locked audio makes playback checks inconclusive.
-- Cleanup removes only marked SoS test documents whose names start with `SoS MCP Test -`. Supply `runId` to limit cleanup to one test run.
-
-</details>
-
 ---
 
 <div align="center">

@@ -7,3 +7,4 @@ import "./loop-operation-races.test.js";
 import "./silence-completion-race.test.js";
 import "./soundscape-runtime.test.js";
 import "./controller-authority.test.js";
+import "./client-evidence.test.js";

@@ -185,28 +185,6 @@
 <p><strong>Warning:</strong> If the GM controls playback, setting Music Volume to exactly <code>0</code> and switching away from the tab can stall the audio clock. Keep it at <code>0.01</code>, or mute the browser tab or app instead.</p>
 </blockquote>
 </details>
-<details>
-<summary><strong>Diagnostics (MCP Bridge)</strong></summary>
-<p>For the <strong>Foundry MCP Bridge</strong>, turn on <strong>Enable Debug Logging</strong> and <strong>Enable MCP Diagnostics</strong>, then use its module action tool. These tools are for GM troubleshooting and testing; leave MCP Diagnostics off during normal play. For example:</p>
-<pre><code class="language-javascript">call-module-debug-action({
-  moduleId: &quot;the-sound-of-silence&quot;,
-  action: &quot;getStatus&quot;,
-  args: {}
-})
-</code></pre>
-<p>The built-in inspection tools check settings, assets, playback, and connected clients. They are GM-only, off by default, and do not create world documents. The available actions under <code>api.diagnostics.actions</code> are <code>getStatus</code>, <code>validateSettings</code>, <code>validateAssets</code>, <code>collectClientDiagnostics</code>, <code>runSmokeTests</code>, <code>openWindow</code>, <code>parseText</code>, <code>validateText</code>, and <code>refreshClient</code>.</p>
-<ul>
-<li><strong>Status:</strong> <code>getStatus</code> shows which permissions and settings are enabled, along with audio readiness. Click inside each game client to unlock audio before testing playback.</li>
-<li><strong>Client reports:</strong> use <code>collectClientDiagnostics</code> to compare clients. Add <code>playlistIds</code> to focus on particular playlists.</li>
-<li><strong>Refresh:</strong> <code>refreshClient</code> needs <code>confirmRefresh: true</code>. Use <code>scope: &quot;client&quot;</code> for the current client or <code>scope: &quot;world&quot;</code> for all connected clients. World refresh also requires permission to change world settings. The bridge's <code>reload-foundry-client</code> tool is also available for a full reload.</li>
-</ul>
-<p>Automated playback tests belong in a dedicated test world. They require <strong>Enable MCP Diagnostics</strong> and <code>confirmMutation: true</code>, and use short test tones to check fades, shuffle, loops, silence, soundscapes, and player sync.</p>
-<ul>
-<li>Use <code>runAutomation</code> and <code>cleanupFixtures</code>, or the specific actions <code>controlPlayback</code>, <code>runPlaybackAutomation</code>, <code>runClientSyncAutomation</code>, and <code>cleanupPlaybackFixtures</code>.</li>
-<li>Multiplayer tests normally need at least one connected player. Missing client responses or missing playback on an audio-ready client fail the check. Locked audio makes playback checks inconclusive.</li>
-<li>Cleanup removes only marked SoS test documents whose names start with <code>SoS MCP Test -</code>. Supply <code>runId</code> to limit cleanup to one test run.</li>
-</ul>
-</details>
 <hr />
 <div style="text-align: center;">
 <h2 id="use-it-for">Use It For</h2>
