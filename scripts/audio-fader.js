@@ -1,6 +1,6 @@
 // audio-fader.js - Advanced audio fading utilities for Foundry VTT
 
-import { debug, MODULE_ID, ensureAudioContext, findPlaylistSoundForSound, safeStop } from "./utils.js";
+import { audioTimerOptions, debug, MODULE_ID, ensureAudioContext, findPlaylistSoundForSound, safeStop } from "./utils.js";
 import { Flags } from "./flag-service.js";
 import { State } from "./state-manager.js";
 
@@ -235,7 +235,7 @@ function clearFadeTokenAfter(sound, token, durationMs, bufferMs = 50) {
     if (!State.clearFadingSound(sound, token)) return;
     reapplyDeferredTargetVolume(sound, token);
   };
-  AudioTimeout.wait(Math.max(0, Number(durationMs) || 0) + bufferMs)
+  AudioTimeout.wait(Math.max(0, Number(durationMs) || 0) + bufferMs, audioTimerOptions(sound))
     .then(release)
     .catch(release);
 }
@@ -266,30 +266,38 @@ function reapplyDeferredTargetVolume(sound, token) {
   }
 }
 
-function createCancellableTimeout(delayMs) {
-  let timerId = null;
-  let cancelled = false;
-  const delay = Math.max(1, Math.min(Math.floor(Number(delayMs) || 0), 2147483000));
-  const complete = new Promise((resolve) => {
-    timerId = globalThis.setTimeout(() => {
-      timerId = null;
-      if (!cancelled) resolve();
-    }, delay);
+/**
+ * Run a callback when a Sound reaches a playback time, on that Sound's own
+ * audio clock (its document's channel) so a background tab cannot delay it.
+ * Returns a handle with `cancel()` and `cancelled`, like an AudioTimeout.
+ * @param {Sound} sound
+ * @param {number} playbackTime Seconds into the track.
+ * @param {() => void} callback
+ */
+function scheduleAtPlaybackTime(sound, playbackTime, callback) {
+  if (typeof sound?.schedule === "function") {
+    const handle = sound.schedule(() => callback(), playbackTime);
+    handle?.catch?.(() => {});
+    return {
+      get cancelled() {
+        return Boolean(handle?.timeout?.cancelled);
+      },
+      cancel() {
+        try {
+          sound.unschedule(handle);
+        } catch (_) {
+          handle?.timeout?.cancel?.();
+        }
+      },
+    };
+  }
+  const currentTime = Number(sound?.currentTime);
+  const delayMs = Math.max(0, (playbackTime - (Number.isFinite(currentTime) ? currentTime : 0)) * 1000);
+  const timeout = new AudioTimeout(delayMs, audioTimerOptions(sound));
+  timeout.complete.then(() => {
+    if (!timeout.cancelled) callback();
   });
-
-  return {
-    complete,
-    cancel() {
-      cancelled = true;
-      if (timerId !== null) {
-        globalThis.clearTimeout(timerId);
-        timerId = null;
-      }
-    },
-    get cancelled() {
-      return cancelled;
-    },
-  };
+  return timeout;
 }
 
 function isCurveEventCollision(err) {
@@ -544,7 +552,7 @@ export async function fadeOutAndStop(sound, ms = 500) {
   const token = advancedFade(sound, { targetVol: 0, duration: ms });
 
   try {
-    await AudioTimeout.wait(ms);
+    await AudioTimeout.wait(ms, audioTimerOptions(sound));
   } catch (err) {
     debug("[AF] Fade timer failed; stopping through the safe fallback.", err?.message ?? err);
   }
@@ -567,19 +575,21 @@ export async function fadeOutAndStop(sound, ms = 500) {
  * @param {Sound} soundIn The sound to fade in.
  * @param {number} duration The duration of the crossfade in milliseconds.
  * @param {object} [options] Optional configuration.
- * @param {number} [options.targetVolIn] Explicit target volume for the incoming sound.
- *   If not provided, falls back to soundIn._manager?.volume ?? 1.0.
+ * @param {number} [options.targetVolIn=1] Target volume for the incoming sound.
+ *   Callers resolve it from the document; `Sound#_manager` is core's
+ *   PointSoundSource slot and carries no volume.
+ * @param {number} [options.startVolIn=0] Gain the incoming sound already has. A
+ *   track handed back from a transition it was fading out of rises from this
+ *   level along the same sine shape instead of from silence.
  */
-export function equalPowerCrossfade(soundOut, soundIn, duration, { targetVolIn: explicitTargetVolIn } = {}) {
+export function equalPowerCrossfade(soundOut, soundIn, duration, { targetVolIn: explicitTargetVolIn, startVolIn = 0 } = {}) {
   ensureAudioContext();
   debug(`[AF] Starting equal-power crossfade over ${duration}ms.`);
   if (!soundOut || !soundIn) return;
 
-  // Resolve target volume: explicit parameter > _manager.volume > 1.0
-  const resolvedTargetVolIn = (typeof explicitTargetVolIn === 'number')
-    ? explicitTargetVolIn
-    : (soundIn._manager?.volume ?? 1.0);
+  const resolvedTargetVolIn = (typeof explicitTargetVolIn === 'number') ? explicitTargetVolIn : 1.0;
   const safeTargetVolIn = clampVolume(resolvedTargetVolIn, 1);
+  const safeStartVolIn = clampVolume(startVolIn, 0);
 
   if (!Number.isFinite(duration) || duration <= 0) {
     cancelActiveFade(soundOut);
@@ -624,13 +634,13 @@ export function equalPowerCrossfade(soundOut, soundIn, duration, { targetVolIn: 
   for (let i = 0; i < resolution; i++) {
     const progress = i / (resolution - 1);
     curveOut[i] = startVolOut * Math.cos(progress * 0.5 * Math.PI);
-    curveIn[i] = targetVolIn * Math.sin(progress * 0.5 * Math.PI);
+    curveIn[i] = safeStartVolIn + (targetVolIn - safeStartVolIn) * Math.sin(progress * 0.5 * Math.PI);
   }
 
-  debug(`[AF] Crossfade: ${resolution} samples over ${duration}ms, targetVolIn=${targetVolIn.toFixed(3)}`);
+  debug(`[AF] Crossfade: ${resolution} samples over ${duration}ms, targetVolIn=${targetVolIn.toFixed(3)}, startVolIn=${safeStartVolIn.toFixed(3)}`);
 
   cancelGainAutomation(gainOut, contextOut, startVolOut, "crossfade-out");
-  cancelGainAutomation(gainIn, contextIn, 0, "crossfade-in");
+  cancelGainAutomation(gainIn, contextIn, safeStartVolIn, "crossfade-in");
   State.clearFadingSound(soundOut);
   State.clearFadingSound(soundIn);
 
@@ -677,8 +687,8 @@ export function scheduleEndOfTrackFade(ps) {
     return;
   }
 
-  // Use the standard playlist fade duration for this effect.
-  const fadeMs = Number(playlist.fade) || 0;
+  // The playlist fade, capped to half the track like Foundry's own fade-out.
+  const fadeMs = Flags.getEffectiveFadeDuration(playlist.fade, ps);
   if (fadeMs <= 0) return;
 
   const duration = sound.duration;
@@ -690,27 +700,24 @@ export function scheduleEndOfTrackFade(ps) {
   // Don't schedule if we're already past the fade point.
   if (currentTime >= fadeStartTime) return;
 
-  const delayMs = (fadeStartTime - currentTime) * 1000;
   const existing = State.getEndOfTrackFade(ps);
   if (existing) {
     existing.cancel?.();
     State.clearEndOfTrackFade(ps);
   }
 
-  const timer = createCancellableTimeout(delayMs);
-
-  State.setEndOfTrackFade(ps, timer);
-  debug(
-    `[Fade] Scheduling end-of-track fade at ${fadeStartTime.toFixed(2)}s for "${ps.name
-    }"`
-  );
-
-  timer.complete.then(() => {
-    // Verify the timer wasn't cancelled and the sound is still playing
+  const timer = scheduleAtPlaybackTime(sound, fadeStartTime, () => {
+    // Only the timer that still owns this track may fade it.
     if (State.getEndOfTrackFade(ps) !== timer || !sound.playing || ps.playing !== true) return;
 
     State.clearEndOfTrackFade(ps);
     debug(`[Fade] Starting end-of-track configured fade-out for "${ps.name}"`);
     advancedFade(sound, { targetVol: 0, duration: fadeMs });
   });
+
+  State.setEndOfTrackFade(ps, timer);
+  debug(
+    `[Fade] Scheduling end-of-track fade at ${fadeStartTime.toFixed(2)}s for "${ps.name
+    }"`
+  );
 }

@@ -69,29 +69,10 @@ export function registerNormalizationHooks() {
         ).toFixed(0)}% in "${playlist.name}"`
       );
 
-      await playlist.updateEmbeddedDocuments("PlaylistSound", updates, {
-        _fromNormalization: true,
-        render: false,
-      });
-
-      const playlistElement = document.querySelector(
-        `.playlist[data-entry-id="${playlist.id}"], .playlist[data-document-id="${playlist.id}"]`
-      );
-      if (playlistElement) {
-        for (const update of updates) {
-          const soundElement = playlistElement.querySelector(
-            `.sound[data-sound-id="${update._id}"]`
-          );
-          if (soundElement) {
-            const rangePicker = soundElement.querySelector(
-              "range-picker.sound-volume"
-            );
-            if (rangePicker) {
-              setRangePickerValueSilently(rangePicker, targetVolume);
-            }
-          }
-        }
-      }
+      // updateEmbeddedDocuments bypasses the PlaylistSound.update wrapper, so no
+      // marker option is needed for it. Only Currently Playing renders a volume
+      // slider per sound; directory rows have none.
+      await playlist.updateEmbeddedDocuments("PlaylistSound", updates, { render: false });
 
       const currentlyPlaying = document.querySelector(".currently-playing");
       if (currentlyPlaying) {

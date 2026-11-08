@@ -17,26 +17,18 @@ const merge = (base, update) => {
 globalThis.foundry = {
   audio: {
     AudioTimeout: class AudioTimeout {
-      static rejectOnCancel = false;
-
       constructor(duration = 0) {
         this.duration = duration;
         this.cancelled = false;
-        this.rejectOnCancel = this.constructor.rejectOnCancel;
-        this.complete = new Promise((resolve, reject) => {
+        this.complete = new Promise((resolve) => {
           this._resolve = resolve;
-          this._reject = reject;
         });
       }
 
       cancel() {
         if (this.cancelled) return;
         this.cancelled = true;
-        if (this.rejectOnCancel) {
-          this._reject(new Error("AudioTimeoutCancellation"));
-          return;
-        }
-        // Foundry v14 catches AudioTimeoutCancellation internally, so the
+        // Foundry catches its AudioTimeoutCancellation internally, so the
         // public complete promise resolves after cancellation.
         this._resolve();
       }
@@ -4453,9 +4445,8 @@ test("resolved AudioTimeout cancellation cannot promote a stopped loop buffer", 
   assert.equal(sourceSound.stopCalls, 0);
 });
 
-test("a rejected superseded loop handoff cannot clear newer transition ownership", async () => {
+test("a cancelled superseded loop handoff cannot clear newer transition ownership", async () => {
   const AudioTimeout = foundry.audio.AudioTimeout;
-  AudioTimeout.rejectOnCancel = true;
 
   const makeGain = (value) => ({
     value,
@@ -4514,7 +4505,6 @@ test("a rejected superseded loop handoff cannot clear newer transition ownership
     assert.ok(oldTimer, "first handoff timer should be armed");
 
     const replacementTimer = new AudioTimeout(500);
-    replacementTimer.complete.catch(() => {});
     looper.handoffTimer = replacementTimer;
     // Model a newer handoff having claimed the transition after the old one
     // was cancelled. The first safeCancel path temporarily cleared the flag.
@@ -4528,7 +4518,6 @@ test("a rejected superseded loop handoff cannot clear newer transition ownership
     assert.equal(targetSound.stopCalls, 1);
   } finally {
     looper.handoffTimer?.cancel?.();
-    AudioTimeout.rejectOnCancel = false;
   }
 });
 

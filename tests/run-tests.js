@@ -9,3 +9,4 @@ import "./soundscape-runtime.test.js";
 import "./controller-authority.test.js";
 import "./client-evidence.test.js";
 import "./transition-interruption.test.js";
+import "./v14-only-release.test.js";

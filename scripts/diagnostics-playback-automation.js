@@ -16,7 +16,7 @@ import { activatePlaylistSidebar } from "./diagnostics-sidebar.js";
 import { assertExpectedSyncClients, collectUntilSyncState } from "./diagnostics-sync-validation.js";
 import { getCrossfadePreloadDiagnostics } from "./playback/preload-coordinator.js";
 import { getPlayableSoundsInOrder } from "./playlist/playable-order.js";
-import { MODULE_ID, PlaylistActionAuthority } from "./utils.js";
+import { MODULE_ID, PlaylistActionAuthority, USER_QUERIES, queryUserWithTimeout } from "./utils.js";
 
 export const FIXTURE_FLAG = "mcpAutomationFixture";
 export const FIXTURE_PREFIX = "SoS MCP Test -";
@@ -2741,37 +2741,26 @@ async function collectSyncDiagnostics(api, { timeoutMs, playlistIds = null }) {
 }
 
 async function setRemoteClientSettingForDiagnostics({ targetUserId, key, value, timeoutMs = 3000 } = {}) {
-  const requestId = foundry.utils.randomID();
-  const responses = [];
-  const target = targetUserId ? String(targetUserId) : null;
-
-  return new Promise((resolve) => {
-    const channel = `module.${MODULE_ID}`;
-    let timeout = null;
-    const cleanup = () => {
-      if (timeout) clearTimeout(timeout);
-      game.socket?.off?.(channel, handler);
-      resolve(responses);
-    };
-    const handler = (data = {}) => {
-      if (data.action !== "diagnostics-client-setting-response") return;
-      if (data.requestId !== requestId) return;
-      if (target && String(data.userId ?? "") !== target) return;
-      responses.push(data);
-      cleanup();
-    };
-
-    game.socket?.on?.(channel, handler);
-    game.socket?.emit?.(channel, {
-      action: "diagnostics-client-setting-request",
-      requestId,
-      senderUserId: game.user?.id ?? null,
-      targetUserId: target,
+  const user = targetUserId ? game.users?.get?.(String(targetUserId)) : null;
+  if (!user) return [];
+  try {
+    const response = await queryUserWithTimeout(
+      user,
+      USER_QUERIES.clientSetting,
+      { key, value },
+      { timeout: Math.max(500, timeoutMs) }
+    );
+    return response ? [response] : [];
+  } catch (err) {
+    return [{
+      userId: user.id,
+      userName: user.name,
       key,
-      value,
-    });
-    timeout = setTimeout(cleanup, Math.max(500, timeoutMs));
-  });
+      value: null,
+      success: false,
+      error: err?.message ?? String(err),
+    }];
+  }
 }
 
 function buildResponderScenarioResult(collection, expectedNonGmCount) {

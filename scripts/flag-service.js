@@ -520,20 +520,33 @@ class FlagService {
     }
 
     /**
-     * The crossfade duration clamped to half of the outgoing track, mirroring
-     * Foundry's PlaylistSound#fadeDuration cap. A crossfade can therefore never
-     * start at 0s and skip through a track shorter than the configured fade.
+     * Clamp a fade to half of a track's media duration, mirroring Foundry's
+     * PlaylistSound#fadeDuration cap, so the module's fade-in, end-of-track
+     * fade and crossfade can never overlap each other on a short track.
      * Falls back to the configured value while the track duration is unknown.
+     * @param {number} configuredMs The configured fade in milliseconds.
+     * @param {PlaylistSound|null} [ps] The sound whose media duration bounds the fade.
+     * @returns {number} The effective fade duration in milliseconds.
+     */
+    getEffectiveFadeDuration(configuredMs, ps = null) {
+        const configured = Number(configuredMs) || 0;
+        if (configured <= 0) return configured;
+        const duration = Number(ps?.sound?.duration);
+        if (!Number.isFinite(duration) || duration <= 0) return configured;
+        return Math.min(configured, Math.floor(duration * 500));
+    }
+
+    /**
+     * The crossfade duration clamped to half of the outgoing track. A crossfade
+     * can therefore never start at 0s and skip through a track shorter than the
+     * configured fade. The module crossfade may use its own duration
+     * (`customAutoFadeMs`), so Foundry's `fadeDuration` getter cannot replace this.
      * @param {Playlist} playlist The playlist document.
      * @param {PlaylistSound|null} [ps] The outgoing sound whose media duration bounds the fade.
      * @returns {number} The effective crossfade duration in milliseconds.
      */
     getEffectiveCrossfadeDuration(playlist, ps = null) {
-        const configured = Number(this.getCrossfadeDuration(playlist)) || 0;
-        if (configured <= 0) return configured;
-        const duration = Number(ps?.sound?.duration);
-        if (!Number.isFinite(duration) || duration <= 0) return configured;
-        return Math.min(configured, Math.floor(duration * 500));
+        return this.getEffectiveFadeDuration(this.getCrossfadeDuration(playlist), ps);
     }
 
     /**
@@ -820,15 +833,15 @@ class FlagService {
     }
 
     /**
-     * Get this client's local playlist volume slider value.
+     * Get this client's personal playlist factor: a 0-1 multiplier on the GM's
+     * mix, where 1 plays the playlist exactly as the GM mixed it. A missing
+     * entry is 1, so enabling the personal mix changes nothing until a slider moves.
      * @param {Playlist|string} playlist Playlist document or id.
      * @param {object} [options]
      * @param {number} [options.override] Transient slider value to apply before persistence.
-     * @param {PlaylistSound} [options.fallbackSound] Sound used to derive the shared fallback slider value.
-     * @param {boolean} [options.fallbackToShared=false] Return the shared slider value if no playlist value exists.
-     * @returns {number} 0-1 slider/input value.
+     * @returns {number} 0-1 factor.
      */
-    getPersonalPlaylistVolume(playlist, { override, fallbackSound, fallbackToShared = false } = {}) {
+    getPersonalPlaylistVolume(playlist, { override } = {}) {
         if (!this.isPersonalAudioMixEnabled()) return 1;
         if (Number.isFinite(Number(override))) return this._clampVolume(override, 1);
 
@@ -837,13 +850,7 @@ class FlagService {
 
         const values = this.getPersonalPlaylistVolumes();
         const value = Number(values[playlistId]);
-        if (Number.isFinite(value)) return this._clampVolume(value, 1);
-        if (fallbackToShared && fallbackSound) {
-            const shared = this.resolveSharedTargetVolume(fallbackSound);
-            const input = foundry.audio.AudioHelper.volumeToInput(shared);
-            return this._clampVolume(Number.isFinite(input) ? input : shared, 1);
-        }
-        return 1;
+        return Number.isFinite(value) ? this._clampVolume(value, 1) : 1;
     }
 
     /**
@@ -902,13 +909,14 @@ class FlagService {
     }
 
     /**
-     * Get the local track slider value. Missing entries fall back to the current
-     * shared GM mix value so enabling personal audio does not jump volume.
+     * Get the local track factor: a 0-1 multiplier on the GM's mix for one
+     * track. A missing entry falls back to the playlist factor, so a track
+     * slider shows the factor it inherits until it is moved.
      * @param {PlaylistSound} ps The playlist sound document.
      * @param {object} [options]
      * @param {number} [options.override] Transient slider value to apply before persistence.
-     * @param {boolean} [options.fallbackToShared=true] Return the shared slider value if no override exists.
-     * @returns {number|null} 0-1 slider/input value.
+     * @param {boolean} [options.fallbackToShared=true] Return the inherited playlist factor when no track value exists.
+     * @returns {number|null} 0-1 factor.
      */
     getPersonalTrackVolumeInput(ps, { override, fallbackToShared = true } = {}) {
         if (Number.isFinite(Number(override))) return this._clampVolume(override, 1);
@@ -918,14 +926,7 @@ class FlagService {
         const value = key ? Number(values[key]) : NaN;
         if (Number.isFinite(value)) return this._clampVolume(value, 1);
         if (!fallbackToShared) return null;
-
-        if (ps?.parent && this.hasPersonalPlaylistVolume(ps.parent)) {
-            return this.getPersonalPlaylistVolume(ps.parent);
-        }
-
-        const shared = this.resolveSharedTargetVolume(ps);
-        const input = foundry.audio.AudioHelper.volumeToInput(shared);
-        return this._clampVolume(Number.isFinite(input) ? input : shared, 1);
+        return this.getPersonalPlaylistVolume(ps?.parent);
     }
 
     /**
@@ -992,8 +993,8 @@ class FlagService {
     }
 
     /**
-     * Apply this client's local playlist volume to a volume. This helper is
-     * retained for callers that only have a Playlist, not a PlaylistSound.
+     * Scale a volume by this client's personal playlist factor. Retained for
+     * callers that only have a Playlist, not a PlaylistSound.
      * @param {Playlist} playlist
      * @param {number} volume
      * @param {object} [options]
@@ -1003,15 +1004,63 @@ class FlagService {
     applyPersonalPlaylistVolume(playlist, volume, { playlistVolume } = {}) {
         const clamped = this._clampVolume(volume, 0);
         if (!this.isPersonalAudioMixEnabled()) return clamped;
-        if (!Number.isFinite(Number(playlistVolume)) && !this.hasPersonalPlaylistVolume(playlist)) return clamped;
-
-        const input = this.getPersonalPlaylistVolume(playlist, { override: playlistVolume });
-        const localVolume = foundry.audio.AudioHelper.inputToVolume(input);
-        return this._clampVolume(Number.isFinite(localVolume) ? localVolume : clamped, 0);
+        return this._clampVolume(clamped * this.getPersonalPlaylistVolume(playlist, { override: playlistVolume }), 0);
     }
 
     /**
-     * Resolves the effective target volume for live playback on this client.
+     * The personal factor that applies to a track on this client: a transient
+     * playlist slider value wins (moving it also clears the playlist's track
+     * values), then a transient or saved track value, then the saved playlist
+     * value, else 1.
+     * @param {PlaylistSound} ps
+     * @param {object} [options]
+     * @param {number} [options.trackInput] Transient local track slider value.
+     * @param {number} [options.playlistVolume] Transient local playlist slider value.
+     * @returns {number} 0-1 factor.
+     */
+    resolvePersonalMixFactor(ps, { trackInput, playlistVolume } = {}) {
+        if (!this.isPersonalAudioMixEnabled()) return 1;
+        if (Number.isFinite(Number(playlistVolume))) return this._clampVolume(playlistVolume, 1);
+        if (Number.isFinite(Number(trackInput))) return this._clampVolume(trackInput, 1);
+        if (this.hasPersonalTrackVolume(ps)) {
+            const saved = this.getPersonalTrackVolumeInput(ps, { fallbackToShared: false });
+            if (Number.isFinite(Number(saved))) return this._clampVolume(saved, 1);
+        }
+        return this.getPersonalPlaylistVolume(ps?.parent);
+    }
+
+    /**
+     * One-time reset when the personal mix changed from absolute levels to
+     * factors on the GM's mix (14.16.0). Saved absolute slider values would
+     * otherwise be read as factors and change loudness silently.
+     * @returns {Promise<boolean>} Whether a reset was applied.
+     */
+    async migratePersonalMixModel() {
+        const CURRENT_MODEL = 1;
+        let stored = 0;
+        try {
+            stored = Number(game.settings?.get(MODULE_ID, "personalMixModel")) || 0;
+        } catch (_) {
+            return false;
+        }
+        if (stored >= CURRENT_MODEL) return false;
+        try {
+            await game.settings.set(MODULE_ID, "personalPlaylistVolumes", {});
+            await game.settings.set(MODULE_ID, "personalTrackVolumes", {});
+            await game.settings.set(MODULE_ID, "personalMixModel", CURRENT_MODEL);
+        } catch (err) {
+            debug("[Volume] Could not reset personal mix values for the factor model:", err?.message ?? err);
+            return false;
+        }
+        debug("[Volume] Personal mix values reset: sliders now scale the GM's mix.");
+        return true;
+    }
+
+    /**
+     * Resolves the effective target volume for live playback on this client:
+     * the GM's shared target (normalization, track volume, procedural variance)
+     * scaled by this client's personal factor. The GM's fades and mix changes
+     * therefore still reach a player who uses the personal mix.
      * @param {PlaylistSound} ps The playlist sound document.
      * @param {object} [options]
      * @param {number} [options.sharedVolume] Shared GM target to use instead of recomputing.
@@ -1025,31 +1074,7 @@ class FlagService {
             : this._clampVolume(this.resolveSharedTargetVolume(ps), 0);
 
         if (!this.isPersonalAudioMixEnabled()) return shared;
-
-        const hasPlaylistInput = Number.isFinite(Number(playlistVolume));
-        const hasPlaylistOverride = hasPlaylistInput || this.hasPersonalPlaylistVolume(ps?.parent);
-        const hasTrackInput = Number.isFinite(Number(trackInput));
-        const hasTrackOverride = hasTrackInput || this.hasPersonalTrackVolume(ps);
-        if (!hasPlaylistOverride && !hasTrackOverride) return shared;
-
-        const input = hasPlaylistInput
-            ? this.getPersonalPlaylistVolume(ps?.parent, { override: playlistVolume })
-            : (hasTrackOverride
-                ? this.getPersonalTrackVolumeInput(ps, {
-                    override: trackInput,
-                    fallbackToShared: true,
-                })
-                : this.getPersonalPlaylistVolume(ps?.parent));
-        let localTrackVolume = foundry.audio.AudioHelper.inputToVolume(input);
-        if (!Number.isFinite(localTrackVolume)) localTrackVolume = shared;
-
-        if (Number.isFinite(Number(sharedVolume))) {
-            const sharedBase = this._clampVolume(this.resolveSharedTargetVolume(ps), 0);
-            const varianceFactor = sharedBase > 0 ? shared / sharedBase : 1;
-            if (Number.isFinite(varianceFactor)) localTrackVolume *= varianceFactor;
-        }
-
-        return this._clampVolume(localTrackVolume, 0);
+        return this._clampVolume(shared * this.resolvePersonalMixFactor(ps, { trackInput, playlistVolume }), 0);
     }
 }
 

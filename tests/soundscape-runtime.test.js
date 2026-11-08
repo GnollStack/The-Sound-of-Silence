@@ -405,7 +405,7 @@ test("sync setting registration reconciles live soundscape engines", () => {
   }
 });
 
-test("diagnostics setting requests use authenticated socket sender identity", async () => {
+test("diagnostics setting queries trust only the authenticated GM asker Foundry supplies", async () => {
   const saved = captureGameState();
   let setCount = 0;
   try {
@@ -419,21 +419,16 @@ test("diagnostics setting requests use authenticated socket sender identity", as
         setCount += 1;
       },
     };
-    game.socket = { emit: () => {} };
+    game.socket = { emit: () => { throw new Error("the module socket must not carry diagnostics"); } };
 
-    const request = {
-      action: "diagnostics-client-setting-request",
-      requestId: "valid_request_id",
-      senderUserId: gm.id,
-      targetUserId: player.id,
-      key: "soundscapeProceduralSyncEnabled",
-      value: false,
-    };
+    const request = { key: "soundscapeProceduralSyncEnabled", value: false };
 
-    await API._handleDiagnosticsClientSettingRequest(request, player.id);
+    // The query context's `user` is set by Foundry from the authenticated sender.
+    await assert.rejects(API._answerClientSettingQuery(request, { user: player }), /active GM/);
     assert.equal(setCount, 0);
 
-    await API._handleDiagnosticsClientSettingRequest(request, gm.id);
+    const answer = await API._answerClientSettingQuery(request, { user: gm });
+    assert.equal(answer.success, true);
     assert.equal(setCount, 1);
   } finally {
     restoreGameState(saved);

@@ -151,6 +151,73 @@ function waitWithBrowserTimer(ms) {
     return new Promise((resolve) => globalThis.setTimeout?.(resolve, delay));
 }
 
+/**
+ * AudioTimeout options that place a module timer on the audio clock of the
+ * channel its document plays in (Foundry's PlaylistSound#context), instead of
+ * the default music context. Accepts a Sound or a PlaylistSound; returns
+ * undefined when no context is available so AudioTimeout keeps its default.
+ * @param {Sound|PlaylistSound|null|undefined} source
+ * @returns {{context: AudioContext}|undefined}
+ */
+export function audioTimerOptions(source) {
+    const context = source?.sound?.context ?? source?.context;
+    return context ? { context } : undefined;
+}
+
+/**
+ * Names of the User queries this module registers in CONFIG.queries. Foundry's
+ * server authenticates the asking user, which the module socket never did.
+ */
+export const USER_QUERIES = Object.freeze({
+    clientDiagnostics: `${MODULE_ID}.clientDiagnostics`,
+    clientSetting: `${MODULE_ID}.clientSetting`,
+});
+
+/**
+ * Ask one user's client a registered query, with a local deadline so a
+ * collector always returns even if the server never answers.
+ * @param {User} user
+ * @param {string} queryName
+ * @param {object} [data]
+ * @param {{timeout?: number}} [options]
+ * @returns {Promise<*>}
+ */
+export function queryUserWithTimeout(user, queryName, data = {}, { timeout = 3000 } = {}) {
+    if (typeof user?.query !== "function") return Promise.reject(new Error("user cannot be queried"));
+    const deadline = Math.max(250, Number(timeout) || 3000);
+    let timer = null;
+    const expiry = new Promise((_resolve, reject) => {
+        timer = globalThis.setTimeout?.(() => reject(new Error(`no answer within ${deadline} ms`)), deadline + 500);
+    });
+    return Promise.race([user.query(queryName, data, { timeout: deadline }), expiry])
+        .finally(() => {
+            if (timer) globalThis.clearTimeout?.(timer);
+        });
+}
+
+/**
+ * Debounce per key so two quick calls for different keys both run;
+ * foundry.utils.debounce keeps only the last call's arguments.
+ * @param {(args: object) => any} fn
+ * @param {number} delayMs
+ * @param {(args: object) => string} keyOf
+ */
+export function debounceByKey(fn, delayMs, keyOf) {
+    const pending = new Map();
+    return (args = {}) => {
+        const key = keyOf(args);
+        let debounced = pending.get(key);
+        if (!debounced) {
+            debounced = foundry.utils.debounce((latest) => {
+                pending.delete(key);
+                return fn(latest);
+            }, delayMs);
+            pending.set(key, debounced);
+        }
+        debounced(args);
+    };
+}
+
 export function waitForAudioOrBrowserDelay(ms) {
     if (isAudioUnlocked()) {
         try {

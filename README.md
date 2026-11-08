@@ -7,7 +7,7 @@
 [![Latest Release](https://img.shields.io/github/v/release/GnollStack/The-Sound-of-Silence?label=Latest%20Release&style=flat-square)](https://github.com/GnollStack/The-Sound-of-Silence/releases/latest)
 [![Downloads](https://img.shields.io/github/downloads/GnollStack/The-Sound-of-Silence/the-sound-of-silence.zip?label=Downloads&style=flat-square&color=green)](https://github.com/GnollStack/The-Sound-of-Silence/releases)
 [![Latest Downloads](https://img.shields.io/github/downloads/GnollStack/The-Sound-of-Silence/latest/the-sound-of-silence.zip?label=Latest%20Downloads&style=flat-square)](https://github.com/GnollStack/The-Sound-of-Silence/releases/latest)
-[![Foundry VTT v13–v14](https://img.shields.io/badge/Foundry-v13--v14-orange?style=flat-square)](https://foundryvtt.com)
+[![Foundry VTT v14](https://img.shields.io/badge/Foundry-v14-orange?style=flat-square)](https://foundryvtt.com)
 [![Patreon: Bazaar Patron](https://img.shields.io/badge/Patreon-Bazaar%20Patron-F96854?style=flat-square&logo=patreon&logoColor=white)](https://www.patreon.com/cw/GnollStack)
 [![Discord: Bakshi's Bazaar](https://img.shields.io/badge/Discord-Bakshi%27s%20Bazaar-5865F2?style=flat-square&logo=discord&logoColor=white)](https://discord.gg/tcdYk54fxC)
 
@@ -233,14 +233,6 @@ These settings do not change anyone's manual playback permissions. Controller se
 
 If you're tracking down a playback problem, **Trace Currently Playing Timers** adds timing details to the logs across clients.
 
-GMs can compare what's happening on their own client and connected players' clients:
-
-```javascript
-game.modules.get('the-sound-of-silence').api.requestClientDiagnostics()
-```
-
-After about three seconds, a dialog shows volume, fades, audio readiness, and playback timing for each client. Red highlights possible problems; amber marks active fades.
-
 To update old loop setups, open **Configure Settings → The Sound of Silence → Migrate Legacy Internal Loops**. This permanently converts older loop settings to the current segment format after you confirm. Back up your world first and stop all playlists. Existing segment-based loops are left alone.
 
 > [!WARNING]
@@ -312,7 +304,7 @@ https://github.com/GnollStack/The-Sound-of-Silence/releases/latest/download/modu
 
 | Requirement | Version |
 | --- | --- |
-| Foundry VTT | v13–v14; verified on 14.367 |
+| Foundry VTT | v14 only; verified on 14.367 |
 | [libWrapper](https://github.com/ruipin/fvtt-lib-wrapper) | Required; 1.13.3.0 or newer, tested with 1.13.5.1 |
 
 ---
@@ -325,7 +317,7 @@ https://github.com/GnollStack/The-Sound-of-Silence/releases/latest/download/modu
 
 </div>
 
-**Foundry VTT:** v13–v14; verified on **14.367**. This is the last release that supports v13; the next release will require Foundry v14. Earlier releases were tested on v13.351, and v13 hasn't been retested for this update.
+**Foundry VTT:** v14 only; verified on **14.367**. 14.15.7 was the last release for v13.
 
 **Game systems:** works in any system; tested in **dnd5e 5.3.3**.
 
@@ -422,7 +414,6 @@ api.enableFeature(playlist, feature)  / disableFeature(playlist, feature)
 <summary><strong>Troubleshooting and helpers</strong></summary>
 
 ```javascript
-api.requestClientDiagnostics()   // GM-only multi-client snapshot
 api.inspectPlaylist(playlist) / inspectAll()
 api.getMetrics() / resetMetrics()
 
@@ -466,12 +457,6 @@ if (!looping.length) return ui.notifications.info("No active loops.");
 
 for (const sound of looping) api.breakLoop(sound);
 ui.notifications.info(`Broke ${looping.length} loop(s).`);
-```
-
-**Compare playback across clients.** GMs can run this to open a comparison of their client and connected players after about three seconds.
-
-```javascript
-game.modules.get("the-sound-of-silence").api.requestClientDiagnostics();
 ```
 
 **Turn Soundscape mode on or off.** Change `"Rainy Forest"` to your playlist's name.
@@ -623,7 +608,7 @@ For licensing inquiries or permission slips:
 
 <div align="center">
 
-**Author:** [GnollStack](https://github.com/GnollStack) · **Compatibility:** Foundry VTT v13 - v14
+**Author:** [GnollStack](https://github.com/GnollStack) · **Compatibility:** Foundry VTT v14 only
 
 [⬆ Back to Top](#the-sound-of-silence)
 

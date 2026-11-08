@@ -112,7 +112,9 @@ function _consumeFadeInDuration(ps) {
     ? fadeOverride
     : Flags.getPlaylistFlag(ps?.parent, "fadeIn");
   const duration = Number(configured);
-  return Number.isFinite(duration) ? Math.max(0, duration) : 0;
+  // Same half-track cap Foundry applies to its own fades, so a fade-in cannot
+  // still be rising when the end-of-track fade or crossfade starts.
+  return Flags.getEffectiveFadeDuration(Number.isFinite(duration) ? Math.max(0, duration) : 0, ps);
 }
 
 function _getStartupFadeDuration(ps, configuredFadeInMs, {
@@ -137,18 +139,14 @@ function _isSequentialOrShuffle(playlist) {
   ].includes(playlist?.mode);
 }
 
-function _playlistHasActiveSosFade(playlist) {
-  return Array.from(playlist?.sounds ?? []).some((sound) =>
-    sound?.sound && State.isSoundFading(sound.sound)
-  );
-}
-
 function _shouldDeferSyncForCrossfade(ps) {
   const playlist = ps?.parent;
   if (!playlist || !_isSequentialOrShuffle(playlist)) return false;
   if (!Flags.getPlaybackMode(playlist).crossfade) return false;
   if (State.isPlaylistCrossfading(playlist)) return true;
-  if (_playlistHasActiveSosFade(playlist)) return true;
+  // A fade on another track does not block this document's sync: sync() only
+  // touches this document's own media, and the wrapper below already defers
+  // while that media is fading.
   if (!ps.playing || ps.sound?.playing) return false;
 
   return playlist.sounds.some((sound) =>
@@ -536,52 +534,51 @@ export function registerSoundPlaybackWrappers() {
           : hasOverride;
 
         if (normEnabled && !nextHasOverride) {
-          const isFromNormalization = options._fromNormalization;
-
-          if (!isFromNormalization) {
-            if (game.user?.isGM && playlist?.isOwner) {
-              const normalizedVolume = Flags.getPlaylistFlag(
-                playlist,
-                "normalizedVolume"
-              );
-              debug(
-                `[Volume] Saving temporary normalized track volume for "${this.name}" until playlist volume changes`
-              );
-
-              return wrapped.call(
-                this,
-                {
-                  ...data,
-                  [temporaryOverridePath]: normalizedVolume,
-                },
-                options
-              );
-            }
-
+          // Normalization itself writes through updateEmbeddedDocuments, which
+          // never reaches this instance wrapper, so every volume change seen
+          // here is a manual one.
+          if (game.user?.isGM && playlist?.isOwner) {
+            const normalizedVolume = Flags.getPlaylistFlag(
+              playlist,
+              "normalizedVolume"
+            );
             debug(
-              `[Volume] Blocking manual volume change on "${this.name}" - normalization active`
+              `[Volume] Saving temporary normalized track volume for "${this.name}" until playlist volume changes`
             );
 
-            if (this.sound && !State.isSoundFading(this.sound)) {
-              this.sound.volume = data.volume;
-            } else if (this.sound) {
-              debug(
-                `[Volume] Skipping temporary volume preview for "${this.name}" - fade active`
-              );
-            }
-
-            const newData = { ...data };
-            delete newData.volume;
-
-            if (Object.keys(newData).length === 0) {
-              debug(
-                "[Volume] Only volume changed (blocked), no database update needed"
-              );
-              return this;
-            }
-
-            return wrapped.call(this, newData, options);
+            return wrapped.call(
+              this,
+              {
+                ...data,
+                [temporaryOverridePath]: normalizedVolume,
+              },
+              options
+            );
           }
+
+          debug(
+            `[Volume] Blocking manual volume change on "${this.name}" - normalization active`
+          );
+
+          if (this.sound && !State.isSoundFading(this.sound)) {
+            this.sound.volume = data.volume;
+          } else if (this.sound) {
+            debug(
+              `[Volume] Skipping temporary volume preview for "${this.name}" - fade active`
+            );
+          }
+
+          const newData = { ...data };
+          delete newData.volume;
+
+          if (Object.keys(newData).length === 0) {
+            debug(
+              "[Volume] Only volume changed (blocked), no database update needed"
+            );
+            return this;
+          }
+
+          return wrapped.call(this, newData, options);
         }
       }
 

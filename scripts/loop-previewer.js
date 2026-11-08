@@ -124,11 +124,21 @@ export class LoopPreviewer {
         } catch (_) { }
     }
 
+    /**
+     * Preview media plays in the channel the track's document belongs to
+     * (PlaylistSound#context), so the Environment or Interface volume applies.
+     */
+    _createPreviewSound() {
+        const document = this.data?.document;
+        const context = document?.sound?.context ?? document?.context;
+        return new foundry.audio.Sound(document?.path, context ? { context } : {});
+    }
+
     async _loadAudioMetadata(generation = this._generation) {
         const audioPath = this.data.document.path;
         let sound = null;
         try {
-            sound = new foundry.audio.Sound(audioPath);
+            sound = this._createPreviewSound();
             await sound.load();
             if (!this._isCurrent(generation)) {
                 this._stopSound(sound);
@@ -626,7 +636,7 @@ export class LoopPreviewer {
         const generation = this._generation;
         if (!this._isCurrent(generation)) return;
 
-        const sound = new foundry.audio.Sound(this.data.document.path);
+        const sound = this._createPreviewSound();
         try {
             await sound.load();
             if (!this._isCurrent(generation)) {
@@ -696,7 +706,7 @@ export class LoopPreviewer {
                 if (!sourceSound) return;
 
                 if (!targetSound) {
-                    const loadedTarget = new foundry.audio.Sound(this.data.document.path);
+                    const loadedTarget = this._createPreviewSound();
                     await loadedTarget.load();
                     if (!this._isCurrent(generation) || !this.isPreviewingLoop) {
                         this._stopSound(loadedTarget);
@@ -742,7 +752,7 @@ export class LoopPreviewer {
             }
         };
 
-        const initialSound = new foundry.audio.Sound(this.data.document.path);
+        const initialSound = this._createPreviewSound();
         try {
             await initialSound.load();
             if (!this._isCurrent(generation) || !this.isPreviewingLoop) {
@@ -816,7 +826,7 @@ export class LoopPreviewer {
 
         debug(`[Previewer] Preview loop point "${label}": playing from ${playFromSec.toFixed(2)}s, crossfade at ${crossfadeStartSec.toFixed(2)}s`);
 
-        const initialSound = new foundry.audio.Sound(this.data.document.path);
+        const initialSound = this._createPreviewSound();
         try {
             await initialSound.load();
             if (!this._isCurrent(generation) || !this.isPreviewingLoop) {
@@ -852,7 +862,7 @@ export class LoopPreviewer {
                     if (!sourceSound) return;
 
                     if (!targetSound) {
-                        const loadedTarget = new foundry.audio.Sound(this.data.document.path);
+                        const loadedTarget = this._createPreviewSound();
                         await loadedTarget.load();
                         if (!this._isCurrent(generation) || !this.isPreviewingLoop) {
                             this._stopSound(loadedTarget);

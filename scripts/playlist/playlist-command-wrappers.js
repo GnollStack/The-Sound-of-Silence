@@ -147,6 +147,9 @@ async function executeManualCrossfade(playlist, currentSound, incomingSound, rea
     onlySound: currentSound,
     allowFadeOut: true,
     crossfadeSettlement: "handoff",
+    // Previous selects the track that was fading out: keep it at its current
+    // gain so the new crossfade fades it back in from there, not from silence.
+    crossfadeRetainSoundIds: incomingSound?.id ? [incomingSound.id] : [],
   });
   await releaseSupersededTransitionDocuments(playlist, previousSession, [currentSound, incomingSound]);
 
@@ -164,6 +167,16 @@ export function registerPlaylistCommandWrappers() {
       const playlist = this.parent;
 
       if (Flags.getSoundFlag(this, "isSilenceGap")) {
+        return;
+      }
+
+      // The last track of a playlist without a next track is being faded out
+      // by the terminal owner. Its natural end finishes that stop instead of
+      // reaching Foundry's playNext, which would wrap around to the first track.
+      const terminal = State.getTerminalFade(playlist);
+      if (terminal?.soundId === this.id) {
+        debug(`_onEnd: "${this.name}" reached its natural end during the terminal fade; stopping the playlist now.`);
+        terminal.finish("natural end");
         return;
       }
 

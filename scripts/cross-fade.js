@@ -1,6 +1,7 @@
 // cross-fade.js - Automatic cross-fading for Foundry VTT playlists
 
 import {
+  audioTimerOptions,
   MODULE_ID,
   debug,
   waitForMedia,
@@ -112,7 +113,14 @@ async function waitForCrossfadeAudioGraph(sound, ps, timeoutMs = 1000) {
   return false;
 }
 
-export async function prepareIncomingCrossfadeMedia(ps, { isCurrent = () => true } = {}) {
+/**
+ * @param {PlaylistSound} ps
+ * @param {object} [options]
+ * @param {() => boolean} [options.isCurrent] Whether the owning transition is still current.
+ * @param {boolean} [options.keepGain=false] Leave already-playing media at its current gain
+ *   (a track handed back from the transition it was fading out of) instead of muting it.
+ */
+export async function prepareIncomingCrossfadeMedia(ps, { isCurrent = () => true, keepGain = false } = {}) {
   const sound = await loadCrossfadeMedia(ps);
   if (!sound || !isCurrent()) return null;
 
@@ -131,7 +139,7 @@ export async function prepareIncomingCrossfadeMedia(ps, { isCurrent = () => true
   } else if (!State.isSoundFading(sound)) {
     try {
       cancelActiveFade(sound);
-      sound.volume = 0;
+      if (!keepGain) sound.volume = 0;
     } catch (err) {
       debug(`[CF] Failed to prepare already-playing crossfade media for "${ps.name}":`, err?.message ?? err);
       return null;
@@ -188,7 +196,11 @@ export async function performCrossfade(playlist, soundToFade, { recovery = false
     // A user interrupted the running transition. Hand it off so its incoming
     // track stays live as this transition's outgoing participant instead of
     // cancelling the playlist back to the track that was already fading out.
-    await settleCrossfadeSession(playlist, { mode: "handoff", reason: `${reason} replaces the active transition` });
+    await settleCrossfadeSession(playlist, {
+      mode: "handoff",
+      reason: `${reason} replaces the active transition`,
+      retain: [incomingSound?.id],
+    });
   }
   if (automatic && playlist.sounds.some(sound => sound !== soundToFade && sound.playing)) return false;
 
@@ -227,36 +239,65 @@ export async function performCrossfade(playlist, soundToFade, { recovery = false
   }
 
   if (!soundToPlay) {
+    // The terminal fade has one owner. The automatic timer, clock recovery
+    // and the track's natural end can all arrive for the same last track; the
+    // first registers, the others defer to it instead of fading or stopping again.
+    const existingTerminal = State.getTerminalFade(playlist);
+    if (existingTerminal?.soundId === soundToFade.id) {
+      debug(`[CF] Terminal fade for "${soundToFade.name}" is already owned (${existingTerminal.reason}); ${reason} defers to it.`);
+      return true;
+    }
     debug(`[CF] No next track found. Fading out "${soundToFade.name}" and stopping.`);
-    const stopPlaylist = () => {
-      if (automatic && !PlaylistActionAuthority.isCurrent(authorityToken)) return;
-      // The terminal fade is delayed. A manual play during that window owns
-      // the playlist now and must not be stopped by this stale completion.
-      const hasReplacement = playlist.sounds.some((sound) =>
-        sound.id !== soundToFade.id &&
-        sound.playing &&
-        !Flags.getSoundFlag(sound, "isSilenceGap")
-      );
-      if (!playlist.playing || hasReplacement) return;
-      Promise.resolve(playlist.stopAll()).catch((err) =>
-        debug(`[CF] Failed to stop "${playlist.name}" at playlist end:`, err?.message ?? err)
-      );
+    let finished = false;
+    const terminal = {
+      soundId: soundToFade.id,
+      reason: recovery ? `recovery:${reason}` : reason,
+      finish(source = "timer") {
+        if (finished) return false;
+        finished = true;
+        State.clearTerminalFade(playlist, terminal);
+        if (automatic && !PlaylistActionAuthority.isCurrent(authorityToken)) return false;
+        // A manual play during the fade owns the playlist now and must not be
+        // stopped by this stale completion.
+        const hasReplacement = playlist.sounds.some((sound) =>
+          sound.id !== soundToFade.id &&
+          sound.playing &&
+          !Flags.getSoundFlag(sound, "isSilenceGap")
+        );
+        if (!playlist.playing || hasReplacement) return false;
+        debug(`[CF] Stopping "${playlist.name}" at playlist end (${source}).`);
+        Promise.resolve(playlist.stopAll()).catch((err) =>
+          debug(`[CF] Failed to stop "${playlist.name}" at playlist end:`, err?.message ?? err)
+        );
+        return true;
+      },
+      cancel() {
+        finished = true;
+        State.clearTerminalFade(playlist, terminal);
+      },
     };
+    State.setTerminalFade(playlist, terminal);
     if (soundOut?.playing) {
       if (!State.isSoundFading(soundOut)) {
         fadeOutAndStop(soundOut, fadeMs).catch((err) =>
           debug(`[CF] Final fade failed for "${soundToFade.name}":`, err?.message ?? err)
         );
       }
-      AudioTimeout.wait(fadeMs).then(stopPlaylist).catch(stopPlaylist);
+      const finishAfterFade = () => terminal.finish("fade timer");
+      AudioTimeout.wait(fadeMs, audioTimerOptions(soundOut)).then(finishAfterFade).catch(finishAfterFade);
     } else if (playlist.playing) {
-      stopPlaylist();
+      terminal.finish("no live media");
+    } else {
+      terminal.cancel();
     }
     return true;
   }
 
   // 2. Start playing the next track directly, bypassing Foundry's "stop current first" behavior.
   //    Register the transition before any await so pause/stop can settle it safely.
+  //    Media that is already live (the track a handed-off transition was fading
+  //    out, selected again by Previous) keeps its gain and fades in from there.
+  const retainIncomingGain = soundToPlay.sound?.playing === true;
   const sharedTargetVolIn = Flags.resolveSharedTargetVolume(soundToPlay);
   const targetVolIn = Flags.resolveTargetVolume(soundToPlay, { sharedVolume: sharedTargetVolIn });
   const transitionSession = createCrossfadeSession({
@@ -311,6 +352,7 @@ export async function performCrossfade(playlist, soundToFade, { recovery = false
     // Directly load and play the audio, bypassing native sync/autoplay.
     const soundIn = await prepareIncomingCrossfadeMedia(soundToPlay, {
       isCurrent: () => isCurrentCrossfadeSession(transitionSession),
+      keepGain: retainIncomingGain,
     });
     if (!isCurrentCrossfadeSession(transitionSession)) {
       if (soundIn?.playing) safeStop(soundIn, "stale incoming crossfade media");
@@ -351,9 +393,12 @@ export async function performCrossfade(playlist, soundToFade, { recovery = false
     //    explicitly so it doesn't rely on _manager.volume (which may be stale).
     debug(`[CF] Crossfading from "${soundToFade.name}" to "${soundToPlay.name}" (targetVol=${targetVolIn.toFixed(3)}).`);
     const canLocalCrossfade = !!(soundOut?.playing && soundOut?.gain && soundIn?.gain);
+    const startVolIn = retainIncomingGain && Number.isFinite(Number(soundIn?.gain?.value))
+      ? Number(soundIn.gain.value)
+      : 0;
     let fadeTokens = null;
     if (canLocalCrossfade) {
-      fadeTokens = equalPowerCrossfade(soundOut, soundIn, fadeMs, { targetVolIn });
+      fadeTokens = equalPowerCrossfade(soundOut, soundIn, fadeMs, { targetVolIn, startVolIn });
     } else if (soundIn) {
       debug(`[CF] Local equal-power crossfade unavailable; snapping "${soundToPlay.name}" to target volume.`);
       soundIn.volume = targetVolIn;

@@ -14,6 +14,7 @@
 import { Flags } from "./flag-service.js";
 import { State } from "./state-manager.js";
 import {
+  audioTimerOptions,
     MODULE_ID,
     debug,
     warn,
@@ -261,7 +262,7 @@ export class SoundscapeEngine {
         const delayMs = Math.max(minimumDelayMs, this._pickDelayMs(ps, { initial }));
         const eta = Date.now() + delayMs;
 
-        const timer = new AudioTimeout(delayMs);
+        const timer = new AudioTimeout(delayMs, audioTimerOptions(ps));
         const generation = this.publisherGeneration;
         const authorityToken = this._shouldEmitSyncedFires() ? PlaylistActionAuthority.capture() : null;
         const stillOwnsTimer = () => generation === this.publisherGeneration &&
@@ -736,7 +737,7 @@ export class SoundscapeEngine {
         const waitMs = Math.max(0, normalized.startAtMs - Date.now());
         if (waitMs > 0) {
             try {
-                await AudioTimeout.wait(waitMs);
+                await AudioTimeout.wait(waitMs, audioTimerOptions(ps));
             } catch (err) {
                 releaseReservation();
                 if (isSyncedEvent) this._recordMissedSyncedEvent(normalized, "timer-failed", {
@@ -896,7 +897,7 @@ export class SoundscapeEngine {
             const waitForEndMs = Number.isFinite(sound.duration)
                 ? sound.duration * 1000 + 100
                 : 3000;
-            AudioTimeout.wait(waitForEndMs).then(cleanup).catch(cleanup);
+            AudioTimeout.wait(waitForEndMs, audioTimerOptions(sound)).then(cleanup).catch(cleanup);
         }
 
         debug(`[Soundscape] Fired "${ps.name}"`, {

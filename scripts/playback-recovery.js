@@ -248,6 +248,15 @@ async function _recoverOverduePlaylist(playlist, reason = "watchdog") {
     }
 
     if (_wasClockRecovered(playlist, clock)) return false;
+
+    // The last track is already fading out under its single terminal owner;
+    // the clock is accounted for and must not trigger a second terminal fade.
+    const terminal = State.getTerminalFade(playlist);
+    if (terminal?.soundId === activeSound.id) {
+      _markClockRecovered(playlist, clock);
+      return false;
+    }
+
     if (!PlaybackClock.isOverdue(playlist, clock)) return false;
 
     const mode = Flags.getPlaybackMode(playlist);

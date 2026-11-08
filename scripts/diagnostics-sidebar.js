@@ -32,15 +32,11 @@ export async function activatePlaylistSidebar({
       result.sidebarRenderedByAutomation = true;
     }
 
-    if (typeof sidebar.changeTab === "function") {
-      await sidebar.changeTab("playlists", "primary", { force: true });
-      result.activationMethod = "changeTab";
-    } else if (typeof sidebar.activateTab === "function") {
-      await sidebar.activateTab("playlists");
-      result.activationMethod = "activateTab";
-    } else {
-      throw new Error("Foundry sidebar exposes neither changeTab nor activateTab.");
+    if (typeof sidebar.changeTab !== "function") {
+      throw new Error("Foundry sidebar does not expose changeTab.");
     }
+    await sidebar.changeTab("playlists", "primary", { force: true });
+    result.activationMethod = "changeTab";
 
     if (typeof playlistDirectory?.render === "function") {
       await playlistDirectory.render({ force: true });
@@ -64,11 +60,7 @@ export async function activatePlaylistSidebar({
 }
 
 function getActiveSidebarTab(sidebar) {
-  const value = sidebar?.tabGroups?.primary
-    ?? sidebar?.activeTab
-    ?? sidebar?._tabs?.find?.((tab) => tab?.group === "primary")?.active
-    ?? sidebar?._tabs?.[0]?.active
-    ?? null;
+  const value = sidebar?.tabGroups?.primary ?? null;
   return typeof value === "string" && value ? value : null;
 }
 

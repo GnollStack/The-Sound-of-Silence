@@ -1024,10 +1024,9 @@ function _registerSoundConfigHooks() {
   refreshProcPreview();
 
   // --- 4. FINAL Volume Normalization UI Logic ---
-  const $volumeGroup = html.find('label:contains("Sound Volume")').parent();
-
-  // This is the new, correct selector based on your screenshot.
-  const $rangePicker = $volumeGroup.find('range-picker[name="volume"]');
+  // Anchor on the control, not the localized label text.
+  const $rangePicker = html.find('range-picker[name="volume"]');
+  const $volumeGroup = $rangePicker.closest(".form-group");
 
   const $overrideCheckbox = html.find(`input[name="flags.${MODULE_ID}.allowVolumeOverride"]`);
   

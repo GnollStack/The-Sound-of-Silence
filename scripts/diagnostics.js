@@ -17,6 +17,7 @@ import {
 } from "./diagnostics-playback-automation.js";
 import { getCrossfadePreloadDiagnostics } from "./playback/preload-coordinator.js";
 import {
+  USER_QUERIES,
   MODULE_ID,
   SoundOfSilenceDiagnostics,
   formatTime,
@@ -50,6 +51,7 @@ const SETTINGS_SCHEMA = Object.freeze({
   personalPlaylistVolumeEnabled: { type: "boolean" },
   personalPlaylistVolumes: { type: "object" },
   personalTrackVolumes: { type: "object" },
+  personalMixModel: { type: "number" },
   soundscapeProceduralSyncEnabled: { type: "boolean" },
   shufflePattern: {
     type: "string",
@@ -74,7 +76,6 @@ const MODULE_ASSETS = Object.freeze([
   "scripts/playback/preload-coordinator.js",
   "scripts/playback/transition-session.js",
   "templates/diagnostics.hbs",
-  "templates/remote-diagnostics.hbs",
   "styles/diagnostics.css",
 ]);
 
@@ -661,17 +662,9 @@ async function openWindow(api, args) {
     };
   }
 
-  if (mode === "remote") {
-    await api.requestClientDiagnostics();
-    return {
-      success: true,
-      opened: "remote",
-    };
-  }
-
   return {
     success: false,
-    error: `Unsupported window mode "${mode}". Supported modes: local, remote.`,
+    error: `Unsupported window mode "${mode}". Supported modes: local. Use collectClientDiagnostics for other clients.`,
   };
 }
 
@@ -795,18 +788,16 @@ async function runSmokeTests(api) {
     typeof api._isRemoteDiagnosticsGateOpen === "function" &&
     api._isRemoteDiagnosticsGateOpen() === true
   );
-  record(tests, "remote diagnostics rejects malformed request IDs", () =>
-    typeof api._isDiagnosticsRequestIdValid === "function" &&
-    api._isDiagnosticsRequestIdValid("abc12345") === true &&
-    api._isDiagnosticsRequestIdValid("") === false &&
-    api._isDiagnosticsRequestIdValid("not valid") === false
+  record(tests, "client diagnostics user queries are registered", () =>
+    typeof globalThis.CONFIG?.queries?.[USER_QUERIES.clientDiagnostics] === "function" &&
+    typeof globalThis.CONFIG?.queries?.[USER_QUERIES.clientSetting] === "function"
   );
-  record(tests, "remote diagnostics requires an active GM sender", () => {
-    if (typeof api._resolveActiveGMSocketSender !== "function") return false;
+  record(tests, "remote diagnostics requires an active GM asker", () => {
+    if (typeof api._resolveActiveGMUser !== "function") return false;
     const activeGM = Array.from(game.users ?? []).find((user) => user?.isGM && user.active !== false);
     if (!activeGM) return false;
-    return api._resolveActiveGMSocketSender(activeGM.id)?.id === activeGM.id &&
-      api._resolveActiveGMSocketSender("not-a-user") === null;
+    return api._resolveActiveGMUser(activeGM.id)?.id === activeGM.id &&
+      api._resolveActiveGMUser("not-a-user") === null;
   });
   record(tests, "time parser accepts valid fixture", () => {
     const parsed = parseText({ text: "01:30.500" });

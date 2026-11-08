@@ -20,6 +20,7 @@ import {
 } from "../playback/transition-session.js";
 import { State, cleanupPlaylistState } from "../state-manager.js";
 import {
+  audioTimerOptions,
   debug,
   MODULE_ID,
   safeStop,
@@ -128,7 +129,7 @@ export function registerTransitionReplicationHooks() {
           `[Stop-Client] Fading out "${ps.name}" over ${dur}ms (replicated).`
         );
         const token = advancedFade(media, { targetVol: 0, duration: dur });
-        AudioTimeout.wait(dur + 10).then(() => {
+        AudioTimeout.wait(dur + 10, audioTimerOptions(media)).then(() => {
           if (token && !State.isCurrentFadeToken(media, token)) return;
           try {
             media.stop();
@@ -176,9 +177,15 @@ export function registerTransitionReplicationHooks() {
         source: "replicated",
       });
 
+      // The incoming media is already live when the GM pressed Previous during
+      // a crossfade: the previous session handed it off at its current gain.
+      const keepIncomingGain = psIn.sound?.playing === true;
       const [soundOut, soundIn] = await Promise.all([
         psOut ? waitForMedia(psOut) : Promise.resolve(null),
-        prepareIncomingCrossfadeMedia(psIn, { isCurrent: () => isCurrentCrossfadeSession(transitionSession) }),
+        prepareIncomingCrossfadeMedia(psIn, {
+          isCurrent: () => isCurrentCrossfadeSession(transitionSession),
+          keepGain: keepIncomingGain,
+        }),
       ]);
       if (!isCurrentCrossfadeSession(transitionSession)) {
         if (soundIn?.playing) safeStop(soundIn, "stale replicated incoming media");
@@ -196,7 +203,7 @@ export function registerTransitionReplicationHooks() {
       if (!soundIn) {
         debug(`[Crossfade-Sync] Incoming sound "${psIn.name}" did not start; falling back to native sync after transition.`);
         await transitionSession.settle({ mode: "cancel", reason: "incoming media unavailable" });
-        AudioTimeout.wait((Number(fadeMs) || 0) + 250).then(() => {
+        AudioTimeout.wait((Number(fadeMs) || 0) + 250, audioTimerOptions(psIn)).then(() => {
           try {
             psIn.sync?.();
           } catch (err) {
@@ -224,7 +231,10 @@ export function registerTransitionReplicationHooks() {
       let fadeTokens = null;
 
       if (canEqualPowerCrossfade) {
-        fadeTokens = equalPowerCrossfade(soundOut, soundIn, fadeMs, { targetVolIn: localTargetVolIn });
+        const startVolIn = keepIncomingGain && Number.isFinite(Number(soundIn.gain?.value))
+          ? Number(soundIn.gain.value)
+          : 0;
+        fadeTokens = equalPowerCrossfade(soundOut, soundIn, fadeMs, { targetVolIn: localTargetVolIn, startVolIn });
       } else {
         debug(`[Crossfade-Sync] Audio graph unavailable; snapping "${psIn.name}" to target volume and fading outgoing where possible.`, {
           outgoing: describeCrossfadeAudioGraph(soundOut),

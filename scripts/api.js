@@ -22,7 +22,18 @@ import {
 } from "./procedural-ambience.js";
 import { Silence } from "./silence.js";
 import { createSoundOfSilenceDiagnostics } from "./diagnostics.js";
-import { toSec, formatTime, info, debug, getSequenceSnapshot, MODULE_ID, PlaylistActionAuthority } from "./utils.js";
+import {
+    findPlaylistSoundForSound,
+    toSec,
+    formatTime,
+    info,
+    debug,
+    getSequenceSnapshot,
+    MODULE_ID,
+    PlaylistActionAuthority,
+    USER_QUERIES,
+    queryUserWithTimeout,
+} from "./utils.js";
 import { State, cleanupPlaylistState } from "./state-manager.js";
 import { Integrations } from "./integrations.js";
 
@@ -394,7 +405,9 @@ class SoundOfSilenceAPI {
         if (!soundOut?.gain || !soundIn?.gain) {
             throw new TypeError("Expected valid Sound objects");
         }
-        equalPowerCrossfade(soundOut, soundIn, durationMs);
+        const psIn = findPlaylistSoundForSound(soundIn);
+        const targetVolIn = psIn instanceof PlaylistSound ? Flags.resolveTargetVolume(psIn) : 1;
+        equalPowerCrossfade(soundOut, soundIn, durationMs, { targetVolIn });
     }
 
     // ============================================
@@ -840,11 +853,6 @@ class SoundOfSilenceAPI {
         return game.socket?.id ?? game.socket?.socket?.id ?? null;
     }
 
-    _isDiagnosticsRequestIdValid(requestId) {
-        return typeof requestId === "string" &&
-            /^[A-Za-z0-9_-]{8,128}$/.test(requestId.trim());
-    }
-
     _isRemoteDiagnosticsGateOpen() {
         try {
             return Boolean(game.settings?.get(this.ID, "debug")) &&
@@ -854,17 +862,17 @@ class SoundOfSilenceAPI {
         }
     }
 
-    _resolveActiveGMSocketSender(senderId) {
-        const sender = this._resolveActiveSocketSender(senderId);
-        if (!sender?.isGM) return null;
-        return sender;
+    _resolveActiveGMUser(userId) {
+        const user = this._resolveActiveUser(userId);
+        if (!user?.isGM) return null;
+        return user;
     }
 
-    _resolveActiveSocketSender(senderId) {
-        if (typeof senderId !== "string" || !senderId.trim()) return null;
-        const sender = game.users?.get?.(senderId.trim());
-        if (!sender || sender.active === false) return null;
-        return sender;
+    _resolveActiveUser(userId) {
+        if (typeof userId !== "string" || !userId.trim()) return null;
+        const user = game.users?.get?.(userId.trim());
+        if (!user || user.active === false) return null;
+        return user;
     }
 
     _getAudioPreflight() {
@@ -1141,8 +1149,9 @@ class SoundOfSilenceAPI {
 
     /**
      * Collect diagnostic snapshots from connected clients and return JSON.
-     * GM-only. Sockets are used for diagnostics collection only.
-     * @param {{timeoutMs?: number, includeSelf?: boolean}} [options]
+     * GM-only. Each active client is asked through Foundry's User#query, which
+     * the server authenticates; the module socket carries no diagnostics.
+     * @param {{timeoutMs?: number, includeSelf?: boolean, playlistIds?: string[]}} [options]
      * @returns {Promise<Object>} JSON-safe collection result
      */
     async collectClientDiagnostics(options = {}) {
@@ -1152,8 +1161,8 @@ class SoundOfSilenceAPI {
 
         const { timeoutMs, includeSelf, playlistIds } = this._normalizeClientDiagnosticsOptions(options);
         const requestId = foundry.utils.randomID();
-        const senderClientId = this._getClientInstanceId();
         const clients = [];
+        const failures = [];
         const seenClients = new Set();
 
         const addDiagnostics = (diagnostics) => {
@@ -1169,32 +1178,35 @@ class SoundOfSilenceAPI {
 
         if (includeSelf) addDiagnostics(this._gatherLocalDiagnostics({ playlistIds }));
 
-        const handler = (data, senderUserId) => {
-            if (data?.action !== "diagnostics-response" || data.requestId !== requestId) return;
-            const sender = this._resolveActiveSocketSender(senderUserId);
-            if (!sender) return;
-            if (String(data.diagnostics?.client?.userId ?? "") !== String(sender.id)) return;
-            addDiagnostics(data.diagnostics);
-        };
-
-        game.socket.on(`module.${this.ID}`, handler);
-        game.socket.emit(`module.${this.ID}`, {
-            action: "diagnostics-request",
-            requestId,
-            senderId: game.user.id,
-            senderClientId,
-            options: {
-                playlistIds,
-            },
+        const otherUsers = Array.from(game.users ?? []).filter((user) =>
+            user?.active && String(user.id) !== String(game.user.id)
+        );
+        debug(`[Remote Diagnostics] Request ${requestId}: querying ${otherUsers.length} client(s), waiting up to ${timeoutMs}ms...`);
+        const answers = await Promise.allSettled(otherUsers.map((user) =>
+            queryUserWithTimeout(
+                user,
+                USER_QUERIES.clientDiagnostics,
+                { requestId, playlistIds },
+                { timeout: timeoutMs }
+            )
+        ));
+        answers.forEach((answer, index) => {
+            const user = otherUsers[index];
+            if (answer.status !== "fulfilled") {
+                failures.push({
+                    userId: user.id,
+                    userName: user.name,
+                    reason: answer.reason?.message ?? String(answer.reason ?? "no answer"),
+                });
+                return;
+            }
+            const diagnostics = answer.value;
+            if (String(diagnostics?.client?.userId ?? "") !== String(user.id)) {
+                failures.push({ userId: user.id, userName: user.name, reason: "snapshot named another user" });
+                return;
+            }
+            addDiagnostics(diagnostics);
         });
-
-        debug(`[Remote Diagnostics] Request ${requestId} sent, waiting ${timeoutMs}ms for responses...`);
-
-        try {
-            await new Promise(r => setTimeout(r, timeoutMs));
-        } finally {
-            game.socket.off(`module.${this.ID}`, handler);
-        }
 
         const activeUsers = Array.from(game.users ?? []).filter((user) => user.active).map((user) => ({
             id: user.id,
@@ -1205,10 +1217,11 @@ class SoundOfSilenceAPI {
         const respondedUserIds = new Set(clients.map((client) => client.client?.userId).filter(Boolean));
         const missingActiveUsers = activeUsers.filter((user) => !respondedUserIds.has(user.id));
 
-        debug(`[Remote Diagnostics] Received ${clients.length} response(s) for ${requestId}`);
+        debug(`[Remote Diagnostics] Received ${clients.length} snapshot(s) for ${requestId}`);
 
         return {
             success: true,
+            transport: "user-query",
             requestId,
             timeoutMs,
             includeSelf,
@@ -1217,81 +1230,45 @@ class SoundOfSilenceAPI {
             activeUsers,
             activeNonGmUsers,
             missingActiveUsers,
+            failures,
             clientSummary: this._summarizeCollectedClients(clients),
             clients,
         };
     }
 
     /**
-     * Request diagnostic snapshots from all connected clients.
-     * GM-only. Broadcasts a socket request, waits 3 seconds for responses,
-     * then renders a dialog comparing all clients side-by-side.
-     * @returns {Promise<void>}
-     * @example
-     * game.modules.get('the-sound-of-silence').api.requestClientDiagnostics()
+     * Register this module's User queries in CONFIG.queries. Foundry's server
+     * authenticates the asking user, so the handlers check only the
+     * diagnostics gates and the asker's role.
+     * @returns {boolean} Whether CONFIG.queries was available.
      */
-    async requestClientDiagnostics() {
-        if (!game.user.isGM) {
-            ui.notifications.warn("Only the GM can request client diagnostics.");
-            return;
-        }
-
-        const result = await this.collectClientDiagnostics({ timeoutMs: 3000, includeSelf: true });
-        this._renderRemoteDiagnostics(result.clients);
-        return result;
+    _registerUserQueries() {
+        const queries = globalThis.CONFIG?.queries;
+        if (!queries) return false;
+        queries[USER_QUERIES.clientDiagnostics] = (data, context) => this._answerClientDiagnosticsQuery(data, context);
+        queries[USER_QUERIES.clientSetting] = (data, context) => this._answerClientSettingQuery(data, context);
+        return true;
     }
 
     /**
-     * Handle incoming socket messages for the module.
-     * Currently supports diagnostics-request for remote state queries.
-     * @param {Object} data - The socket message payload
-     * @param {string|null} senderUserId - Authenticated sender id supplied by Foundry
-     * @private
+     * Answer a client-diagnostics query on this client.
+     * @param {{playlistIds?: string[]}} [data]
+     * @param {{user?: User}} [context] Query context supplied by Foundry; `user` is the authenticated asker.
      */
-    _handleSocketMessage(data, senderUserId = null) {
-        if (!data || typeof data !== "object") return;
-
-        if (data.action === "soundscape-procedural-fire") {
-            if (data.senderSocketId && data.senderSocketId === this._getSocketId()) {
-                return;
-            }
-            handleSoundscapeProceduralFire(data, senderUserId).catch((err) => {
-                debug("[Soundscape Sync] Failed to process procedural fire:", err?.message);
-            });
-            return;
-        }
-
-        if (data.action === "diagnostics-client-setting-request") {
-            this._handleDiagnosticsClientSettingRequest(data, senderUserId).catch((err) => {
-                debug("[Remote Diagnostics] Failed to apply client setting request:", err?.message);
-            });
-            return;
-        }
-
-        if (data.action === "diagnostics-request") {
-            if (data.senderClientId && data.senderClientId === this._getClientInstanceId()) {
-                return;
-            }
-            if (!this._isDiagnosticsRequestIdValid(data.requestId)) return;
-            if (!this._isRemoteDiagnosticsGateOpen()) return;
-            if (!this._resolveActiveGMSocketSender(senderUserId)) return;
-
-            debug("[Remote Diagnostics] Received request, sending local state...");
-            game.socket.emit(`module.${this.ID}`, {
-                action: "diagnostics-response",
-                requestId: data.requestId,
-                diagnostics: this._gatherLocalDiagnostics(data.options ?? {}),
-            });
-        }
+    _answerClientDiagnosticsQuery(data = {}, { user = null } = {}) {
+        if (!this._isRemoteDiagnosticsGateOpen()) throw new Error("diagnostics gates are closed on this client");
+        if (!this._resolveActiveGMUser(user?.id)) throw new Error("only an active GM may request client diagnostics");
+        const playlistIds = Array.isArray(data?.playlistIds) ? data.playlistIds.map((id) => String(id)) : null;
+        return this._gatherLocalDiagnostics({ playlistIds });
     }
 
-    async _handleDiagnosticsClientSettingRequest(data, senderUserId = null) {
-        const sender = this._resolveActiveGMSocketSender(senderUserId);
-        const requestId = data.requestId;
-        const targetUserId = data.targetUserId ? String(data.targetUserId) : null;
-        if (!sender) return;
-        if (!this._isDiagnosticsRequestIdValid(requestId)) return;
-        if (targetUserId && targetUserId !== String(game.user?.id)) return;
+    /**
+     * Apply an allowlisted diagnostics client setting on this client for an active GM.
+     * @param {{key?: string, value?: boolean}} [data]
+     * @param {{user?: User}} [context]
+     */
+    async _answerClientSettingQuery(data = {}, { user = null } = {}) {
+        if (!this._resolveActiveGMUser(user?.id)) throw new Error("only an active GM may change a diagnostics client setting");
 
         const diagnosticsEnabled = Boolean(game.settings?.get(this.ID, "enableMcpDiagnostics"));
         const allowed = data.key === "soundscapeProceduralSyncEnabled" && typeof data.value === "boolean";
@@ -1313,9 +1290,7 @@ class SoundOfSilenceAPI {
             errorMessage = err?.message ?? String(err);
         }
 
-        game.socket?.emit(`module.${this.ID}`, {
-            action: "diagnostics-client-setting-response",
-            requestId,
+        return {
             userId: game.user?.id ?? null,
             userName: game.user?.name ?? null,
             clientInstanceId: this._getClientInstanceId(),
@@ -1323,85 +1298,22 @@ class SoundOfSilenceAPI {
             value,
             success,
             error: errorMessage,
-        });
+        };
     }
 
     /**
-     * Render the multi-client diagnostics dialog.
-     * @param {Array<Object>} responses - Array of client diagnostic payloads
+     * Handle incoming socket messages for the module. The module socket carries
+     * only transient soundscape procedural fire recipes.
+     * @param {Object} data - The socket message payload
+     * @param {string|null} senderUserId - Authenticated sender id supplied by Foundry
      * @private
      */
-    async _renderRemoteDiagnostics(responses) {
-        // Pre-process for template: add problem flags for visual indicators
-        for (const client of responses) {
-            for (const sound of client.playingSounds) {
-                sound._gainZero = sound.gainValue !== null && sound.gainValue < 0.001 && !sound.isFading;
-                sound._contextSuspended = sound.contextState !== "running";
-                sound._invalidMediaTime = !sound.currentTimeFinite || !sound.durationFinite;
-                // Round numeric values for display
-                if (Number.isFinite(Number(sound.gainValue))) sound.gainValue = Math.round(sound.gainValue * 1000) / 1000;
-                if (Number.isFinite(Number(sound.volume))) sound.volume = Math.round(sound.volume * 1000) / 1000;
-                if (Number.isFinite(Number(sound.currentTime))) sound.currentTime = Math.round(sound.currentTime * 10) / 10;
-                if (Number.isFinite(Number(sound.duration))) sound.duration = Math.round(sound.duration * 10) / 10;
-            }
-            client._anyContextSuspended = Object.values(client.audioContexts).some(s => s !== "running" && s !== "unavailable");
-            client._contextEntries = Object.entries(client.audioContexts).map(([name, state]) => ({
-                name,
-                state,
-                isOk: state === "running",
-            }));
-            client._coreAudioVolumeEntries = Object.entries(client.coreAudioVolumes || {}).map(([name, value]) => ({
-                name,
-                value: Math.round(Number(value) * 100),
-                muted: Number(value) <= 0,
-            }));
-            client._playbackClockEntries = (client.playbackClocks || []).map((clock) => ({
-                ...clock,
-                startedAgo: Number.isFinite(Number(clock.startedAt))
-                    ? Math.max(0, Math.round((Date.now() - Number(clock.startedAt)) / 1000))
-                    : null,
-                overdueSec: Number.isFinite(Number(clock.overdueMs))
-                    ? Math.round(Number(clock.overdueMs) / 1000)
-                    : 0,
-            }));
-            client._sequenceEntries = Object.entries(client.sequences || {}).map(([key, val]) => ({
-                key,
-                seq: val.seq,
-                age: Math.round((Date.now() - val.timestamp) / 1000),
-            }));
-            const activePersonalPlaylistVolumes = client.personalAudioMix?.enabled
-                ? (client.personalAudioMix?.playlistVolumes || client.personalPlaylistVolume?.volumes || {})
-                : {};
-            client._personalPlaylistVolumeEntries = Object.entries(activePersonalPlaylistVolumes)
-                .map(([playlistId, value]) => ({
-                    playlistId,
-                    playlistName: game.playlists.get(playlistId)?.name ?? playlistId,
-                    value: Math.round(Number(value) * 100),
-                }))
-                .filter((entry) => Number.isFinite(entry.value) && entry.value < 100);
-            client._personalTrackVolumeCount = client.personalAudioMix?.enabled
-                ? (Number(client.personalAudioMix?.trackOverrideCount ?? 0) || 0)
-                : 0;
-        }
-
-        const html = await foundry.applications.handlebars.renderTemplate(
-            `modules/${this.ID}/templates/remote-diagnostics.hbs`,
-            { clients: responses, timestamp: new Date().toLocaleTimeString() }
-        );
-
-        await foundry.applications.api.DialogV2.prompt({
-            window: {
-                title: "Sound of Silence — Remote Diagnostics",
-                resizable: true,
-                contentClasses: ["sos-diagnostics-window", "sos-remote-diagnostics"],
-            },
-            position: { width: 700 },
-            content: html,
-            ok: {
-                icon: "fas fa-times",
-                label: "Close",
-            },
-            rejectClose: false,
+    _handleSocketMessage(data, senderUserId = null) {
+        if (!data || typeof data !== "object") return;
+        if (data.action !== "soundscape-procedural-fire") return;
+        if (data.senderSocketId && data.senderSocketId === this._getSocketId()) return;
+        handleSoundscapeProceduralFire(data, senderUserId).catch((err) => {
+            debug("[Soundscape Sync] Failed to process procedural fire:", err?.message);
         });
     }
 }

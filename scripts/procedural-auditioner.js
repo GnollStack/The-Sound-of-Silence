@@ -3,6 +3,7 @@
 import { advancedFade } from "./audio-fader.js";
 import { Flags } from "./flag-service.js";
 import {
+  audioTimerOptions,
     MODULE_ID,
     debug,
     warn,
@@ -125,7 +126,7 @@ export class ProceduralAuditioner {
                 const waitMs = Number.isFinite(sound.duration)
                     ? sound.duration * 1000 + 100
                     : 3000;
-                AudioTimeout.wait(waitMs).then(cleanup);
+                AudioTimeout.wait(waitMs, audioTimerOptions(sound)).then(cleanup);
             }
 
             const fadeInMs = _resolveFadeInMs(ps.parent);

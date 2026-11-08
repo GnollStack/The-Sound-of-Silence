@@ -4,7 +4,7 @@
 <p><a href="https://github.com/GnollStack/The-Sound-of-Silence/releases/latest"><img src="https://img.shields.io/github/v/release/GnollStack/The-Sound-of-Silence?label=Latest%20Release&amp;style=flat-square" alt="Latest Release" /></a>
 <a href="https://github.com/GnollStack/The-Sound-of-Silence/releases"><img src="https://img.shields.io/github/downloads/GnollStack/The-Sound-of-Silence/the-sound-of-silence.zip?label=Downloads&amp;style=flat-square&amp;color=green" alt="Downloads" /></a>
 <a href="https://github.com/GnollStack/The-Sound-of-Silence/releases/latest"><img src="https://img.shields.io/github/downloads/GnollStack/The-Sound-of-Silence/latest/the-sound-of-silence.zip?label=Latest%20Downloads&amp;style=flat-square" alt="Latest Downloads" /></a>
-<a href="https://foundryvtt.com"><img src="https://img.shields.io/badge/Foundry-v13--v14-orange?style=flat-square" alt="Foundry VTT v13–v14" /></a>
+<a href="https://foundryvtt.com"><img src="https://img.shields.io/badge/Foundry-v14-orange?style=flat-square" alt="Foundry VTT v14" /></a>
 <a href="https://www.patreon.com/cw/GnollStack"><img src="https://img.shields.io/badge/Patreon-Bazaar%20Patron-F96854?style=flat-square&amp;logo=patreon&amp;logoColor=white" alt="Patreon: Bazaar Patron" /></a>
 <a href="https://discord.gg/tcdYk54fxC"><img src="https://img.shields.io/badge/Discord-Bakshi%27s%20Bazaar-5865F2?style=flat-square&amp;logo=discord&amp;logoColor=white" alt="Discord: Bakshi's Bazaar" /></a></p>
 <p><em>For GMs who want music to help tell a story.</em></p>
@@ -176,10 +176,6 @@
 <details>
 <summary><strong>Troubleshooting</strong></summary>
 <p>If you're tracking down a playback problem, <strong>Trace Currently Playing Timers</strong> adds timing details to the logs across clients.</p>
-<p>GMs can compare what's happening on their own client and connected players' clients:</p>
-<pre><code class="language-javascript">game.modules.get('the-sound-of-silence').api.requestClientDiagnostics()
-</code></pre>
-<p>After about three seconds, a dialog shows volume, fades, audio readiness, and playback timing for each client. Red highlights possible problems; amber marks active fades.</p>
 <p>To update old loop setups, open <strong>Configure Settings → The Sound of Silence → Migrate Legacy Internal Loops</strong>. This permanently converts older loop settings to the current segment format after you confirm. Back up your world first and stop all playlists. Existing segment-based loops are left alone.</p>
 <blockquote>
 <p><strong>Warning:</strong> If the GM controls playback, setting Music Volume to exactly <code>0</code> and switching away from the tab can stall the audio clock. Keep it at <code>0.01</code>, or mute the browser tab or app instead.</p>
@@ -281,7 +277,7 @@ Segment 4  04:45–06:00   Victory    loop 1×, play through
 <tbody>
 <tr>
 <td>Foundry VTT</td>
-<td>v13–v14; verified on 14.367</td>
+<td>v14 only; verified on 14.367</td>
 </tr>
 <tr>
 <td><a href="https://github.com/ruipin/fvtt-lib-wrapper">libWrapper</a></td>
@@ -293,7 +289,7 @@ Segment 4  04:45–06:00   Victory    loop 1×, play through
 <div style="text-align: center;">
 <h2 id="compatibility">Compatibility</h2>
 </div>
-<p><strong>Foundry VTT:</strong> v13–v14; verified on <strong>14.367</strong>. This is the last release that supports v13; the next release will require Foundry v14. Earlier releases were tested on v13.351, and v13 hasn't been retested for this update.</p>
+<p><strong>Foundry VTT:</strong> v14 only; verified on <strong>14.367</strong>. 14.15.7 was the last release for v13.</p>
 <p><strong>Game systems:</strong> works in any system; tested in <strong>dnd5e 5.3.3</strong>.</p>
 <p><strong>Browsers:</strong> Chrome/Chromium and Firefox. The latest tests used Chrome 153; earlier releases were also tested with Opera GX and Firefox. Click inside the game on each client to unlock audio before playing.</p>
 <blockquote>
@@ -354,8 +350,7 @@ api.enableFeature(playlist, feature)  / disableFeature(playlist, feature)
 </details>
 <details>
 <summary><strong>Troubleshooting and helpers</strong></summary>
-<pre><code class="language-javascript">api.requestClientDiagnostics()   // GM-only multi-client snapshot
-api.inspectPlaylist(playlist) / inspectAll()
+<pre><code class="language-javascript">api.inspectPlaylist(playlist) / inspectAll()
 api.getMetrics() / resetMetrics()
 
 api.findSounds(name)
@@ -386,9 +381,6 @@ if (!looping.length) return ui.notifications.info(&quot;No active loops.&quot;);
 
 for (const sound of looping) api.breakLoop(sound);
 ui.notifications.info(`Broke ${looping.length} loop(s).`);
-</code></pre>
-<p><strong>Compare playback across clients.</strong> GMs can run this to open a comparison of their client and connected players after about three seconds.</p>
-<pre><code class="language-javascript">game.modules.get(&quot;the-sound-of-silence&quot;).api.requestClientDiagnostics();
 </code></pre>
 <p><strong>Turn Soundscape mode on or off.</strong> Change <code>&quot;Rainy Forest&quot;</code> to your playlist's name.</p>
 <pre><code class="language-javascript">const api = game.modules.get(&quot;the-sound-of-silence&quot;).api;
@@ -535,6 +527,6 @@ You may <strong>NOT</strong> sell this module, bundle it within paid content (su
 </ul>
 <hr />
 <div style="text-align: center;">
-<p><strong>Author:</strong> <a href="https://github.com/GnollStack">GnollStack</a> · <strong>Compatibility:</strong> Foundry VTT v13 - v14</p>
+<p><strong>Author:</strong> <a href="https://github.com/GnollStack">GnollStack</a> · <strong>Compatibility:</strong> Foundry VTT v14 only</p>
 <p><a href="#the-sound-of-silence">⬆ Back to Top</a></p>
 </div>

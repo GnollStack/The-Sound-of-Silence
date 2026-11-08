@@ -3,7 +3,7 @@
   "title": "The Sound of Silence",
   "type": "module",
   "description": "Build tracks with intros and multiple loop segments, crossfade between songs, and add configurable silence gaps to Foundry playlists.",
-  "version": "14.15.7",
+  "version": "14.16.0",
   "authors": [
     {
       "name": "GnollStack",
@@ -12,7 +12,7 @@
     }
   ],
   "compatibility": {
-    "minimum": "13",
+    "minimum": "14",
     "verified": "14.367",
     "maximum": "14"
   },
@@ -127,5 +127,5 @@
     }
   ],
   "manifest": "https://github.com/GnollStack/The-Sound-of-Silence/releases/latest/download/module.json",
-  "download": "https://github.com/GnollStack/The-Sound-of-Silence/releases/download/V14.15.7/the-sound-of-silence.zip"
+  "download": "https://github.com/GnollStack/The-Sound-of-Silence/releases/download/V14.16.0/the-sound-of-silence.zip"
 }

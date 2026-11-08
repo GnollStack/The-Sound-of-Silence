@@ -4,6 +4,7 @@ import { advancedFade, fadeOutAndStop } from "./audio-fader.js";
 import { Flags, sanitizeSoundscapeGroups } from "./flag-service.js";
 import { State } from "./state-manager.js";
 import {
+  audioTimerOptions,
     MODULE_ID,
     debug,
     warn,
@@ -218,7 +219,7 @@ export class SoundscapePreviewSession {
 
         const delayMs = Math.max(minimumDelayMs, this._pickDelayMs(ps, { initial }));
         const eta = Date.now() + delayMs;
-        const timer = new AudioTimeout(delayMs);
+        const timer = new AudioTimeout(delayMs, audioTimerOptions(ps));
 
         const entry = { timer, eta, cancelled: false };
         this.oneShotTimers.set(ps.id, entry);
@@ -379,7 +380,7 @@ export class SoundscapePreviewSession {
             const waitMs = Number.isFinite(sound.duration)
                 ? sound.duration * 1000 + 100
                 : 3000;
-            AudioTimeout.wait(waitMs).then(cleanup);
+            AudioTimeout.wait(waitMs, audioTimerOptions(sound)).then(cleanup);
         }
 
         const fadeInMs = _resolveFadeInMs(this.playlist, this.configOverrides);

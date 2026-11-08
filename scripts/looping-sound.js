@@ -5,7 +5,7 @@ import { maybeLoopPlaylist } from "./playlist-loop.js";
 import { performCrossfade } from "./cross-fade.js";
 import { Silence } from "./silence.js";
 import { Flags } from "./flag-service.js";
-import { MODULE_ID, debug, waitForMedia, formatTime, logFeature, LogSymbols, safeStop, safeCancelTimer, error } from "./utils.js";
+import { audioTimerOptions, MODULE_ID, debug, waitForMedia, formatTime, logFeature, LogSymbols, safeStop, safeCancelTimer, error } from "./utils.js";
 import { State } from "./state-manager.js";
 import { getPlayableSoundsInOrder } from "./playlist/playable-order.js";
 import { retainLoopCompletion } from "./playback/loop-completion.js";
@@ -245,7 +245,7 @@ export class LoopingSound {
           if (Number.isFinite(currentTime) && currentTime >= Number(firstSeg.endSec)) return resolve(false);
           if (++attempts >= POSITION_CHECK_MAX_ATTEMPTS) return resolve(false);
 
-          AudioTimeout.wait(POSITION_CHECK_INTERVAL).then(checkPosition).catch(() => resolve(false));
+          AudioTimeout.wait(POSITION_CHECK_INTERVAL, audioTimerOptions(this.ps)).then(checkPosition).catch(() => resolve(false));
         };
         checkPosition();
       });
@@ -351,7 +351,6 @@ export class LoopingSound {
  * Called when the looper retires and the track should play to its natural end.
  */
   _scheduleFinalFadeOut() {
-    this.isFadingOut = true;
     safeCancelTimer(this.finalTransitionTimer, `LoopingSound final transition timer for "${this.ps?.name}"`);
     this.finalTransitionTimer = null;
     const sound = this.activeSound;
@@ -422,7 +421,7 @@ export class LoopingSound {
 
     const ct = Number(this.activeSound.currentTime);
     if (!Number.isFinite(ct)) {
-      AudioTimeout.wait(100).then(() => this._armNextTimer());
+      AudioTimeout.wait(100, audioTimerOptions(this.activeSound ?? this.ps)).then(() => this._armNextTimer());
       return;
     }
 
@@ -483,7 +482,6 @@ export class LoopingSound {
     this.loopsCompleted = 0;
 
     this.loopingDisabled = false;
-    this.isFadingOut = false;
 
     // Emit loop start event
     Hooks.callAll('the-sound-of-silence.loopStart', {
@@ -516,7 +514,7 @@ export class LoopingSound {
     const armFallback = (failedTimer, delayMs, err) => {
       if (this.loopCrossfadeTimer !== failedTimer || !ownsScheduledSegment()) return;
       debug(`  Precise schedule failed, falling back to AudioTimeout: ${err?.message ?? err}`);
-      const fallbackTimer = new AudioTimeout(Math.max(0, delayMs));
+      const fallbackTimer = new AudioTimeout(Math.max(0, delayMs), audioTimerOptions(this.activeSound ?? this.ps));
       this.loopCrossfadeTimer = fallbackTimer;
       fallbackTimer.complete.then(() => {
         if (
@@ -526,8 +524,6 @@ export class LoopingSound {
         ) return;
         this.loopCrossfadeTimer = null;
         this._performCrossfadeLoop();
-      }).catch(() => {
-        // Foundry v13 rejects intentionally cancelled AudioTimeout instances.
       });
     };
 
@@ -535,7 +531,7 @@ export class LoopingSound {
 
     if (!Number.isFinite(currentTime)) {
       debug(`[LoopingSound] ❌ Invalid currentTime, retrying in 100ms`);
-      AudioTimeout.wait(100).then(() => this._armCrossfadeLoop());
+      AudioTimeout.wait(100, audioTimerOptions(this.activeSound ?? this.ps)).then(() => this._armCrossfadeLoop());
       return;
     }
 
@@ -568,7 +564,7 @@ export class LoopingSound {
       debug(`  Hybrid scheduling active. Waiting ${settleDelayMs}ms before using precise timer.`);
 
       // Use AudioTimeout for the initial short delay (immune to browser tab throttling).
-      const settleTimer = new AudioTimeout(settleDelayMs);
+      const settleTimer = new AudioTimeout(settleDelayMs, audioTimerOptions(this.activeSound ?? this.ps));
       this.loopCrossfadeTimer = settleTimer;
 
       settleTimer.complete.then(() => {
@@ -613,8 +609,6 @@ export class LoopingSound {
             armFallback(preciseTimer, remainingUntilFade * 1000, err);
           });
         }
-      }).catch(() => {
-        // Foundry v13 rejects intentionally cancelled AudioTimeout instances.
       });
 
     } else {
@@ -768,24 +762,9 @@ export class LoopingSound {
     );
     this.handoffTimer = handoffTimer;
 
-    try {
-      await handoffTimer.complete;
-    } catch (err) {
-      debug(`[LoopingSound] Handoff timer cancelled for "${this.ps.name}".`);
-      // Foundry v13 rejects a cancelled AudioTimeout. A superseded timer no
-      // longer owns the shared transition state, so it must not clear a newer
-      // handoff's ownership when its rejection arrives. Its own target buffer
-      // is still stale and must be stopped.
-      if (ownsHandoff() && this.handoffTimer === handoffTimer) {
-        this.handoffTimer = null;
-        this._setCrossfading(false);
-      }
-      this._stopLoopOperationTarget(operation, targetSound, "handoff timer cancelled");
-      finishDirectOperation();
-      return false;
-    }
+    await handoffTimer.complete;
 
-    // Foundry v14 resolves AudioTimeout.complete when cancel() is called. Timer
+    // Foundry resolves AudioTimeout.complete when cancel() is called. Timer
     // identity, rather than rejection, therefore owns the handoff. A pause,
     // break, disable, destroy, or replacement transition invalidates this
     // timer and must never promote the stopped incoming buffer.
@@ -955,7 +934,7 @@ export class LoopingSound {
           // If silence is not enabled, just play the next track after a short buffer.
           debug(`[LoopingSound] Silence is disabled. Advancing to next track immediately.`);
           try {
-            await AudioTimeout.wait(100);
+            await AudioTimeout.wait(100, audioTimerOptions(this.ps));
           } catch (_) {
             // A rejected audio timer must not prevent document advancement.
           }

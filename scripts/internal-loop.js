@@ -4,7 +4,7 @@
  * public API for creating, canceling, pausing, and resuming per-track internal loops.
  * 
  */
-import { MODULE_ID, debug, getNextSequence } from "./utils.js";
+import { audioTimerOptions, MODULE_ID, debug, getNextSequence } from "./utils.js";
 import { LoopingSound } from "./looping-sound.js";
 import { scheduleEndOfTrackFade } from "./audio-fader.js";
 import { cancelCrossfade, scheduleCrossfade } from "./cross-fade.js";
@@ -88,7 +88,7 @@ export function scheduleLoopWithin(ps, { initialLoopStart = null } = {}) {
 
   // Start the looper with a small delay to avoid race conditions with Foundry's audio system.
   // Uses AudioTimeout to avoid browser throttling in background tabs.
-  AudioTimeout.wait(50).then(() => {
+  AudioTimeout.wait(50, audioTimerOptions(ps)).then(() => {
     if (looper.isDestroyed) return;
     return looper.start().then((started) => {
       // LoopingSound.start returns false for a failed or cancelled startup.

@@ -20,8 +20,10 @@ export const HANDOFF_TAIL_MS = 250;
  * - `cancel`: discard the incoming media and restore the outgoing target volume.
  * - `handoff`: a newer transition takes over. The incoming media stays live at its
  *   current gain and becomes that transition's outgoing participant; the old outgoing
- *   media gets a short tail. A session that never started fading keeps its outgoing
- *   media untouched and only discards its unstarted incoming media.
+ *   media gets a short tail unless `retain` names its document (Previous during a
+ *   crossfade selects the track that was fading out, which then keeps its current
+ *   gain for the replacement to fade back in). A session that never started fading
+ *   keeps its outgoing media untouched and only discards its unstarted incoming media.
  * - `stop`: Stop All owns both participants. Gains are held where they are so the
  *   stop path can fade every live media from its current level.
  */
@@ -65,7 +67,11 @@ export function createCrossfadeSession({
     // The newer transition inherits the previous incoming track as its
     // outgoing participant. Keep that media live instead of cancelling the
     // playlist back to the track that was already fading out.
-    previous.settle({ mode: "handoff", reason: "replaced by newer transition" });
+    previous.settle({
+      mode: "handoff",
+      reason: "replaced by newer transition",
+      retain: [incomingDocument?.id],
+    });
   }
 
   const session = {
@@ -150,6 +156,7 @@ export async function settleCrossfadeSession(playlist, {
   session = State.getCrossfadeSession(playlist),
   mode = "cancel",
   reason = "requested",
+  retain = [],
 } = {}) {
   if (!session || session.playlist !== playlist) return false;
   if (session.status === "settling" || SETTLED_STATUSES.includes(session.status)) return false;
@@ -186,12 +193,18 @@ export async function settleCrossfadeSession(playlist, {
     ]);
     session.status = "paused";
   } else if (mode === "handoff") {
+    // A retained participant is the replacement's incoming track. It keeps
+    // playing at the gain it has reached, and the replacement's curve starts
+    // from there instead of dipping it to silence first.
+    const retained = new Set((Array.isArray(retain) ? retain : [retain]).filter(Boolean));
+    const keepOutgoing = retained.has(session.outgoingDocument?.id);
+    const keepIncoming = retained.has(session.incomingDocument?.id);
     if (!wasActive) {
       // Nothing has faded yet: the outgoing media is still the audible track
       // and the replacement transition will fade it. Only the unstarted
       // incoming media is discarded.
-      await safeStop(session.incomingSound, "crossfade session handoff before activation");
-    } else if (session.outgoingSound?.playing) {
+      if (!keepIncoming) await safeStop(session.incomingSound, "crossfade session handoff before activation");
+    } else if (session.outgoingSound?.playing && !keepOutgoing) {
       fadeOutAndStop(session.outgoingSound, HANDOFF_TAIL_MS).catch((err) =>
         debug("[Crossfade Session] Handoff tail failed:", err?.message ?? err)
       );

@@ -39,6 +39,14 @@ class StateManager {
          */
         this._endOfTrackFades = new WeakMap();
 
+        /**
+         * The single owner of a playlist's terminal fade (last track, no next
+         * track): the automatic timer, clock recovery and the track's natural
+         * end all defer to it.
+         * @type {WeakMap<Playlist, {soundId: string, reason: string, finish: Function, cancel: Function}>}
+         */
+        this._terminalFades = new WeakMap();
+
         // ============================================
         // Silence Feature State
         // ============================================
@@ -47,12 +55,6 @@ class StateManager {
          * @type {WeakMap<Playlist, {timer: AudioTimeout, gap: PlaylistSound, resolve: Function, cancelled: boolean, sourceSound: PlaylistSound}>}
          */
         this._silentGaps = new WeakMap();
-
-        /**
-         * Tracks silent gaps that were cancelled to prevent _onEnd logic
-         * @type {WeakSet<PlaylistSound>}
-         */
-        this._cancelledGaps = new WeakSet();
 
         // ============================================
         // Crossfade Feature State
@@ -326,32 +328,6 @@ class StateManager {
      */
     hasSilenceState(playlist) {
         return this._silentGaps.has(playlist);
-    }
-
-    /**
-     * Mark a silent gap as cancelled to prevent its _onEnd handler from firing
-     * @param {PlaylistSound} gap
-     */
-    markGapAsCancelled(gap) {
-        this._cancelledGaps.add(gap);
-        debug(`[State] Marked gap "${gap?.name}" as cancelled`);
-    }
-
-    /**
-     * Check if a gap was cancelled
-     * @param {PlaylistSound} gap
-     * @returns {boolean}
-     */
-    isGapCancelled(gap) {
-        return this._cancelledGaps.has(gap);
-    }
-
-    /**
-     * Clear the cancelled marker for a gap
-     * @param {PlaylistSound} gap
-     */
-    clearCancelledGap(gap) {
-        this._cancelledGaps.delete(gap);
     }
 
     // ============================================
@@ -658,6 +634,8 @@ class StateManager {
      * @param {"cancel"|"handoff"|"stop"} [options.crossfadeSettlement="cancel"] - How an active crossfade
      *   session is settled: `cancel` restores the outgoing track, `handoff` keeps the incoming track live for a
      *   replacement transition, `stop` holds both gains for a Stop All fade-out
+     * @param {string[]} [options.crossfadeRetainSoundIds=[]] - Participant documents a `handoff` keeps playing at
+     *   their current gain because the replacement transition selects them (Previous during a crossfade)
      * @returns {Promise<void>}
      */
     async cleanup(playlist, options = {}) {
@@ -669,7 +647,8 @@ class StateManager {
             onlySound = null,
             allowFadeOut = false,
             final = false,
-            crossfadeSettlement = "cancel"
+            crossfadeSettlement = "cancel",
+            crossfadeRetainSoundIds = []
         } = options;
 
         debug(`[State] Cleanup requested for "${playlist?.name}"`, options);
@@ -681,11 +660,21 @@ class StateManager {
                 const session = this.getCrossfadeSession(playlist);
                 const timer = this.getCrossfadeTimer(playlist);
                 const waiter = this.getPlayWaiter(playlist);
+                const terminal = this.getTerminalFade(playlist);
+                if (terminal) {
+                    // A command owns the playlist now; the pending terminal stop must not fire.
+                    try {
+                        terminal.cancel?.();
+                    } catch (terminalErr) {
+                        debug(`[State] Failed to cancel terminal fade for "${playlist?.name}":`, terminalErr?.message ?? terminalErr);
+                    }
+                    this.clearTerminalFade(playlist, terminal);
+                }
                 if (session?.settle) {
                     const mode = ["cancel", "handoff", "stop"].includes(crossfadeSettlement)
                         ? crossfadeSettlement
                         : "cancel";
-                    await session.settle({ mode, reason: "playlist cleanup" });
+                    await session.settle({ mode, reason: "playlist cleanup", retain: crossfadeRetainSoundIds });
                 }
 
                 safeCancelTimer(timer, `crossfade cleanup for "${playlist?.name}"`);
@@ -765,7 +754,6 @@ class StateManager {
                     const gap = silenceState.gap;
                     let gapSettled = true;
                     if (gap) {
-                        this.markGapAsCancelled(gap);
                         if (!final && gap.id && PlaylistActionAuthority.isAuthorizedGM()) {
                             try {
                                 await gap.delete();
@@ -1051,6 +1039,37 @@ class StateManager {
      */
     getEndOfTrackFade(sound) {
         return this._endOfTrackFades.get(sound);
+    }
+
+    /**
+     * Register the owner of a playlist's terminal fade.
+     * @param {Playlist} playlist
+     * @param {{soundId: string, reason: string, finish: Function, cancel: Function}} record
+     */
+    setTerminalFade(playlist, record) {
+        if (!playlist || !record) return;
+        this._terminalFades.set(playlist, record);
+        debug(`[State] Terminal fade owned for "${playlist.name}" (${record.reason}).`);
+    }
+
+    /**
+     * @param {Playlist} playlist
+     * @returns {{soundId: string, reason: string, finish: Function, cancel: Function}|undefined}
+     */
+    getTerminalFade(playlist) {
+        return this._terminalFades.get(playlist);
+    }
+
+    /**
+     * Clear the terminal fade owner, optionally only when it is still `record`.
+     * @param {Playlist} playlist
+     * @param {object|null} [record]
+     * @returns {boolean}
+     */
+    clearTerminalFade(playlist, record = null) {
+        if (!playlist) return false;
+        if (record && this._terminalFades.get(playlist) !== record) return false;
+        return this._terminalFades.delete(playlist);
     }
 
     /**

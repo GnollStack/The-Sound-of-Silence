@@ -33,19 +33,21 @@ test("playlist diagnostics activate and render the v14 sidebar tab", async () =>
   assert.deepEqual(calls[0], { tab: "playlists", group: "primary", options: { force: true } });
 });
 
-test("playlist diagnostics fall back to the v13 activateTab API", async () => {
+test("playlist diagnostics fail explicitly when the sidebar has no changeTab", async () => {
   const sidebar = {
-    activeTab: "chat",
-    activateTab(tab) {
-      this.activeTab = tab;
+    rendered: true,
+    tabGroups: { primary: "chat" },
+    activateTab() {
+      throw new Error("the retired Application v1 fallback must not be called");
     },
   };
 
   const result = await activatePlaylistSidebar({ sidebar, playlistDirectory: null, settleMs: 0, sleep: noWait });
 
-  assert.equal(result.success, true);
-  assert.equal(result.activationMethod, "activateTab");
-  assert.equal(result.activeTab, "playlists");
+  assert.equal(result.success, false);
+  assert.equal(result.activationMethod, null);
+  assert.equal(result.activeTab, "chat");
+  assert.match(result.error, /changeTab/);
 });
 
 test("playlist diagnostics render an uninitialized sidebar before activation", async () => {

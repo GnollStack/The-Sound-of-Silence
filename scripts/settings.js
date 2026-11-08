@@ -70,7 +70,7 @@ export function registerSettings({
 
   game.settings.register(MODULE_ID, "personalPlaylistVolumeEnabled", {
     name: "Use Personal Audio Mix",
-    hint: "For players, replace shared volume controls with client-local Track and Playlist Volume controls.",
+    hint: "For players: scale the GM's mix on this client with your own Track and Playlist Volume sliders. 100% plays a track exactly as the GM mixed it, and GM volume changes and fades still reach you.",
     scope: "client",
     config: true,
     type: Boolean,
@@ -99,6 +99,15 @@ export function registerSettings({
     type: Object,
     default: {},
     onChange: applyPersonalMix,
+  });
+
+  game.settings.register(MODULE_ID, "personalMixModel", {
+    name: "Personal Mix Model",
+    hint: "Internal: which personal mix model this client's saved slider values use. 1 means factors on the GM's mix.",
+    scope: "client",
+    config: false,
+    type: Number,
+    default: 0,
   });
 
   game.settings.register(MODULE_ID, "soundscapeProceduralSyncEnabled", {

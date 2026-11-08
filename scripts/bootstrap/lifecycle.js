@@ -17,7 +17,7 @@ import {
   bootstrapSilenceGapRecovery,
   registerSilenceRecoveryHooks,
 } from "../silence.js";
-import { registerFlagServiceHooks } from "../flag-service.js";
+import { Flags, registerFlagServiceHooks } from "../flag-service.js";
 import {
   applyPersonalPlaylistVolumesToActiveSounds,
 } from "../personal-audio-mix.js";
@@ -57,6 +57,8 @@ export function registerLifecycleHooks() {
       applyPersonalPlaylistVolumesToActiveSounds,
       reconcileSoundscapeEngines: reconcileAllSoundscapeEngines,
     });
+    // Client diagnostics travel over Foundry's authenticated User queries.
+    API._registerUserQueries();
   });
 
   Hooks.once("ready", () => {
@@ -70,6 +72,10 @@ export function registerLifecycleHooks() {
     if (module) {
       module.api = API;
     }
+    // 14.16.0: personal sliders became factors on the GM's mix; saved absolute values are reset once.
+    Flags.migratePersonalMixModel().catch((err) =>
+      debug(`[Volume] Personal mix model migration failed:`, err?.message ?? err)
+    );
 
     game.socket.on(
       `module.${MODULE_ID}`,

@@ -311,11 +311,15 @@ function createBrowserSilenceTimer(delayMs) {
   };
 }
 
-function canUseAudioClockTimer() {
-  const musicContext = game?.audio?.music;
+/** The gap document's own channel context, so the gap times in the channel its playlist plays in. */
+function resolveSilenceTimerContext(state) {
+  return state?.gap?.context ?? game?.audio?.music ?? null;
+}
+
+function canUseAudioClockTimer(context) {
   return isAudioUnlocked() &&
-    Number.isFinite(Number(musicContext?.sampleRate)) &&
-    musicContext?.state !== "closed";
+    Number.isFinite(Number(context?.sampleRate)) &&
+    context?.state !== "closed";
 }
 
 function scheduleSilenceTimer(
@@ -328,11 +332,12 @@ function scheduleSilenceTimer(
     ? Math.max(0, state.expectedEndAt - Date.now())
     : Math.max(0, Number(delayMs) || 0);
   let timer;
-  if (forceBrowser || !canUseAudioClockTimer()) {
+  const context = resolveSilenceTimerContext(state);
+  if (forceBrowser || !canUseAudioClockTimer(context)) {
     timer = createBrowserSilenceTimer(remainingMs);
   } else {
     try {
-      timer = new AudioTimeout(remainingMs);
+      timer = new AudioTimeout(remainingMs, { context });
     } catch (err) {
       warn("[Silence] Failed to create audio-clock gap timer; using browser timer:", err);
       timer = createBrowserSilenceTimer(remainingMs);
@@ -499,7 +504,6 @@ function finalizeSilenceCancellation(playlist, state, gapMs, reason) {
   try {
     state.timer?.cancel?.();
   } catch (_) { }
-  if (state.gap) State.markGapAsCancelled(state.gap);
   State.clearSilenceState(playlist, state);
   debug(`[${MODULE_ID}] Silent gap of ${gapMs} ms cancelled for "${playlist.name}" (${reason})`);
   Hooks.callAll('the-sound-of-silence.silenceEnd', {

@@ -5,7 +5,7 @@
  * enriches the render context with module state (loops, normalization, crossfade),
  * and handles module-specific event delegation.
  */
-import { MODULE_ID, SEGMENT_COLORS, debug, toSec } from "./utils.js";
+import { MODULE_ID, SEGMENT_COLORS, debug, toSec, debounceByKey } from "./utils.js";
 import { Flags } from "./flag-service.js";
 import { PlaybackClock } from "./playback-clock.js";
 import { State } from "./state-manager.js";
@@ -74,20 +74,11 @@ function _capturePlaylistScrollPositions(appOrElement) {
     };
 }
 
-function _hasScrollablePosition(snapshot) {
-    if (!snapshot?.targets) return false;
-    return Object.values(snapshot.targets).some((target) => {
-        if (!target) return false;
-        return target.scrollTop > 0 ||
-            target.scrollLeft > 0 ||
-            target.scrollHeight > target.clientHeight + 1 ||
-            target.scrollWidth > target.clientWidth + 1;
-    });
-}
-
 function _rememberPlaylistDirectoryScroll(app) {
     const snapshot = _capturePlaylistScrollPositions(app);
-    if (!snapshot || !_hasScrollablePosition(snapshot)) return null;
+    if (!snapshot) return null;
+    // Always overwrite: a list scrolled back to the top must not keep an older,
+    // deeper position that a later part swap would restore.
     _playlistDirectoryScrollMemory.set(app, snapshot);
     return snapshot;
 }
@@ -128,7 +119,6 @@ function _schedulePlaylistDirectoryScrollRestore(app, label) {
     _restorePlaylistDirectoryScroll(app, label);
     globalThis.queueMicrotask?.(() => _restorePlaylistDirectoryScroll(app, `${label}:microtask`));
     globalThis.requestAnimationFrame?.(() => _restorePlaylistDirectoryScroll(app, `${label}:raf`));
-    setTimeout(() => _restorePlaylistDirectoryScroll(app, `${label}:timeout`), 50);
 }
 
 function _clampPercent(value) {
@@ -832,11 +822,16 @@ export function registerCurrentlyPlaying() {
     // Foundry's updateTimestamps() assumes every currently-playing row has a
     // `.pause` control. Our procedural card intentionally replaces the normal
     // transport row, so we add a compatibility guard before the core updater runs.
+    // MIXED, not WRAPPER: the wrapper skips the native updater when SoS rows own
+    // the visible timers. libWrapper unregisters a WRAPPER that does not chain,
+    // and when another module's directory subclass (Playlist Enchantment) sits
+    // above it on the stack, that unregister is attributed to the other module
+    // and refused once a second.
     libWrapper.register(
         MODULE_ID,
         "foundry.applications.sidebar.tabs.PlaylistDirectory.prototype.updateTimestamps",
         _wrapUpdateTimestamps,
-        "WRAPPER"
+        "MIXED"
     );
 
     // Overlay the synthetic Soundscape icon in the sidebar playlist row when a
@@ -1870,7 +1865,8 @@ function _handlePersonalPlaylistVolumeChange(event) {
     });
 }
 
-const _persistPersonalTrackVolumeChange = foundry.utils.debounce(async ({ playlistId, soundId, value } = {}) => {
+// Debounced per slider so two quick changes on different sliders both persist.
+const _persistPersonalTrackVolumeChange = debounceByKey(async ({ playlistId, soundId, value } = {}) => {
     const playlist = game.playlists.get(playlistId);
     const sound = playlist?.sounds?.get(soundId);
     if (!sound || !Flags.isPersonalAudioMixEnabled()) return;
@@ -1881,9 +1877,9 @@ const _persistPersonalTrackVolumeChange = foundry.utils.debounce(async ({ playli
     } catch (err) {
         debug(`[CurrentlyPlaying] Failed to persist personal track volume for "${sound.name}":`, err?.message ?? err);
     }
-}, 75);
+}, 75, ({ playlistId, soundId }) => `${playlistId}:${soundId}`);
 
-const _persistPersonalPlaylistVolumeChange = foundry.utils.debounce(async ({ playlistId, value } = {}) => {
+const _persistPersonalPlaylistVolumeChange = debounceByKey(async ({ playlistId, value } = {}) => {
     const playlist = game.playlists.get(playlistId);
     if (!playlist || !Flags.isPersonalAudioMixEnabled()) return;
 
@@ -1894,7 +1890,7 @@ const _persistPersonalPlaylistVolumeChange = foundry.utils.debounce(async ({ pla
     } catch (err) {
         debug(`[CurrentlyPlaying] Failed to persist personal playlist volume for "${playlist.name}":`, err?.message ?? err);
     }
-}, 75);
+}, 75, ({ playlistId }) => String(playlistId));
 
 function _attachPlaylistDirectoryWheelGuard(root) {
     const directoryList = root?.querySelector?.(PLAYLIST_SCROLL_TARGETS.directoryList);
