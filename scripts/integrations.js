@@ -119,17 +119,14 @@ export const Integrations = {
 
     /**
      * Register a libWrapper guard on Sound.prototype.fade that prevents
-     * other modules from destroying our active setValueCurveAtTime curves.
+     * other callers from destroying our active setValueCurveAtTime curves.
      *
-     * Only registered when conflicting modules are detected.
+     * Always registered: Foundry itself calls Sound#fade from PlaylistSound#sync,
+     * PlaylistSound#_onStart and the sidebar volume slider, so a clean install
+     * needs the guard as much as one running other playlist modules.
      */
     registerAudioGuards() {
         this.patchPlaylistEnchantmentHotbar();
-
-        if (!this.hasConflictingModules) {
-            debug("[Integrations] No conflicting modules — audio guards skipped.");
-            return;
-        }
 
         // Guard: Sound.prototype.fade
         libWrapper.register(

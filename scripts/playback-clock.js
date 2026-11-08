@@ -109,11 +109,17 @@ function _resolveOffsetSeconds(ps, media, explicitOffset) {
   return 0;
 }
 
-function _resolveExpectedFadeAt(playlist, expectedEndAt) {
+function _resolveExpectedFadeAt(playlist, expectedEndAt, durationSec = null) {
   const mode = Flags.getPlaybackMode(playlist);
-  const fadeMs = mode.crossfade
+  let fadeMs = mode.crossfade
     ? Number(Flags.getCrossfadeDuration(playlist)) || 0
     : Number(playlist?.fade) || 0;
+
+  // Match the runtime clamp: a crossfade never exceeds half the track.
+  const duration = Number(durationSec);
+  if (mode.crossfade && Number.isFinite(duration) && duration > 0) {
+    fadeMs = Math.min(fadeMs, Math.floor(duration * 500));
+  }
 
   if (fadeMs <= 0) return null;
   return Math.max(0, expectedEndAt - fadeMs);
@@ -168,7 +174,7 @@ export const PlaybackClock = {
       offsetSec: Number(offset.toFixed(3)),
       durationSec: Number(durationSec.toFixed(3)),
       expectedEndAt,
-      expectedFadeAt: _resolveExpectedFadeAt(playlist, expectedEndAt),
+      expectedFadeAt: _resolveExpectedFadeAt(playlist, expectedEndAt, durationSec),
       reason,
     };
 

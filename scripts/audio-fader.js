@@ -1,9 +1,30 @@
 // audio-fader.js - Advanced audio fading utilities for Foundry VTT
 
-import { debug, MODULE_ID, ensureAudioContext, safeStop } from "./utils.js";
+import { debug, MODULE_ID, ensureAudioContext, findPlaylistSoundForSound, safeStop } from "./utils.js";
+import { Flags } from "./flag-service.js";
 import { State } from "./state-manager.js";
 
 const AudioTimeout = foundry.audio.AudioTimeout;
+
+/** Grace added to a token's own duration before it counts as abandoned. */
+export const STALE_FADE_TOKEN_GRACE_MS = 5000;
+
+/**
+ * Whether a fade token has outlived its own duration by more than the grace
+ * period. Gain level says nothing about staleness: every fade passes through
+ * near-silent and near-full values, and a startup reservation sits at zero
+ * while media loads.
+ * @param {object|null|undefined} token
+ * @param {number} [now]
+ * @returns {boolean}
+ */
+export function isFadeTokenStale(token, now = Date.now()) {
+  if (!token) return false;
+  const startedAt = Number(token.startedAt);
+  if (!Number.isFinite(startedAt)) return false;
+  const duration = Math.max(0, Number(token.duration) || 0);
+  return now - startedAt > duration + STALE_FADE_TOKEN_GRACE_MS;
+}
 
 const MIN_CURVE_RESOLUTION = 64;
 const MAX_CURVE_RESOLUTION = 256;
@@ -210,9 +231,39 @@ function clampVolume(value, fallback = 0) {
 
 function clearFadeTokenAfter(sound, token, durationMs, bufferMs = 50) {
   if (!token) return;
+  const release = () => {
+    if (!State.clearFadingSound(sound, token)) return;
+    reapplyDeferredTargetVolume(sound, token);
+  };
   AudioTimeout.wait(Math.max(0, Number(durationMs) || 0) + bufferMs)
-    .then(() => State.clearFadingSound(sound, token))
-    .catch(() => State.clearFadingSound(sound, token));
+    .then(release)
+    .catch(release);
+}
+
+/**
+ * Volume changes made while a fade ran (document volume, normalization, the
+ * personal mix) are deferred by the fade guards. Once a fade-in or
+ * crossfade-in has released its sound, apply the current target so the sound
+ * does not sit at the level captured when the fade was scheduled.
+ * @param {Sound} sound
+ * @param {object} token The token that just released the sound.
+ */
+function reapplyDeferredTargetVolume(sound, token) {
+  if (!(Number(token?.targetVol) > 0)) return;
+  if (!sound?.playing || !sound.gain || State.isSoundFading(sound)) return;
+
+  const ps = findPlaylistSoundForSound(sound);
+  if (!(ps instanceof PlaylistSound) || ps.playing !== true || ps.sound !== sound) return;
+
+  try {
+    const target = Number(Flags.resolveTargetVolume(ps));
+    const current = Number(sound.gain.value);
+    if (!Number.isFinite(target) || !Number.isFinite(current) || Math.abs(current - target) <= 0.002) return;
+    debug(`[AF] Applying deferred volume for "${ps.name}": ${current.toFixed(3)} -> ${target.toFixed(3)}`);
+    sound.volume = target;
+  } catch (err) {
+    debug(`[AF] Could not apply deferred volume:`, err?.message ?? err);
+  }
 }
 
 function createCancellableTimeout(delayMs) {

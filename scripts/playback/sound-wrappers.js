@@ -189,6 +189,28 @@ function _preparePauseSync(ps) {
   return true;
 }
 
+function _prepareStopSync(ps) {
+  const isStopUpdate =
+    ps?.playing === false &&
+    (ps?.pausedTime === null || ps?.pausedTime === undefined);
+  if (!isStopUpdate) return false;
+
+  const looper = State.getActiveLooper(ps);
+  if (!looper) return false;
+
+  // A plain document stop (direct selection of another track, Play All, a
+  // Simultaneous single-track stop, or their replication) reaches native
+  // sync without any playlist command cleaning up loop state. The looper
+  // must not promote a pending handoff buffer under the newly selected track.
+  debug(`[Sync] Cancelling internal loop for stopped "${ps.name}".`);
+  cancelLoopWithin(ps, { quiet: true, preservePlayback: false, allowFadeOut: true });
+
+  // Release this media's fade ownership so native sync stops it with
+  // Foundry's own fade instead of the fade guard leaving it running.
+  if (ps.sound && !State.isPlaylistStopping(ps.parent)) cancelActiveFade(ps.sound);
+  return true;
+}
+
 function _schedulePostPlayActions(ps, sound, {
   fadeInMs = 0,
   fromCrossfade = false,
@@ -272,8 +294,16 @@ function _schedulePostPlayActions(ps, sound, {
     loopScheduled = scheduleLoopWithin(ps, { initialLoopStart });
   }
 
+  // On resume, a looper that already retired (all segments finished) no
+  // longer owns the end of the track even though its config is still active;
+  // the normal crossfade or end-of-track fade must be re-armed for it.
+  const resumedLooper = isResume ? State.getActiveLooper(ps) : null;
+  const loopOwnsPlayback = isResume
+    ? !!resumedLooper && !resumedLooper.isDestroyed
+    : (loopScheduled || Flags.isLoopConfigActive(loopConfig));
+
   if (playbackMode.crossfade) {
-    if (loopScheduled || Flags.isLoopConfigActive(loopConfig)) {
+    if (loopOwnsPlayback) {
       debug(`[PostPlay] Skipping playlist crossfade schedule for "${ps.name}" - internal loop owns playback.`);
     } else {
       scheduleCrossfade(playlist, ps, { force: isResume });
@@ -286,7 +316,7 @@ function _schedulePostPlayActions(ps, sound, {
     }
   }
 
-  if (!Flags.isLoopConfigActive(loopConfig) && !playbackMode.crossfade && !ps.repeat) {
+  if (!loopOwnsPlayback && !playbackMode.crossfade && !ps.repeat) {
     scheduleEndOfTrackFade(ps);
   }
 
@@ -565,6 +595,7 @@ export function registerSoundPlaybackWrappers() {
     "PlaylistSound.prototype.sync",
     function (wrapped) {
       _preparePauseSync(this);
+      _prepareStopSync(this);
       if (
         Flags.getPlaybackMode(this.parent).soundscape &&
         Flags.getSoundFlag(this, "isProcedural")

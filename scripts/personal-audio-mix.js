@@ -26,12 +26,37 @@ function _personalTrackVolumeInputValue(soundDoc) {
   return Number.isFinite(value) ? value : null;
 }
 
+/**
+ * Assign a range-picker value without re-entering the volume handlers.
+ * Foundry's form element setter dispatches bubbling `input` and `change`
+ * events for programmatic assignments too. Left alone, a document volume
+ * update would echo into Foundry's slider handler, which fades the live
+ * media through any active module curve and rewrites the document with a
+ * rounded value, and on players it would persist a personal track override.
+ * @param {HTMLElement} rangePicker
+ * @param {number} value
+ */
+export function setRangePickerValueSilently(rangePicker, value) {
+  if (!rangePicker) return;
+  const swallow = (event) => {
+    event.stopPropagation();
+    event.stopImmediatePropagation?.();
+  };
+  const names = ["input", "change"];
+  for (const name of names) rangePicker.addEventListener?.(name, swallow, { capture: true });
+  try {
+    rangePicker.value = value;
+  } finally {
+    for (const name of names) rangePicker.removeEventListener?.(name, swallow, { capture: true });
+  }
+}
+
 function _setRangePickerValue(rangePicker, value) {
   if (!rangePicker || !Number.isFinite(value)) return false;
 
   let changed = false;
   if (Number(rangePicker.value) !== value) {
-    rangePicker.value = value;
+    setRangePickerValueSilently(rangePicker, value);
     changed = true;
   }
   if (rangePicker.getAttribute?.("value") !== String(value)) {

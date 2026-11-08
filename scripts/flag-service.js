@@ -520,6 +520,23 @@ class FlagService {
     }
 
     /**
+     * The crossfade duration clamped to half of the outgoing track, mirroring
+     * Foundry's PlaylistSound#fadeDuration cap. A crossfade can therefore never
+     * start at 0s and skip through a track shorter than the configured fade.
+     * Falls back to the configured value while the track duration is unknown.
+     * @param {Playlist} playlist The playlist document.
+     * @param {PlaylistSound|null} [ps] The outgoing sound whose media duration bounds the fade.
+     * @returns {number} The effective crossfade duration in milliseconds.
+     */
+    getEffectiveCrossfadeDuration(playlist, ps = null) {
+        const configured = Number(this.getCrossfadeDuration(playlist)) || 0;
+        if (configured <= 0) return configured;
+        const duration = Number(ps?.sound?.duration);
+        if (!Number.isFinite(duration) || duration <= 0) return configured;
+        return Math.min(configured, Math.floor(duration * 500));
+    }
+
+    /**
      * Gets the correct silence duration, accounting for static vs. random mode.
      * @param {Playlist} playlist The playlist document.
      * @returns {number} The silence duration in milliseconds.

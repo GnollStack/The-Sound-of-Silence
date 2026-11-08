@@ -117,10 +117,10 @@ export function registerPlaylistUiHooks() {
 
     // --- Playlist-level Button Click Handlers (Delegated) ---
     async function updateFlags(pl, { silenceEnabled, crossfade, soundscapeMode }) {
-        await pl.update(
-            { [`flags.${MODULE_ID}`]: { silenceEnabled, crossfade, soundscapeMode } },
-            { render: false }
-        );
+        // Let the update render on every client: the sidebar header toggles
+        // and the Currently Playing controls of other GMs and players must show
+        // the new state, not only the initiating client's refreshed classes.
+        await pl.update({ [`flags.${MODULE_ID}`]: { silenceEnabled, crossfade, soundscapeMode } });
     }
 
     function getPlaylistUiState(playlist, mode = null) {

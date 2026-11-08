@@ -325,7 +325,7 @@ https://github.com/GnollStack/The-Sound-of-Silence/releases/latest/download/modu
 
 </div>
 
-**Foundry VTT:** v13–v14; verified on **14.367**. Earlier releases were tested on v13.351, and v13 hasn't been retested for this update.
+**Foundry VTT:** v13–v14; verified on **14.367**. This is the last release that supports v13; the next release will require Foundry v14. Earlier releases were tested on v13.351, and v13 hasn't been retested for this update.
 
 **Game systems:** works in any system; tested in **dnd5e 5.3.3**.
 

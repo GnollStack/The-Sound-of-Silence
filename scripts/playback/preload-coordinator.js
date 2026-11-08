@@ -166,7 +166,7 @@ export function scheduleCrossfadePreload(playlist, currentSound, {
   const plan = planCrossfadePreload({
     durationSec: media.duration,
     currentTimeSec: media.currentTime,
-    fadeMs: Flags.getCrossfadeDuration(playlist),
+    fadeMs: Flags.getEffectiveCrossfadeDuration(playlist, currentSound),
     nativeLeadSec: Number.isFinite(nativeLeadSec)
       ? nativeLeadSec
       : DEFAULT_NATIVE_LEAD_SEC,

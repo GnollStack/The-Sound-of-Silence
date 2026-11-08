@@ -3,6 +3,7 @@
  * @description GM-side volume normalization propagation and visible control sync.
  */
 import { Flags } from "../flag-service.js";
+import { setRangePickerValueSilently } from "../personal-audio-mix.js";
 import { debug, MODULE_ID } from "../utils.js";
 
 const VOLUME_EPSILON = 0.0001;
@@ -86,7 +87,7 @@ export function registerNormalizationHooks() {
               "range-picker.sound-volume"
             );
             if (rangePicker) {
-              rangePicker.value = targetVolume;
+              setRangePickerValueSilently(rangePicker, targetVolume);
             }
           }
         }
@@ -103,7 +104,7 @@ export function registerNormalizationHooks() {
               "range-picker.sound-volume"
             );
             if (rangePicker) {
-              rangePicker.value = targetVolume;
+              setRangePickerValueSilently(rangePicker, targetVolume);
             }
           }
         }

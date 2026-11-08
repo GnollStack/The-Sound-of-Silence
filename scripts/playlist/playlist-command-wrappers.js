@@ -24,6 +24,7 @@ import {
   safeStop,
 } from "../utils.js";
 import { debugPlaybackTrace } from "../playback-recovery.js";
+import { settleCrossfadeSession } from "../playback/transition-session.js";
 import { cancelSilentGap } from "./playlist-actions.js";
 import {
   getAdjacentPlayableSound,
@@ -74,11 +75,46 @@ function isSequentialOrShuffle(playlist) {
 }
 
 function getCurrentCrossfadeSource(playlist, incomingSound = null) {
+  // While a transition runs, the logical current track is the one fading in.
+  // While it is still preparing media, the track fading out is still current.
+  // Neither is necessarily the first playing document in the collection.
+  const session = State.getCrossfadeSession(playlist);
+  if (session) {
+    const logical = session.status === "active" ? session.incomingDocument : session.outgoingDocument;
+    if (
+      logical?.playing &&
+      logical.id !== incomingSound?.id &&
+      playlist?.sounds?.has?.(logical.id) &&
+      !Flags.getSoundFlag(logical, "isSilenceGap")
+    ) {
+      return logical;
+    }
+  }
   return playlist?.sounds?.find((s) =>
     s.playing &&
     s.id !== incomingSound?.id &&
     !Flags.getSoundFlag(s, "isSilenceGap")
   );
+}
+
+/**
+ * After a running transition is handed off to a replacement, a participant
+ * document can still read `playing: true` (the outgoing track before its
+ * commit, or an incoming track that never started). The replacement owns
+ * only its own two documents, so release the leftovers here.
+ */
+async function releaseSupersededTransitionDocuments(playlist, session, keep = []) {
+  if (!session || !playlist?.isOwner || !game.user?.isGM) return;
+  const keepIds = new Set(keep.map((sound) => sound?.id).filter(Boolean));
+  for (const document of [session.outgoingDocument, session.incomingDocument]) {
+    if (!document?.id || keepIds.has(document.id) || document.playing !== true) continue;
+    if (!playlist.sounds?.has?.(document.id)) continue;
+    try {
+      await document.update({ playing: false, pausedTime: null }, { render: false });
+    } catch (err) {
+      debug(`[CF] Failed to release superseded transition document "${document.name}":`, err?.message ?? err);
+    }
+  }
 }
 
 function getManualCrossfadeTarget(playlist, currentSound, soundId, direction) {
@@ -98,6 +134,11 @@ async function executeManualCrossfade(playlist, currentSound, incomingSound, rea
     State.clearEndOfTrackFade(currentSound);
   }
 
+  // A user skip during a running crossfade hands that transition off: its
+  // incoming track stays live and becomes this transition's outgoing track.
+  // Cancelling it instead would stop the incoming media and restore the old
+  // outgoing track, after which no crossfade from the incoming track can start.
+  const previousSession = State.getCrossfadeSession(playlist);
   await cleanupPlaylistState(playlist, {
     cleanSilence: false,
     cleanCrossfade: true,
@@ -105,7 +146,9 @@ async function executeManualCrossfade(playlist, currentSound, incomingSound, rea
     cleanSoundscape: false,
     onlySound: currentSound,
     allowFadeOut: true,
+    crossfadeSettlement: "handoff",
   });
+  await releaseSupersededTransitionDocuments(playlist, previousSession, [currentSound, incomingSound]);
 
   return performCrossfade(playlist, currentSound, {
     incomingSound,
@@ -121,6 +164,23 @@ export function registerPlaylistCommandWrappers() {
       const playlist = this.parent;
 
       if (Flags.getSoundFlag(this, "isSilenceGap")) {
+        return;
+      }
+
+      // A document that is no longer playing was replaced or stopped by a
+      // command while its media outlived the fade guards. Its natural end
+      // must not start a silence gap or advance over the newer selection.
+      if (this.playing !== true || State.isPlaylistStopping(playlist)) {
+        debug(`_onEnd: Ignoring natural end of "${this.name}" because its document is no longer playing.`);
+        return;
+      }
+
+      // The source buffer of an internal-loop handoff can reach its natural
+      // end a few milliseconds before the looper stops it; the target buffer
+      // owns playback and the looper will promote it.
+      const activeLooper = State.getActiveLooper(this);
+      if (activeLooper && !activeLooper.isDestroyed && activeLooper.isCrossfading) {
+        debug(`_onEnd: Ignoring natural end of "${this.name}" during an internal-loop handoff.`);
         return;
       }
 
@@ -226,11 +286,15 @@ export function registerPlaylistCommandWrappers() {
       if (sourceSound) {
         soundsToStopSet.add(sourceSound);
       }
+      // An active crossfade is settled in stop mode: both participants hold
+      // their current gain and are faded out below with every other live
+      // media, instead of the outgoing track snapping back to full volume.
       await cleanupPlaylistState(this, {
         cleanSilence: true,
         cleanCrossfade: true,
         cleanLoopers: true,
         allowFadeOut: fadeDuration > 0,
+        crossfadeSettlement: "stop",
       });
       // A pending silence advancement can publish a playing update while
       // cleanup drains it, clearing this latch through the document hooks.
@@ -351,8 +415,10 @@ export function registerPlaylistCommandWrappers() {
         await cancelSilentGap(playlist);
       }
 
-      if (State.isPlaylistCrossfading(playlist)) {
-        return await wrapped.call(playlist, soundToPlay, ...args);
+      const activeSession = State.getCrossfadeSession(playlist);
+      if (activeSession && soundToPlay?.id === activeSession.incomingDocument?.id) {
+        debug(`[CF-Skip] "${soundToPlay.name}" is already the track fading in; ignoring direct selection.`);
+        return playlist;
       }
 
       if (Flags.getPlaybackMode(playlist).soundscape) {
@@ -363,6 +429,9 @@ export function registerPlaylistCommandWrappers() {
       const fadeMs = Flags.getCrossfadeDuration(playlist);
 
       if (playlist.isOwner && useCrossfade && fadeMs > 0 && isSequentialOrShuffle(playlist)) {
+        // During a running crossfade this selects the track fading in as the
+        // source, so the selection hands the transition off instead of
+        // reaching native playback, whose sync the crossfade guard would block.
         const currentlyPlaying = getCurrentCrossfadeSource(playlist, soundToPlay);
         if (currentlyPlaying?.sound) {
           debug(
@@ -370,6 +439,10 @@ export function registerPlaylistCommandWrappers() {
           );
           return await executeManualCrossfade(playlist, currentlyPlaying, soundToPlay, "manual-select");
         }
+      }
+
+      if (State.isPlaylistCrossfading(playlist)) {
+        await settleCrossfadeSession(playlist, { mode: "handoff", reason: "direct selection without a crossfade source" });
       }
 
       return await wrapped.call(playlist, soundToPlay, ...args);
@@ -560,7 +633,13 @@ export function registerPlaylistAdvanceWrappers() {
         );
         if (Array.isArray(first)) first = first.pop();
         if (first) {
-          const loopScheduled = scheduleLoopWithin(first);
+          // The Sound.play wrapper owns loop startup and resume. Only fill in
+          // when no looper exists, so a paused looper keeps its snapshot and a
+          // fresh one is not immediately replaced.
+          const existingLooper = State.getActiveLooper(first);
+          const loopScheduled = existingLooper && !existingLooper.isDestroyed
+            ? true
+            : scheduleLoopWithin(first);
           if (!loopScheduled) scheduleCrossfade(this, first);
         }
       });

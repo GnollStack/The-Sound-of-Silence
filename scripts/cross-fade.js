@@ -22,6 +22,7 @@ import {
   createCrossfadeSession,
   isCurrentCrossfadeSession,
   isLatestCrossfadeSession,
+  settleCrossfadeSession,
 } from "./playback/transition-session.js";
 import { State } from "./state-manager.js";
 
@@ -118,8 +119,11 @@ export async function prepareIncomingCrossfadeMedia(ps, { isCurrent = () => true
   if (!sound.playing) {
     try {
       cancelActiveFade(sound);
+      // A first play has no gain node yet, so the volume setter is a no-op
+      // there. Pass the mute through native play so the first rendered
+      // quantum is already silent until the crossfade curve takes over.
       sound.volume = 0;
-      await sound.play({ _fromCrossfade: true });
+      await sound.play({ _fromCrossfade: true, volume: 0 });
     } catch (err) {
       debug(`[CF] Failed to start incoming crossfade media for "${ps.name}":`, err?.message ?? err);
       return null;
@@ -177,8 +181,14 @@ export async function performCrossfade(playlist, soundToFade, { recovery = false
   }
 
   if (State.isPlaylistCrossfading(playlist)) {
-    debug(`[CF] Skipping ${reason} crossfade for "${soundToFade.name}" because another crossfade is already active.`);
-    return false;
+    if (automatic) {
+      debug(`[CF] Skipping ${reason} crossfade for "${soundToFade.name}" because another crossfade is already active.`);
+      return false;
+    }
+    // A user interrupted the running transition. Hand it off so its incoming
+    // track stays live as this transition's outgoing participant instead of
+    // cancelling the playlist back to the track that was already fading out.
+    await settleCrossfadeSession(playlist, { mode: "handoff", reason: `${reason} replaces the active transition` });
   }
   if (automatic && playlist.sounds.some(sound => sound !== soundToFade && sound.playing)) return false;
 
@@ -191,7 +201,7 @@ export async function performCrossfade(playlist, soundToFade, { recovery = false
     debug(`[CF] Recovery crossfade proceeding for "${soundToFade.name}" without live outgoing media (${reason}).`);
   }
 
-  const fadeMs = Flags.getCrossfadeDuration(playlist);
+  const fadeMs = Flags.getEffectiveCrossfadeDuration(playlist, soundToFade);
   if (fadeMs <= 0) return false;
 
   cancelCrossfade(playlist);
@@ -506,7 +516,10 @@ export async function scheduleCrossfade(playlist, ps, { force = false } = {}) {
       return;
     }
 
-    const fireAt = Math.max(0, dur - (fadeMs / 1000)); // Now uses correct fadeMs
+    // Clamp to half the track like Foundry's own fadeDuration, so a crossfade
+    // longer than the track does not fire at 0s and skip straight through it.
+    const effectiveFadeMs = Flags.getEffectiveCrossfadeDuration(playlist, ps);
+    const fireAt = Math.max(0, dur - (effectiveFadeMs / 1000));
     const currentTime = Number(sound.currentTime);
 
     if (!Number.isFinite(currentTime)) {
@@ -519,7 +532,7 @@ export async function scheduleCrossfade(playlist, ps, { force = false } = {}) {
       return;
     }
 
-    logFeature(LogSymbols.CROSSFADE_SCHEDULE, 'CF', `Schedule: ${ps.name} @ ${fireAt.toFixed(2)}s (${fadeMs}ms)`);
+    logFeature(LogSymbols.CROSSFADE_SCHEDULE, 'CF', `Schedule: ${ps.name} @ ${fireAt.toFixed(2)}s (${effectiveFadeMs}ms)`);
 
     const handle = sound.schedule(() => {
       if (!isCurrentSchedule()) return;

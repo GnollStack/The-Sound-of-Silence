@@ -4,7 +4,7 @@
  * public API for creating, canceling, pausing, and resuming per-track internal loops.
  * 
  */
-import { MODULE_ID, debug, getNextSequence, shouldProcessAction } from "./utils.js";
+import { MODULE_ID, debug, getNextSequence } from "./utils.js";
 import { LoopingSound } from "./looping-sound.js";
 import { scheduleEndOfTrackFade } from "./audio-fader.js";
 import { cancelCrossfade, scheduleCrossfade } from "./cross-fade.js";
@@ -294,8 +294,9 @@ export function executeSegmentSkip(ps, targetIndex) {
   }
 
   debug(`[Manager] Executing replicated skip to segment ${targetIndex} for "${ps.name}".`);
-  looper.skipToSegmentByIndex(targetIndex);
-  return true;
+  // A looper still finishing its own crossfade refuses the skip; report that
+  // so the replication retry can apply it once the transition settles.
+  return looper.skipToSegmentByIndex(targetIndex) === true;
 }
 
 /**

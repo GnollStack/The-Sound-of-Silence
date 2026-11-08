@@ -655,6 +655,9 @@ class StateManager {
      * @param {PlaylistSound} [options.onlySound=null] - If provided, only clean this sound's looper
      * @param {boolean} [options.allowFadeOut=false] - Allow sounds to fade out naturally instead of stopping immediately
      * @param {boolean} [options.final=false] - Permanently discard all remaining local state for a deleted playlist
+     * @param {"cancel"|"handoff"|"stop"} [options.crossfadeSettlement="cancel"] - How an active crossfade
+     *   session is settled: `cancel` restores the outgoing track, `handoff` keeps the incoming track live for a
+     *   replacement transition, `stop` holds both gains for a Stop All fade-out
      * @returns {Promise<void>}
      */
     async cleanup(playlist, options = {}) {
@@ -665,7 +668,8 @@ class StateManager {
             cleanSoundscape = true,
             onlySound = null,
             allowFadeOut = false,
-            final = false
+            final = false,
+            crossfadeSettlement = "cancel"
         } = options;
 
         debug(`[State] Cleanup requested for "${playlist?.name}"`, options);
@@ -678,7 +682,10 @@ class StateManager {
                 const timer = this.getCrossfadeTimer(playlist);
                 const waiter = this.getPlayWaiter(playlist);
                 if (session?.settle) {
-                    await session.settle({ mode: "cancel", reason: "playlist cleanup" });
+                    const mode = ["cancel", "handoff", "stop"].includes(crossfadeSettlement)
+                        ? crossfadeSettlement
+                        : "cancel";
+                    await session.settle({ mode, reason: "playlist cleanup" });
                 }
 
                 safeCancelTimer(timer, `crossfade cleanup for "${playlist?.name}"`);

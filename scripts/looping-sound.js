@@ -5,7 +5,7 @@ import { maybeLoopPlaylist } from "./playlist-loop.js";
 import { performCrossfade } from "./cross-fade.js";
 import { Silence } from "./silence.js";
 import { Flags } from "./flag-service.js";
-import { MODULE_ID, toSec, debug, waitForMedia, formatTime, logFeature, LogSymbols, PlaylistActionAuthority, safeStop, safeCancelTimer, error } from "./utils.js";
+import { MODULE_ID, debug, waitForMedia, formatTime, logFeature, LogSymbols, safeStop, safeCancelTimer, error } from "./utils.js";
 import { State } from "./state-manager.js";
 import { getPlayableSoundsInOrder } from "./playlist/playable-order.js";
 import { retainLoopCompletion } from "./playback/loop-completion.js";
@@ -16,7 +16,6 @@ const AudioTimeout = foundry.audio.AudioTimeout;
 const POSITION_CHECK_INTERVAL = 50;    // ms between checks
 const POSITION_CHECK_MAX_ATTEMPTS = 40;
 const SEGMENT_POSITION_EPSILON = 0.01;
-const PRELOAD_WINDOW = 0.5;            // seconds before crossfade
 const HANDOFF_BUFFER = 50;             // ms buffer after crossfade
 
 function getSegmentLabel(segment, index = 0) {
@@ -318,7 +317,10 @@ export class LoopingSound {
     let newSound = null;
 
     try {
-      newSound = new foundry.audio.Sound(this.ps.path);
+      // Play the loop buffer in the document's own audio channel. A bare
+      // Sound defaults to the music context even for environment playlists.
+      const context = this.ps.sound?.context ?? this.ps.context ?? undefined;
+      newSound = new foundry.audio.Sound(this.ps.path, context ? { context } : {});
       operation.targetSound = newSound;
       await newSound.load();
 
@@ -741,6 +743,7 @@ export class LoopingSound {
     // while targetSound.play() is pending without destroying the looper.
     if (
       this.isDestroyed ||
+      this.ps?.playing === false ||
       this.pausedSnapshot ||
       this.loopingDisabled ||
       !this.activeLoopSegment ||
@@ -758,7 +761,11 @@ export class LoopingSound {
     equalPowerCrossfade(sourceSound, targetSound, crossfadeMs, { targetVolIn });
 
     safeCancelTimer(this.handoffTimer, `replace handoff timer for "${this.ps?.name}"`);
-    const handoffTimer = new AudioTimeout(crossfadeMs + HANDOFF_BUFFER);
+    const timerContext = sourceSound?.context ?? targetSound?.context;
+    const handoffTimer = new AudioTimeout(
+      crossfadeMs + HANDOFF_BUFFER,
+      timerContext ? { context: timerContext } : undefined
+    );
     this.handoffTimer = handoffTimer;
 
     try {
@@ -790,8 +797,9 @@ export class LoopingSound {
     }
     this.handoffTimer = null;
 
-    if (this.isDestroyed) {
-      // If destroyed during handoff, ensure target sound is stopped.
+    if (this.isDestroyed || this.ps?.playing === false) {
+      // Destroyed, or the document was stopped by a command while the fade
+      // ran: never promote the incoming buffer under a newly selected track.
       this._stopLoopOperationTarget(operation, targetSound, "abort cleanup");
       this._setCrossfading(false);
       finishDirectOperation();
@@ -974,15 +982,18 @@ export class LoopingSound {
     this.handoffTimer = null;
     const sourceSound = this.activeSound;
 
-    this.loopsCompleted++;
-    if (maxLoops > 0) debug(`[LoopingSound] Starting loop repeat ${this.loopsCompleted} of ${maxLoops}.`);
-    else debug(`[LoopingSound] Starting loop repeat ${this.loopsCompleted} (infinite).`);
+    // The iteration is counted only once its handoff succeeds. A pause during
+    // the crossfade snapshots the count; counting first made the segment end
+    // one pass early after resume.
+    const iteration = this.loopsCompleted + 1;
+    if (maxLoops > 0) debug(`[LoopingSound] Starting loop repeat ${iteration} of ${maxLoops}.`);
+    else debug(`[LoopingSound] Starting loop repeat ${iteration} (infinite).`);
 
     // Emit loop iteration event
     Hooks.callAll('the-sound-of-silence.loopIteration', {
       sound: this.ps,
       segment,
-      iteration: this.loopsCompleted,
+      iteration,
       maxLoops: maxLoops || Infinity
     });
     State.recordLoopIteration();
@@ -994,6 +1005,9 @@ export class LoopingSound {
       debug(`[LoopingSound] Aborting crossfade, target sound could not be prepared.`);
       if (this.isCrossfading) this._setCrossfading(false);
       this._completeLoopOperation(operation);
+      // Never leave a registered looper with no armed timer: release this
+      // segment and arm the next one, or retire into the final fade-out.
+      this._endCurrentLoopSegment();
       return false;
     }
     operation.targetSound ??= targetSound;
@@ -1024,8 +1038,9 @@ export class LoopingSound {
     }
 
     if (wasSuccessful) {
-      // If the handoff succeeded, arm the timer for the next loop.
+      // If the handoff succeeded, count the pass and arm the timer for the next loop.
       this._completeLoopOperation(operation);
+      this.loopsCompleted = iteration;
       this._armCrossfadeLoop();
     } else {
       // If the handoff failed for any reason, gracefully exit the loop.
@@ -1180,26 +1195,29 @@ export class LoopingSound {
    * Skips to a specific segment by its index in the config array.
    * Used by the replication system to sync segment skips across clients.
    * @param {number} index The index of the segment to skip to
+   * @returns {boolean} Whether the skip was started. A refusal while a
+   *   transition is in progress lets replication retry shortly afterwards.
    */
   skipToSegmentByIndex(index) {
-    if (this.isDestroyed) return;
+    if (this.isDestroyed) return false;
     if (this.loopingDisabled) {
       debug(`[LoopingSound] Cannot skip to segment index ${index} for "${this.ps.name}" - looping is disabled.`);
-      return;
+      return false;
     }
     if (this.isCrossfading) {
       debug(`[LoopingSound] Cannot skip to segment index ${index} for "${this.ps.name}" - transition already in progress.`);
-      return;
+      return false;
     }
 
     const targetSegment = this.config.segments[index];
     if (!targetSegment) {
       debug(`[LoopingSound] Invalid segment index ${index} for "${this.ps.name}".`);
-      return;
+      return false;
     }
 
     debug(`[LoopingSound] Skipping to segment index ${index} "${getSegmentLabel(targetSegment, index)}" at ${targetSegment.start}`);
     this._skipToSegment(targetSegment);
+    return true;
   }
 
   retire() {

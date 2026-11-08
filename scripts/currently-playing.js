@@ -10,6 +10,7 @@ import { Flags } from "./flag-service.js";
 import { PlaybackClock } from "./playback-clock.js";
 import { State } from "./state-manager.js";
 import { findSoundById } from "./sound-cache.js";
+import { setRangePickerValueSilently } from "./personal-audio-mix.js";
 import {
     breakLoopWithin,
     nextSegmentWithin,
@@ -264,6 +265,9 @@ function _getSegmentStartSeconds(segment) {
 }
 
 function _getLoopStartupFallbackTime(ps, looper, liveTime) {
+    // A paused track shows its paused position; the skip-intro startup
+    // fallback applies only while the track is actually playing.
+    if (ps?.playing !== true) return null;
     const loopConfig = looper?.config ?? Flags.getLoopConfig(ps);
     if (!loopConfig?.enabled || !loopConfig?.active || loopConfig.startFromBeginning) return null;
 
@@ -1613,6 +1617,18 @@ async function _handleSosAction(event, actionEl) {
     if (!actionEl) return;
     if (actionEl.disabled || actionEl.classList.contains("disabled")) return;
 
+    // Visual feedback on the current DOM element, released once the action
+    // settles. The in-place soundscape readout refresh does not re-render the
+    // row, so a Fire Now button would otherwise keep this class and stay inert.
+    actionEl.classList.add("disabled");
+    try {
+        await _runSosAction(event, actionEl);
+    } finally {
+        actionEl.classList.remove("disabled");
+    }
+}
+
+async function _runSosAction(event, actionEl) {
     event.preventDefault();
     event.stopPropagation();
     event.stopImmediatePropagation?.();
@@ -1626,9 +1642,6 @@ async function _handleSosAction(event, actionEl) {
     if (_disabledActions.has(actionKey)) return;
     _disabledActions.add(actionKey);
     setTimeout(() => _disabledActions.delete(actionKey), 500);
-
-    // Visual feedback on current DOM element
-    actionEl.classList.add("disabled");
 
     switch (action) {
         case "toggleLoop": {
@@ -1761,7 +1774,7 @@ function _setRangePickerValue(rangePicker, value) {
 
     let changed = false;
     if (Number(rangePicker.value) !== value) {
-        rangePicker.value = value;
+        setRangePickerValueSilently(rangePicker, value);
         changed = true;
     }
     if (rangePicker.getAttribute?.("value") !== String(value)) {

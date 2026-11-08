@@ -2,6 +2,7 @@
  * @file visibility-recovery.js
  * @description Browser visibility recovery and safety checks.
  */
+import { isFadeTokenStale } from "../audio-fader.js";
 import { scheduleCrossfade } from "../cross-fade.js";
 import { Flags } from "../flag-service.js";
 import { State } from "../state-manager.js";
@@ -31,12 +32,15 @@ export function registerVisibilityRecovery() {
       }
 
       for (const ps of playlist.sounds) {
-        if (ps.sound && State.isSoundFading(ps.sound)) {
-          const gain = ps.sound.gain?.value;
-          if (gain !== undefined && (gain < 0.01 || gain > 0.95)) {
-            debug(`[Visibility] Clearing stale fading lock for "${ps.name}" (gain=${gain.toFixed(3)})`);
-            State.clearFadingSound(ps.sound);
-          }
+        if (!ps.sound) continue;
+        // Every fade passes through near-silent and near-full gain, so the
+        // level cannot tell a live curve from an abandoned token. A token is
+        // stale only once its own duration plus a generous grace has elapsed.
+        const token = State.getFadeToken(ps.sound);
+        if (token && isFadeTokenStale(token)) {
+          const ageMs = Date.now() - Number(token.startedAt);
+          debug(`[Visibility] Clearing stale fading lock for "${ps.name}" (${token.type ?? "fade"} started ${ageMs}ms ago)`);
+          State.clearFadingSound(ps.sound, token);
         }
       }
 

@@ -94,11 +94,14 @@ export function registerTransitionReplicationHooks() {
     debug(`[Stop-Sync] Processing stop from GM ${gmId}, seq ${seq}`);
 
     State.markPlaylistAsStopping(pl);
+    // Hold a running crossfade's gains; the loop below fades every live
+    // participant from its current level like the GM's Stop All does.
     await cleanupPlaylistState(pl, {
       cleanSilence: true,
       cleanCrossfade: true,
       cleanLoopers: true,
       allowFadeOut: true,
+      crossfadeSettlement: "stop",
     });
 
     const dur = Number(fadeMs) || 0;
